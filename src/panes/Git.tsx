@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useResolvedAppearance } from "../lib/appearance";
 import {
+  checkpointList,
+  checkpointRewind,
   gitBranches,
   gitCommit,
   gitFileDiff,
@@ -13,7 +15,14 @@ import {
 } from "../lib/bridge";
 import { themeFor } from "../lib/monaco-setup";
 import { baseName, errorMessage } from "../lib/protocol";
-import type { FsEvent, GitBranch, GitFile, GitFileDiff, GitStatus } from "../lib/protocol";
+import type {
+  Checkpoint,
+  FsEvent,
+  GitBranch,
+  GitFile,
+  GitFileDiff,
+  GitStatus,
+} from "../lib/protocol";
 
 interface GitProps {
   /** Re-read when the workspace changes. */
@@ -92,6 +101,9 @@ export function GitPane({ root, changes, revision, onOpenFile }: GitProps) {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [branchesOpen, setBranchesOpen] = useState(false);
+  const [history, setHistory] = useState<Checkpoint[]>([]);
+  /** Which checkpoint is one more click from being restored. */
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!root) {
@@ -111,6 +123,18 @@ export function GitPane({ root, changes, revision, onOpenFile }: GitProps) {
   useEffect(() => {
     void reload();
   }, [reload, revision]);
+
+  // The turn history lives beside the repository state because they answer the same
+  // question from two directions: what changed, and what can be put back.
+  useEffect(() => {
+    if (!root) {
+      setHistory([]);
+      return;
+    }
+    checkpointList(12)
+      .then(setHistory)
+      .catch(() => setHistory([]));
+  }, [root, revision]);
 
   // An edit on disk changes what git reports, and the watcher is already telling us.
   useEffect(() => {
@@ -383,6 +407,50 @@ export function GitPane({ root, changes, revision, onOpenFile }: GitProps) {
               Commit {staged.length > 0 ? `${staged.length}` : ""}
           </button>
         </div>
+
+        {history.length > 0 && (
+          <div className="timeline">
+            <div className="change-group">
+              <span className="legend">Turns</span>
+            </div>
+            {history.map((point) => (
+              <div key={point.id} className="timeline-row">
+                <span className="timeline-mark" aria-hidden="true" />
+                <span className="timeline-label" title={point.label}>
+                  {point.label}
+                </span>
+                <span className="measure">
+                  {point.filesChanged > 0
+                    ? `${point.filesChanged} file${point.filesChanged === 1 ? "" : "s"}`
+                    : "no changes"}
+                </span>
+                <button
+                  type="button"
+                  className={`ghost-button${confirming === point.id ? " is-warn" : ""}`}
+                  disabled={busy}
+                  onClick={() => {
+                    // Two clicks, because this rewrites the working tree. The second one
+                    // is still undoable -- rewind takes its own checkpoint first -- but
+                    // that is a reason to allow it, not a reason to do it by accident.
+                    if (confirming !== point.id) {
+                      setConfirming(point.id);
+                      return;
+                    }
+                    setConfirming(null);
+                    void act(async () => {
+                      await checkpointRewind(point.id);
+                    }, `Rewound to ${point.label}`);
+                  }}
+                >
+                  {confirming === point.id ? "Confirm" : "Rewind"}
+                </button>
+              </div>
+            ))}
+            <p className="note">
+              Rewinding restores files only. Your commits and branches are untouched.
+            </p>
+          </div>
+        )}
 
         <div className="change-detail">
           {!selected && <p className="note">pick a file to see what changed</p>}

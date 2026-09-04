@@ -353,7 +353,17 @@ const TranscriptRow = memo(function TranscriptRow({
       return (
         <div className={cls}>
           {addr}
-          <span className="t-prompt">{row.text}</span>
+          {/**
+           * The same `>` the composer wears. What you typed and where you typed it are
+           * the same thing, and one glyph says so more clearly than a weight difference
+           * the eye has to compare two rows to notice.
+           */}
+          <span className="t-prompt">
+            <span className="t-said" aria-hidden="true">
+              &gt;
+            </span>
+            {row.text}
+          </span>
         </div>
       );
 

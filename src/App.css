@@ -402,6 +402,14 @@
   align-items: baseline;
 }
 
+/* A paragraph needs air around it; a tool call is a line in a list and does not. */
+.t-row:has(> .t-text),
+.t-row:has(> .t-prompt),
+.t-row:has(> .t-thinking) {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
 .t-row.opens-turn {
   margin-top: 10px;
   padding-top: 10px;
@@ -417,9 +425,35 @@
   user-select: none;
 }
 
+/**
+ * Prose leaves the 24px row grid.
+ *
+ * `--row` is the app's single-line rhythm: tree rows, editor lines, tool calls. Body text
+ * inheriting it got 12.5px type on 24px leading -- 1.92 -- which reads as lines drifting
+ * apart with nothing holding a paragraph together. Everything in the transcript that is a
+ * *paragraph* rather than a row sets its own leading instead, and the grid keeps the rows.
+ */
+.t-prompt,
+.t-text,
+.t-thinking,
+.t-detail {
+  line-height: 1.55;
+}
+
+/* Hangs in the gutter so the prompt's own text stays on the same left edge as the
+   agent's, which is what makes the two columns of prose comparable at a glance. */
+.t-said {
+  float: left;
+  margin-left: -1.1em;
+  color: var(--sym);
+  font-family: var(--mono);
+  font-weight: 400;
+  user-select: none;
+}
+
 .t-prompt {
-  max-width: 74ch;
-  font-size: 12.5px;
+  max-width: 72ch;
+  font-size: 13px;
   font-weight: 500;
   color: var(--ink);
   white-space: pre-wrap;
@@ -427,18 +461,18 @@
 }
 
 .t-text {
-  max-width: 74ch;
-  font-size: 12.5px;
+  max-width: 72ch;
+  font-size: 13px;
   color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .t-thinking {
-  max-width: 74ch;
+  max-width: 72ch;
   padding: 0;
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--ink-dim);
   text-align: left;
   background: none;
@@ -1489,4 +1523,46 @@
 .commit-input:focus-visible {
   outline: none;
   border-color: var(--sym);
+}
+
+/* The turn history, in the same panel as the repository state.
+   Deliberately below the commit box and visually quieter than it: these are the agent's
+   turns, which are recoverable and cheap to undo, whereas a commit is the thing you are
+   building toward. The blue bar marks them as belonging to the checkpoint system rather
+   than to git -- rewinding one never touches a commit. */
+.timeline {
+  flex: 0 0 auto;
+  max-height: 30%;
+  overflow: auto;
+  padding: 0 4px 4px;
+  border-top: 1px solid var(--hairline);
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-chip);
+}
+
+.timeline-row:hover {
+  background: var(--sunken);
+}
+
+.timeline-mark {
+  align-self: stretch;
+  min-height: 12px;
+  border-radius: 2px;
+  background: var(--sym);
+}
+
+.timeline-label {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
