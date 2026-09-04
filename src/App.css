@@ -1287,3 +1287,206 @@
   text-overflow: ellipsis;
   color: var(--ink-dim);
 }
+
+/* The repository panel.
+   Reuses the review queue's row grammar -- a colour bar, a name, a dimmed path -- because
+   both answer the same question in the same column. What differs is the second control:
+   a change here moves between the index and the working tree rather than being kept or
+   thrown away. */
+/* The repository panel's own split, which is not the review queue's.
+   There the diff is the point and the file list is an index, so the list is capped. Here
+   the list *is* the work -- you read it, stage from it, then commit -- so it takes the
+   space and the commit box is pinned below it rather than scrolling with it. */
+.git-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.git-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px;
+}
+
+.git-body .commit-box {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* `flex-basis: 0` rather than `auto`: a textarea's intrinsic width comes from its `cols`
+   attribute, and with `auto` that width wins and pushes the commit button off the pane. */
+.git-body .commit-input {
+  flex: 1 1 0;
+}
+
+.git-body .commit-box .ghost-button {
+  flex: 0 0 auto;
+}
+
+.git-body .change-detail {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.git-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--r-chip);
+  transition: background var(--t-fast) var(--ease);
+}
+
+.git-row:hover {
+  background: var(--sunken);
+}
+
+.git-row.is-selected {
+  background: var(--sym-fill);
+}
+
+.git-row.is-selected .change-name,
+.git-row.is-selected .change-dir {
+  color: #ffffff;
+}
+
+.git-open {
+  display: grid;
+  grid-template-columns: 3px minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+}
+
+.git-open .change-mark {
+  align-self: stretch;
+  min-height: 12px;
+  border-radius: 2px;
+}
+
+.git-row.is-added .change-mark {
+  background: var(--xref);
+}
+
+.git-row.is-modified .change-mark {
+  background: var(--addr);
+}
+
+.git-row.is-deleted .change-mark {
+  background: var(--imm);
+}
+
+.git-row.is-conflicted .change-mark {
+  background: var(--error);
+}
+
+/* A section heading with its bulk action on the same line, so "Stage all" is read as
+   belonging to the group it applies to rather than to the panel. */
+.change-group {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px 4px 2px;
+}
+
+.change-group:first-child {
+  margin-top: 2px;
+}
+
+.conflict-note {
+  padding-right: 8px;
+  color: var(--error);
+}
+
+.branch-button {
+  font-family: var(--mono);
+}
+
+/* The branch list drops in under the header rather than floating: a switch can fail, and
+   the error has to land somewhere the eye is already looking. */
+.branch-list {
+  flex: 0 0 auto;
+  max-height: 180px;
+  overflow: auto;
+  padding: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.branch-row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+}
+
+.branch-row:hover:not(:disabled) {
+  background: var(--sunken);
+}
+
+.branch-row.is-on .branch-name {
+  color: var(--sym);
+}
+
+.branch-name {
+  font-family: var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.branch-subject {
+  min-width: 0;
+  color: var(--ink-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commit-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 10px 4px 4px;
+}
+
+.commit-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  font-family: var(--ui);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--sunken);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+  resize: vertical;
+}
+
+.commit-input:focus-visible {
+  outline: none;
+  border-color: var(--sym);
+}

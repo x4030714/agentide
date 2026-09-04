@@ -208,6 +208,10 @@ pub enum ErrorCode {
     /// A language server that cannot be started, or is no longer running. A server that
     /// is not installed comes back as `NotFound` instead, so the two are distinguishable.
     Lsp,
+    /// The user's own repository refused an operation, or git said no. The message is
+    /// git's own -- a hook that rejects a commit has already explained itself better
+    /// than this app could.
+    Git,
 }
 
 /// The error every command returns. `Serialize` so Tauri can hand it to the frontend.

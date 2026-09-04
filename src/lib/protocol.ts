@@ -40,7 +40,12 @@ export type ErrorCode =
    * A language server that cannot be started, or is no longer running. A server that is
    * not installed comes back as `"notFound"` instead, so the two are distinguishable.
    */
-  | "lsp";
+  | "lsp"
+  /**
+   * The user's own repository refused an operation. The message is git's own -- a hook
+   * that rejects a commit has already explained itself better than this app could.
+   */
+  | "git";
 
 export interface IpcError {
   code: ErrorCode;
@@ -597,3 +602,77 @@ export type LspEvent =
    * three. `message` carries the tail of stderr when there was any.
    */
   | { t: "exited"; id: string; code: number | null; message: string };
+
+// ---------------------------------------------------------------------------
+// The user's own git repository -- mirrors `src-tauri/src/git.rs`
+//
+// Distinct from the checkpoint types above, which describe the private shadow
+// repository. These describe the real one, the one with the user's history in it.
+// ---------------------------------------------------------------------------
+
+/** What a file's presence in the status list means. */
+export type GitState =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "typeChanged"
+  | "untracked"
+  /** A merge conflict. Not stageable from the panel -- resolving it is an edit. */
+  | "conflicted";
+
+/**
+ * One row in the panel.
+ *
+ * A file appears twice when it is staged and then edited again, because git tracks the
+ * index and the working tree separately and that is a real state. `staged` is what
+ * distinguishes the two rows, and what decides which way the stage button points.
+ */
+export interface GitFile {
+  path: WirePath;
+  /** Repository-relative: what the user reads, and what git commands take. */
+  rel: string;
+  staged: boolean;
+  state: GitState;
+  /** Where a rename or copy came from. */
+  from: string | null;
+}
+
+/** `isRepo: false` is a normal answer -- plenty of folders worth opening are not repos. */
+export interface GitStatus {
+  isRepo: boolean;
+  root: WirePath | null;
+  /** `null` on a detached HEAD or an unborn branch. */
+  branch: string | null;
+  /** Short HEAD sha, or `null` before the first commit. */
+  head: string | null;
+  detached: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFile[];
+}
+
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  remote: boolean;
+  upstream: string | null;
+  subject: string;
+}
+
+/** The two sides of one file's diff, for Monaco's diff editor. */
+export interface GitFileDiff {
+  path: WirePath;
+  rel: string;
+  /** `null` when the file did not exist on that side, or when it is binary. */
+  before: string | null;
+  after: string | null;
+  binary: boolean;
+}
+
+export interface GitCommitResult {
+  sha: string;
+  subject: string;
+}

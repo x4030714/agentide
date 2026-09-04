@@ -18,6 +18,7 @@ import { ChangesPane } from "./panes/Changes";
 import { EditorPane } from "./panes/Editor";
 import type { RevealTarget } from "./panes/Editor";
 import { FileTree } from "./panes/FileTree";
+import { GitPane } from "./panes/Git";
 import { TitleBar } from "./panes/TitleBar";
 import { TerminalPane } from "./panes/Terminal";
 import { TranscriptPane } from "./panes/Transcript";
@@ -36,7 +37,7 @@ export default function App() {
   const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
   const [reviewRevision, setReviewRevision] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
-  const [tab, setTab] = useState<"editor" | "changes">("editor");
+  const [tab, setTab] = useState<"editor" | "changes" | "git">("editor");
   /**
    * Where the editor should put the cursor next. Carries a nonce because jumping twice to
    * the same line is a real thing to ask for -- go to definition, scroll away, go again --
@@ -187,6 +188,17 @@ export default function App() {
                     Changes
                     {changeCount > 0 && <span className="tab-count">{changeCount}</span>}
                   </button>
+                  {/* Distinct from Changes on purpose: that tab is the agent's turn
+                      waiting on review, this one is the repository's own state. */}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === "git"}
+                    className={`tab${tab === "git" ? " is-on" : ""}`}
+                    onClick={() => setTab("git")}
+                  >
+                    Repository
+                  </button>
                 </div>
                 <div className="tab-body">
                   {/* Both stay mounted: switching tabs must not drop the editor's
@@ -204,6 +216,17 @@ export default function App() {
                       checkpoint={checkpoint}
                       revision={reviewRevision}
                       onCountChange={setChangeCount}
+                    />
+                  </div>
+                  <div className="tab-panel" hidden={tab !== "git"}>
+                    <GitPane
+                      root={workspace?.root ?? null}
+                      changes={changes}
+                      revision={reviewRevision}
+                      onOpenFile={(path) => {
+                        setActivePath(path as WirePath);
+                        setTab("editor");
+                      }}
                     />
                   </div>
                 </div>

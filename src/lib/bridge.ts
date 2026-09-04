@@ -37,6 +37,10 @@ import type {
   LspInfo,
   LspMessage,
   LspStartOptions,
+  GitBranch,
+  GitCommitResult,
+  GitFileDiff,
+  GitStatus,
 } from "./protocol";
 
 /** Native folder picker. Returns null when the user cancels. */
@@ -390,4 +394,47 @@ export async function lspSend(id: string, message: LspMessage): Promise<void> {
  */
 export async function lspStop(id: string): Promise<void> {
   return invoke("lsp_stop", { id });
+}
+
+// ---------------------------------------------------------------------------
+// The user's own git repository -- wrappers over `src-tauri/src/git.rs`
+//
+// Every one of these runs git in the user's working tree with their config, so a commit
+// made here runs their hooks and signs the way theirs do. See that module's header.
+// ---------------------------------------------------------------------------
+
+/** Never throws for "not a repository"; that comes back as `isRepo: false`. */
+export async function gitStatus(): Promise<GitStatus> {
+  return invoke<GitStatus>("git_status");
+}
+
+/**
+ * One file's two sides. `staged` picks the comparison -- index against HEAD, or working
+ * tree against index -- so a row and the diff it opens always describe the same change.
+ */
+export async function gitFileDiff(rel: string, staged: boolean): Promise<GitFileDiff> {
+  return invoke<GitFileDiff>("git_file_diff", { rel, staged });
+}
+
+export async function gitStage(paths: string[]): Promise<void> {
+  return invoke("git_stage", { paths });
+}
+
+/** Index only: this can never touch the working tree, so it cannot eat an edit. */
+export async function gitUnstage(paths: string[]): Promise<void> {
+  return invoke("git_unstage", { paths });
+}
+
+/** Rejects with an `"git"` error carrying a failing hook's own output. */
+export async function gitCommit(message: string, amend = false): Promise<GitCommitResult> {
+  return invoke<GitCommitResult>("git_commit", { message, amend });
+}
+
+export async function gitBranches(): Promise<GitBranch[]> {
+  return invoke<GitBranch[]>("git_branches");
+}
+
+/** Never forced: git refuses a switch that would discard changes, and names the files. */
+export async function gitSwitch(name: string): Promise<void> {
+  return invoke("git_switch", { name });
 }

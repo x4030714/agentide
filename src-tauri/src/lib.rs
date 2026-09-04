@@ -1,6 +1,7 @@
 mod agent;
 mod checkpoints;
 mod fs;
+mod git;
 mod ipc;
 mod lsp;
 mod pty;
@@ -23,6 +24,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            git::git_status,
+            git::git_file_diff,
+            git::git_stage,
+            git::git_unstage,
+            git::git_commit,
+            git::git_branches,
+            git::git_switch,
             fs::open_workspace,
             fs::close_workspace,
             fs::list_dir,
