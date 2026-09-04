@@ -190,6 +190,11 @@ export interface PromptOptions {
   disallowedTools?: string[];
   maxTurns?: number;
   /**
+   * Appended to Claude Code's preset system prompt, never replacing it. Omitted means
+   * the bare preset — which is exactly what the "Default" prompt mode sends.
+   */
+  systemPromptAppend?: string;
+  /**
    * Emit `stream_event` messages so the transcript can render text as it arrives. Off by
    * default: it multiplies event volume, and a transcript that renders only complete
    * assistant messages should not pay for it.

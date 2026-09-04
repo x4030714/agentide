@@ -1,5 +1,7 @@
 import { EDIT_MODES, MODE_HELP, MODE_LABEL } from "../lib/editmode";
 import type { EditMode } from "../lib/editmode";
+import { PROMPT_HELP, PROMPT_LABEL, PROMPT_MODES } from "../lib/promptmode";
+import type { PromptMode } from "../lib/promptmode";
 import type { EffortLevel, ModelInfo } from "../lib/protocol";
 
 /**
@@ -26,6 +28,10 @@ const ALL_EFFORTS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 interface RunControlsProps {
   mode: EditMode;
   onMode: (mode: EditMode) => void;
+  promptMode: PromptMode;
+  onPromptMode: (mode: PromptMode) => void;
+  /** False when `.agentide/system.md` is absent, so Tuned can say it has nothing to add. */
+  tunedAvailable: boolean;
   models: ModelInfo[];
   model: string | null;
   effort: EffortLevel | null;
@@ -37,6 +43,9 @@ interface RunControlsProps {
 export function RunControls({
   mode,
   onMode,
+  promptMode,
+  onPromptMode,
+  tunedAvailable,
   models,
   model,
   effort,
@@ -81,6 +90,27 @@ export function RunControls({
         ))}
       </div>
 
+      <div className="segmented" role="radiogroup" aria-label="System prompt">
+        {PROMPT_MODES.map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={option === promptMode}
+            className={`segment${option === promptMode ? " is-on" : ""}`}
+            title={
+              option === "tuned" && !tunedAvailable
+                ? "No .agentide/system.md in this workspace, so this adds nothing yet."
+                : PROMPT_HELP[option]
+            }
+            disabled={disabled}
+            onClick={() => onPromptMode(option)}
+          >
+            {PROMPT_LABEL[option]}
+          </button>
+        ))}
+      </div>
+
       <label className="control">
         <span className="legend">Model</span>
         <select
@@ -118,7 +148,15 @@ export function RunControls({
         </label>
       )}
 
-      {!known && <span className="note control-note">catalogue arrives with the first turn</span>}
+      {/**
+       * One note slot, and the more actionable message wins it. A missing system.md is
+       * something the person can fix; the catalogue arriving is just a wait.
+       */}
+      {promptMode === "tuned" && !tunedAvailable ? (
+        <span className="note control-note">no .agentide/system.md — Tuned adds nothing</span>
+      ) : (
+        !known && <span className="note control-note">catalogue arrives with the first turn</span>
+      )}
     </div>
   );
 }

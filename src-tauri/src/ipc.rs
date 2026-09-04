@@ -371,6 +371,10 @@ pub struct PromptOptions {
     pub disallowed_tools: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
+    /// Appended to Claude Code's preset system prompt, never replacing it. `None` means
+    /// the bare preset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt_append: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_partial_messages: Option<bool>,
 }

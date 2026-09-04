@@ -11,6 +11,8 @@ import {
 import { errorMessage } from "../lib/protocol";
 import { isEditMode, modeOptions } from "../lib/editmode";
 import type { EditMode } from "../lib/editmode";
+import { isPromptMode, readTunedPrompt } from "../lib/promptmode";
+import type { PromptMode } from "../lib/promptmode";
 import type { AgentEvent, Checkpoint, EffortLevel, WirePath } from "../lib/protocol";
 import { formatAddr, formatTokens, initialState, reduce } from "../lib/transcript";
 import { RunControls } from "./RunControls";
@@ -28,6 +30,7 @@ interface TranscriptProps {
 const MODEL_KEY = "agentide.model";
 const EFFORT_KEY = "agentide.effort";
 const MODE_KEY = "agentide.editMode";
+const PROMPT_KEY = "agentide.promptMode";
 
 function stored<T extends string>(key: string): T | null {
   try {
@@ -73,6 +76,12 @@ export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps
     // still reversible because the checkpoint is taken regardless of mode.
     return isEditMode(saved) ? saved : "review";
   });
+  const [promptMode, setPromptModeState] = useState<PromptMode>(() => {
+    const saved = stored(PROMPT_KEY);
+    return isPromptMode(saved) ? saved : "tuned";
+  });
+  /** Whether `.agentide/system.md` exists, so Tuned can admit when it adds nothing. */
+  const [tunedAvailable, setTunedAvailable] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -97,6 +106,18 @@ export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps
     // would restart the sidecar.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Only to label the control. The prompt itself is re-read at submit, so editing the
+  // file takes effect on the next turn without a restart.
+  useEffect(() => {
+    let cancelled = false;
+    void readTunedPrompt(root).then((text) => {
+      if (!cancelled) setTunedAvailable(text !== null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [root]);
 
   // Follow the tail, unless the reader has scrolled away from it.
   useEffect(() => {
@@ -138,16 +159,20 @@ export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps
         return;
       }
       try {
+        // Read now, not at mount: the file is meant to be iterated on, and a cached
+        // copy would make editing it silently do nothing until a restart.
+        const append = promptMode === "tuned" ? await readTunedPrompt(root) : null;
         await agentPrompt(sessionId, text, {
           ...modeOptions(mode),
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
+          ...(append ? { systemPromptAppend: append } : {}),
         });
       } catch (err) {
         dispatch({ t: "exited", code: null, message: errorMessage(err), pending: [] });
       }
     })();
-  }, [draft, running, state.status, sessionId, model, effort, mode, onTurnStart]);
+  }, [draft, running, state.status, sessionId, model, effort, mode, promptMode, root, onTurnStart]);
 
   const answer = useCallback((id: string, decision: "allow" | "deny") => {
     agentPermissionReply(id, decision).catch(() => {
@@ -158,6 +183,11 @@ export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps
   const setModel = useCallback((next: string | null) => {
     setModelState(next);
     remember(MODEL_KEY, next);
+  }, []);
+
+  const setPromptMode = useCallback((next: PromptMode) => {
+    setPromptModeState(next);
+    remember(PROMPT_KEY, next);
   }, []);
 
   const setMode = useCallback((next: EditMode) => {
@@ -228,6 +258,9 @@ export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps
       <RunControls
         mode={mode}
         onMode={setMode}
+        promptMode={promptMode}
+        onPromptMode={setPromptMode}
+        tunedAvailable={tunedAvailable}
         models={state.models}
         model={model}
         effort={effort}

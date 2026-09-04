@@ -66,6 +66,14 @@ export const PromptOptionsSchema = z.strictObject({
   disallowedTools: z.array(z.string()).optional(),
   maxTurns: z.number().int().optional(),
   /**
+   * Appended to Claude Code's preset system prompt, never replacing it.
+   *
+   * Replacing would throw away the tool-use discipline the preset carries and make us
+   * responsible for keeping it current per model release; appending keeps that and adds
+   * what the preset cannot know. Omitted means the bare preset.
+   */
+  systemPromptAppend: z.string().optional(),
+  /**
    * Emit `stream_event` messages so the transcript can render text as it arrives. Off by
    * default: it multiplies event volume, and a UI that only renders complete assistant
    * messages should not pay for it.

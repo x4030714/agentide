@@ -599,10 +599,16 @@
 
 /* --- Run controls ----------------------------------------------------------- */
 
+/**
+ * Wraps rather than clips. The transcript is a resizable pane, so this row has no width
+ * it can count on -- without wrapping, narrowing the pane silently cut the Effort control
+ * off the end instead of moving it to a second line.
+ */
 .run-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 6px 12px;
   flex: 0 0 auto;
   padding: 6px 12px 2px;
 }
@@ -615,6 +621,7 @@
 
 .control-select {
   appearance: none;
+  min-width: 5.5rem;
   height: 22px;
   padding: 0 18px 0 8px;
   font: inherit;
@@ -647,9 +654,17 @@
   background: var(--elevated);
 }
 
+/**
+ * Takes the rest of the line when there is room and drops to its own when there is not.
+ * `margin-left: auto` alone would push it off the edge in a narrow pane.
+ */
 .control-note {
   margin-left: auto;
+  min-width: 0;
   font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* --- Composer --------------------------------------------------------------- */

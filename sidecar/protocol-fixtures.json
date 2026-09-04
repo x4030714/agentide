@@ -32,7 +32,8 @@
           "allowedTools": ["Read", "Glob"],
           "disallowedTools": ["Bash(rm *)"],
           "maxTurns": 12,
-          "includePartialMessages": true
+          "includePartialMessages": true,
+          "systemPromptAppend": "Match rustfmt's max_width of 100.\nDo not add a dependency without asking."
         }
       }
     },

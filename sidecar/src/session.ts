@@ -139,7 +139,17 @@ export class Session {
       mcpServers: { ide: createIdeServer(this.#link, this.#sessionId) },
       // The editing agent's own prompt, not a bare model. Without this the built-in
       // Read/Edit/Bash tools arrive with no instructions on how to use them well.
-      systemPrompt: { type: "preset", preset: "claude_code" },
+      //
+      // `append` rather than a replacement: the preset carries the tool-use discipline
+      // and is retuned per model release, so replacing it would mean owning that
+      // forever. An empty append is omitted entirely rather than sent as "".
+      systemPrompt: {
+        type: "preset",
+        preset: "claude_code",
+        ...(options?.systemPromptAppend?.trim()
+          ? { append: options.systemPromptAppend }
+          : {}),
+      },
       // Deliberately no `env`: setting it *replaces* the subprocess environment, and this
       // process was started with the user's, which is where ANTHROPIC_API_KEY or an
       // existing Claude Code login lives. The sidecar never reads or forwards a key.
