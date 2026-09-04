@@ -33,6 +33,10 @@ import type {
   PtyEvent,
   PtyInfo,
   PtySpawnOptions,
+  LspEvent,
+  LspInfo,
+  LspMessage,
+  LspStartOptions,
 } from "./protocol";
 
 /** Native folder picker. Returns null when the user cancels. */
@@ -334,4 +338,56 @@ export async function ptyResize(id: string, rows: number, cols: number): Promise
  */
 export async function ptyKill(id: string): Promise<void> {
   return invoke("pty_kill", { id });
+}
+
+// ---------------------------------------------------------------------------
+// Language servers -- wrappers over `src-tauri/src/lsp.rs`
+//
+// Rust owns the process and the `Content-Length` framing; the LSP client is on this side.
+// See the language-server notes in `protocol.ts` for what that division means.
+// ---------------------------------------------------------------------------
+
+/**
+ * Start a language server and subscribe to it.
+ *
+ * `onEvent` receives batches: `messages` carries an array in the order the server wrote
+ * them, so loop over it. Messages arrive already parsed -- Rust copies the server's bytes
+ * verbatim into the channel payload, so the channel's own parse is the only one -- and
+ * must not be `JSON.parse`d again.
+ *
+ * Rejects with `"notFound"` when the program is not installed and `"lsp"` when it is
+ * there but will not start. Nothing about `initialize` happens here: send it yourself as
+ * the first `lspSend`, with `options.root` as the workspace folder.
+ */
+export async function lspStart(
+  options: LspStartOptions,
+  onEvent: (event: LspEvent) => void,
+): Promise<LspInfo> {
+  const channel = new Channel<LspEvent>();
+  channel.onmessage = onEvent;
+  return invoke<LspInfo>("lsp_start", { options, onEvent: channel });
+}
+
+/**
+ * Send one JSON-RPC message -- request, response or notification. Pass the object; the
+ * framing is added in Rust and nothing there reads what is inside it.
+ *
+ * Rejects with an `"lsp"` error once the server has exited, so a request is never
+ * silently written into a dead pipe and left waiting for a reply that cannot come.
+ */
+export async function lspSend(id: string, message: LspMessage): Promise<void> {
+  return invoke("lsp_send", { id, message });
+}
+
+/**
+ * Stop a server and everything it spawned. Safe to call twice, and safe to call on one
+ * that has already exited.
+ *
+ * Closes the server's stdin and gives it a moment before killing it, which is how a
+ * language server is asked to leave -- and what keeps rust-analyzer from orphaning a
+ * `cargo` process it had running. Send `shutdown`/`exit` first if you want the protocol's
+ * own handshake; this works either way. The session reports `exited` regardless.
+ */
+export async function lspStop(id: string): Promise<void> {
+  return invoke("lsp_stop", { id });
 }

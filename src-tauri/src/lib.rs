@@ -2,6 +2,7 @@ mod agent;
 mod checkpoints;
 mod fs;
 mod ipc;
+mod lsp;
 mod pty;
 mod window;
 
@@ -13,6 +14,7 @@ pub fn run() {
         .manage(fs::WorkspaceState::default())
         .manage(agent::AgentState::default())
         .manage(pty::PtyState::default())
+        .manage(lsp::LspState::default())
         .manage(window::ChromeState::default())
         .setup(|app| {
             // The window is frameless and transparent; this is what makes it translucent
@@ -40,6 +42,9 @@ pub fn run() {
             checkpoints::checkpoint_revert_file,
             checkpoints::checkpoint_revert_hunks,
             checkpoints::checkpoint_rewind,
+            lsp::lsp_start,
+            lsp::lsp_send,
+            lsp::lsp_stop,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
@@ -53,12 +58,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // The sidecar and every pty are child processes, not threads: nothing else
-            // stops them when the window closes, and managed state is not guaranteed to
-            // be dropped here.
+            // The sidecar, every pty and every language server are child processes,
+            // not threads: nothing else stops them when the window closes, and managed
+            // state is not guaranteed to be dropped here.
             if matches!(event, tauri::RunEvent::Exit) {
                 agent::shutdown(app);
                 pty::shutdown(app);
+                lsp::shutdown(app);
             }
         });
 }

@@ -205,6 +205,9 @@ pub enum ErrorCode {
     Window,
     /// A terminal session that cannot be started, or is no longer running.
     Pty,
+    /// A language server that cannot be started, or is no longer running. A server that
+    /// is not installed comes back as `NotFound` instead, so the two are distinguishable.
+    Lsp,
 }
 
 /// The error every command returns. `Serialize` so Tauri can hand it to the frontend.
@@ -787,6 +790,86 @@ pub enum PtyEvent {
         code: Option<u32>,
         /// The signal that ended it, on platforms that have them.
         signal: Option<String>,
+        message: String,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Language servers
+//
+// The shapes `lsp.rs` hands the frontend. Nothing here models LSP itself: a protocol
+// message crosses as [`RawJson`], which is the server's own bytes spliced verbatim into
+// the channel payload. The frontend is the LSP client and owns every bit of the
+// semantics -- ids, capabilities, `initialize`, the lot. See the `lsp.rs` module docs.
+
+/// One JSON document, carried without being understood.
+///
+/// `Box<RawValue>` serializes as the JSON it already is rather than as a string of it, so
+/// a server's message is copied into the channel payload byte for byte: no `Value` tree
+/// is built on the way through, key order and number spelling survive, and the webview's
+/// single `JSON.parse` of the payload is the only parse anyone performs. The one thing
+/// Rust does check is that it *is* well-formed JSON -- a scan, not a parse tree.
+pub type RawJson = Box<serde_json::value::RawValue>;
+
+/// What to start.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LspStartOptions {
+    /// The frontend's handle for this server -- in practice one per language per
+    /// workspace. Starting onto an id that is already running replaces it, killing the
+    /// process that was there.
+    pub id: String,
+    /// argv, where `command[0]` is the program. Resolved against `PATH`; there is no
+    /// table of known servers here, because which server serves which language is the
+    /// frontend's decision, not this crate's.
+    pub command: Vec<String>,
+    /// The directory the server is started in, and which the frontend will name as the
+    /// workspace folder in `initialize`. Defaults to the open workspace.
+    pub root: Option<WirePath>,
+}
+
+/// A server that is running, as `lsp_start` reports it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LspInfo {
+    pub id: String,
+    pub program: String,
+    pub root: WirePath,
+    /// `None` if the platform will not say.
+    pub pid: Option<u32>,
+}
+
+/// What arrives on a language server's channel.
+///
+/// Ordering holds *within* a variant and not across them: `messages` arrive in the order
+/// the server wrote them and `stderr` likewise, but the two are separate pipes with
+/// separate OS buffers, so their relative order was never ours to preserve. `exited` is
+/// the last thing a server sends.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum LspEvent {
+    /// Protocol messages, oldest first. Batched -- see the `lsp.rs` module docs -- so a
+    /// handler must loop, not assume one.
+    #[serde(rename_all = "camelCase")]
+    Messages { id: String, messages: Vec<RawJson> },
+    /// The server talking about itself: its stderr, plus anything it wrote to stdout that
+    /// was not a well-formed message. This is where clangd says it cannot find
+    /// `compile_commands.json` and rust-analyzer says the toolchain is wrong, so it is
+    /// worth showing rather than dropping.
+    #[serde(rename_all = "camelCase")]
+    Stderr { id: String, lines: Vec<String> },
+    /// The process is gone, and so is the session: sending to the id now fails. Every
+    /// request still outstanding will never be answered and should be failed here.
+    ///
+    /// Arrives on a deliberate stop and on a replacement too, so the frontend needs only
+    /// this one path to give up on outstanding work.
+    #[serde(rename_all = "camelCase")]
+    Exited {
+        id: String,
+        /// `None` when the platform would not report a code.
+        code: Option<i32>,
+        /// Human-readable, and carrying the tail of stderr when there was any: a server
+        /// that dies during startup explains itself here.
         message: String,
     },
 }

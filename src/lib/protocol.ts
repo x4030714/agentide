@@ -35,7 +35,12 @@ export type ErrorCode =
    */
   | "stale"
   /** A terminal session that cannot be started, or is no longer running. */
-  | "pty";
+  | "pty"
+  /**
+   * A language server that cannot be started, or is no longer running. A server that is
+   * not installed comes back as `"notFound"` instead, so the two are distinguishable.
+   */
+  | "lsp";
 
 export interface IpcError {
   code: ErrorCode;
@@ -494,3 +499,90 @@ export type PtyEvent = {
   signal: string | null;
   message: string;
 };
+
+// ---------------------------------------------------------------------------
+// Language servers
+//
+// Mirrors `src-tauri/src/ipc.rs`; the mechanism is in `src-tauri/src/lsp.rs`.
+//
+// The Rust side is a pipe with a process attached. It spawns the server, does the
+// `Content-Length` framing on stdio in both directions, and reports the process dying.
+// It does not model LSP: no request table, no id correlation, no capability handling, no
+// `initialize`. **This side is the LSP client** — every bit of protocol semantics lives
+// here, next to the Monaco providers that consume it.
+//
+// A message crosses as the server's own bytes, spliced verbatim into the channel payload
+// rather than re-serialized, so what arrives is already a parsed object: read `id` and
+// `method` off it directly, do not `JSON.parse` it again. What goes down is likewise the
+// object, not a string of it.
+// ---------------------------------------------------------------------------
+
+/**
+ * One JSON-RPC message, as the wire carries it. Deliberately untyped: this file mirrors
+ * the Rust boundary, and LSP's own shapes belong to the client that speaks them.
+ */
+export type LspMessage = JsonObject;
+
+export interface LspStartOptions {
+  /**
+   * This frontend's handle for the server — in practice one per language per workspace.
+   * Starting onto an id that is already running replaces it, killing the process that was
+   * there; the old one reports `exited` on its own channel.
+   */
+  id: string;
+  /**
+   * argv, where `command[0]` is the program, resolved against `PATH`. There is no table
+   * of known servers in Rust: which server serves which language is decided here.
+   */
+  command: string[];
+  /**
+   * Where the server is started, and what you should name as the workspace folder in
+   * `initialize`. Defaults to the open workspace.
+   */
+  root?: WirePath;
+}
+
+/** A server that is running, as `lspStart` reports it. */
+export interface LspInfo {
+  id: string;
+  program: string;
+  root: WirePath;
+  pid: number | null;
+}
+
+/**
+ * What arrives on a language server's channel.
+ *
+ * Ordering holds within a variant, not across them: `messages` arrive in the order the
+ * server wrote them and `stderr` likewise, but they come from separate pipes with
+ * separate OS buffers, so nothing can claim an order between the two. `exited` is the
+ * last thing a server sends.
+ */
+export type LspEvent =
+  /**
+   * Protocol messages, oldest first. **Batched** — rust-analyzer emits `$/progress` by
+   * the hundred per second while it indexes, and one channel message each would melt the
+   * webview. An array preserves boundaries and order exactly, so correlating replies by
+   * id is unaffected; just loop rather than assuming one message.
+   */
+  | { t: "messages"; id: string; messages: LspMessage[] }
+  /**
+   * The server talking about itself: its stderr, plus anything it wrote to stdout that
+   * was not a well-formed message. This is where clangd says it cannot find a
+   * `compile_commands.json` and rust-analyzer says the toolchain is wrong — a server that
+   * starts and then silently does nothing is explaining itself here.
+   */
+  | { t: "stderr"; id: string; lines: string[] }
+  /**
+   * The process is gone and the session with it: `lspSend` on this id now rejects.
+   *
+   * This is the *only* signal that a server has died, and the only one worth acting on.
+   * Nothing in Rust times a request out, because a request that is slow and a server that
+   * is dead look identical from there — rust-analyzer can take minutes to become useful
+   * on a large workspace and is perfectly healthy the whole time. So: keep waiting while
+   * nothing arrives, and fail every outstanding request the moment this does.
+   *
+   * Sent on a deliberate `lspStop` and on a replacement too, so one handler covers all
+   * three. `message` carries the tail of stderr when there was any.
+   */
+  | { t: "exited"; id: string; code: number | null; message: string };
