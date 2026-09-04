@@ -41,6 +41,8 @@ import type {
   GitCommitResult,
   GitFileDiff,
   GitStatus,
+  ConversationSummary,
+  ConversationEntry,
 } from "./protocol";
 
 /** Native folder picker. Returns null when the user cancels. */
@@ -437,4 +439,22 @@ export async function gitBranches(): Promise<GitBranch[]> {
 /** Never forced: git refuses a switch that would discard changes, and names the files. */
 export async function gitSwitch(name: string): Promise<void> {
   return invoke("git_switch", { name });
+}
+
+// ---------------------------------------------------------------------------
+// Past conversations -- wrappers over `src-tauri/src/conversations.rs`
+//
+// These read the agent SDK's own transcripts. Nothing here writes one: the SDK owns
+// those files and resumes from them, and a transcript this app edited is one it could no
+// longer resume.
+// ---------------------------------------------------------------------------
+
+/** Most recently active first. Empty for a workspace that has never had a turn. */
+export async function conversationsList(): Promise<ConversationSummary[]> {
+  return invoke<ConversationSummary[]>("conversations_list");
+}
+
+/** One conversation's messages, for reading. */
+export async function conversationRead(id: string): Promise<ConversationEntry[]> {
+  return invoke<ConversationEntry[]>("conversation_read", { id });
 }

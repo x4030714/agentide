@@ -18,6 +18,7 @@ import { ChangesPane } from "./panes/Changes";
 import { EditorPane } from "./panes/Editor";
 import type { RevealTarget } from "./panes/Editor";
 import { FileTree } from "./panes/FileTree";
+import { ConversationsPane } from "./panes/Conversations";
 import { GitPane } from "./panes/Git";
 import { TitleBar } from "./panes/TitleBar";
 import { TerminalPane } from "./panes/Terminal";
@@ -37,13 +38,19 @@ export default function App() {
   const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
   const [reviewRevision, setReviewRevision] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
-  const [tab, setTab] = useState<"editor" | "changes" | "git">("editor");
+  const [tab, setTab] = useState<"editor" | "changes" | "git" | "conversations">("editor");
   /**
    * Where the editor should put the cursor next. Carries a nonce because jumping twice to
    * the same line is a real thing to ask for -- go to definition, scroll away, go again --
    * and identical props would make the second one do nothing.
    */
   const [reveal, setReveal] = useState<RevealTarget | null>(null);
+  /**
+   * The past conversation the next prompt continues, or null for this session's own.
+   * Stays set once chosen: the sidecar adopts the id, so every following turn continues
+   * the same conversation, and a marker that cleared itself would say otherwise.
+   */
+  const [resumed, setResumed] = useState<string | null>(null);
 
   /**
    * Go-to-definition landing in another file. The tab switch is part of the answer: a
@@ -97,6 +104,8 @@ export default function App() {
       setWorkspace(opened);
       setActivePath(null);
       setChanges([]);
+      // Conversations are per-workspace, so the one being continued cannot survive a move.
+      setResumed(null);
       setError(null);
       localStorage.setItem(LAST_WORKSPACE_KEY, opened.root);
     } catch (err) {
@@ -154,6 +163,7 @@ export default function App() {
             root={workspace?.root ?? null}
             onTurnStart={onTurnStart}
             onTurnEnd={onTurnEnd}
+            resumeConversation={resumed}
             onToolCall={onToolCall}
             hostTools={HOST_TOOL_NAMES}
           />
@@ -199,6 +209,15 @@ export default function App() {
                   >
                     Repository
                   </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === "conversations"}
+                    className={`tab${tab === "conversations" ? " is-on" : ""}`}
+                    onClick={() => setTab("conversations")}
+                  >
+                    Conversations
+                  </button>
                 </div>
                 <div className="tab-body">
                   {/* Both stay mounted: switching tabs must not drop the editor's
@@ -216,6 +235,14 @@ export default function App() {
                       checkpoint={checkpoint}
                       revision={reviewRevision}
                       onCountChange={setChangeCount}
+                    />
+                  </div>
+                  <div className="tab-panel" hidden={tab !== "conversations"}>
+                    <ConversationsPane
+                      root={workspace?.root ?? null}
+                      revision={reviewRevision}
+                      resumedId={resumed}
+                      onResume={setResumed}
                     />
                   </div>
                   <div className="tab-panel" hidden={tab !== "git"}>

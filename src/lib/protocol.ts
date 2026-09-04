@@ -211,6 +211,11 @@ export interface PromptOptions {
    * assistant messages should not pay for it.
    */
   includePartialMessages?: boolean;
+  /**
+   * Continue a past conversation by its transcript id, rather than this session's own.
+   * Sent per prompt, because picking one is something the user does mid-session.
+   */
+  resumeConversation?: string;
 }
 
 export type PermissionDecision = "allow" | "deny";
@@ -675,4 +680,32 @@ export interface GitFileDiff {
 export interface GitCommitResult {
   sha: string;
   subject: string;
+}
+
+// ---------------------------------------------------------------------------
+// Past conversations -- mirrors `src-tauri/src/conversations.rs`
+// ---------------------------------------------------------------------------
+
+/** One past conversation, as much as is known without opening it. */
+export interface ConversationSummary {
+  /** The SDK's session id: the filename, and the handle for resuming. */
+  id: string;
+  /** The SDK's own generated title, when it made one. */
+  title: string | null;
+  /** The first thing the user said, which is the title when there is no title. */
+  opening: string | null;
+  startedMs: number | null;
+  updatedMs: number | null;
+  prompts: number;
+  replies: number;
+  branch: string | null;
+}
+
+/** One message from a past conversation, flattened for display. */
+export interface ConversationEntry {
+  role: "user" | "assistant";
+  text: string;
+  atMs: number | null;
+  /** Tools this message called, so a reply that only used tools is not blank. */
+  tools: string[];
 }

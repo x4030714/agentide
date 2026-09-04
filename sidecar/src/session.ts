@@ -83,6 +83,12 @@ export class Session {
       return;
     }
 
+    // Adopting the id rather than passing it straight through: from here on this session
+    // *is* that conversation, so the turn after this one continues it too. Handing the
+    // SDK a one-off `resume` would make every following turn start a new branch from the
+    // same point, which looks like the resume silently stopped working.
+    if (options?.resumeConversation) this.#resumeId = options.resumeConversation;
+
     let reason: DoneReason = "success";
     let error: string | undefined;
     const running = query({ prompt: text, options: this.#options(cwd, options) });

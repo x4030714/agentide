@@ -1572,3 +1572,110 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Conversations: the agent's own past transcripts.
+   Same row grammar as the repository panel -- a mark, a name, a dimmed line of context,
+   an action -- because both are lists of things you pick one of. The mark is blue here:
+   these belong to the agent, not to git. */
+.convo-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px;
+}
+
+.convo-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--r-chip);
+  transition: background var(--t-fast) var(--ease);
+}
+
+.convo-row:hover {
+  background: var(--sunken);
+}
+
+.convo-row.is-selected {
+  background: var(--sym-fill);
+}
+
+.convo-row.is-selected .convo-name,
+.convo-row.is-selected .convo-meta {
+  color: #ffffff;
+}
+
+.convo-open {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 8px;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+}
+
+.convo-name {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.convo-meta {
+  font-size: 11px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The one being continued is stated, not merely highlighted: which conversation the next
+   prompt lands in is the single fact this panel must never leave ambiguous. */
+.convo-row.is-live {
+  background: var(--tint-accent);
+}
+
+.convo-live {
+  padding-right: 8px;
+  color: var(--sym);
+}
+
+.convo-read {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+}
+
+.convo-message {
+  max-width: 72ch;
+  margin-bottom: 8px;
+  padding: 7px 11px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  border-radius: var(--r-panel);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.convo-message.is-user {
+  background: var(--tint-accent);
+  font-weight: 500;
+}
+
+.convo-message.is-assistant {
+  background: var(--sunken);
+}
+
+.convo-tools {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--sym);
+}

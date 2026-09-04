@@ -74,6 +74,14 @@ export const PromptOptionsSchema = z.strictObject({
    */
   systemPromptAppend: z.string().optional(),
   /**
+   * Continue a past conversation instead of this session's own.
+   *
+   * The SDK resumes from its transcript on disk, so this is the id of a file the host
+   * listed -- not a session this process has seen. Sent per prompt rather than at start:
+   * picking a conversation is something the user does mid-session.
+   */
+  resumeConversation: z.string().optional(),
+  /**
    * Emit `stream_event` messages so the transcript can render text as it arrives. Off by
    * default: it multiplies event volume, and a UI that only renders complete assistant
    * messages should not pay for it.

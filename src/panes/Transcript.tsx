@@ -39,6 +39,13 @@ interface TranscriptProps {
   onToolCall: (name: string, args: JsonObject) => Promise<ToolResult>;
   /** The names `onToolCall` will answer. Anything else is answered by the Rust core. */
   hostTools: readonly string[];
+  /**
+   * A past conversation to continue instead of this session's own, chosen in the
+   * Conversations panel. Sent with every prompt: the sidecar adopts the id, so repeating
+   * it costs nothing, and dropping it after the first turn would branch the conversation
+   * without saying so.
+   */
+  resumeConversation: string | null;
 }
 
 /** Survives a restart: this is the control, so it is also the setting. */
@@ -85,6 +92,7 @@ export function TranscriptPane({
   onTurnEnd,
   onToolCall,
   hostTools,
+  resumeConversation,
 }: TranscriptProps) {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [sessionId] = useState(newSessionId);
@@ -208,12 +216,13 @@ export function TranscriptPane({
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
           ...(append ? { systemPromptAppend: append } : {}),
+          ...(resumeConversation ? { resumeConversation } : {}),
         });
       } catch (err) {
         dispatch({ t: "exited", code: null, message: errorMessage(err), pending: [] });
       }
     })();
-  }, [draft, running, state.status, sessionId, model, effort, mode, promptMode, root, onTurnStart]);
+  }, [draft, running, state.status, sessionId, model, effort, mode, promptMode, root, resumeConversation, onTurnStart]);
 
   const answer = useCallback((id: string, decision: "allow" | "deny") => {
     agentPermissionReply(id, decision).catch(() => {

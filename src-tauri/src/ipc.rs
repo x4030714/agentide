@@ -381,6 +381,10 @@ pub struct PromptOptions {
     pub system_prompt_append: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_partial_messages: Option<bool>,
+    /// Continue a past conversation by its transcript id, rather than this session's own.
+    /// Sent per prompt, because picking one is something the user does mid-session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_conversation: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

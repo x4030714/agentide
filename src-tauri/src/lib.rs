@@ -2,6 +2,7 @@ use tauri::Manager;
 
 mod agent;
 mod checkpoints;
+mod conversations;
 mod fs;
 mod git;
 mod ipc;
@@ -31,6 +32,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            conversations::conversations_list,
+            conversations::conversation_read,
             git::git_status,
             git::git_file_diff,
             git::git_stage,
