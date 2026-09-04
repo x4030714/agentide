@@ -67,6 +67,7 @@ self.MonacoEnvironment = {
  * another in the editor breaks the premise the whole system rests on.
  */
 interface Role {
+  /** Both transparent: the pane behind supplies the ground, and it is translucent. */
   ground: string;
   gutter: string;
   raised: string;
@@ -87,19 +88,19 @@ interface Role {
 }
 
 const DARK: Role = {
-  ground: "#151819",
-  gutter: "#131619",
+  ground: "#00000000",
+  gutter: "#00000000",
   raised: "#21252c",
   hairline: "#252a31",
   border: "#39404a",
   ink: "#e9edf3",
-  inkDim: "#a3acb9",
+  inkDim: "#a7afbc",
   inkFaint: "#6e7885",
   addr: "#e3ae52",
   sym: "#7cbaff",
   xref: "#5fd693",
   imm: "#ff8fa8",
-  error: "#ff6f66",
+  error: "#ff8f88",
   warn: "#f2c14a",
   hint: "#6ad0ff",
   selection: "#7cbaff33",
@@ -107,22 +108,22 @@ const DARK: Role = {
 };
 
 const LIGHT: Role = {
-  ground: "#ffffff",
-  gutter: "#fafbfc",
+  ground: "#00000000",
+  gutter: "#00000000",
   raised: "#ffffff",
   hairline: "#e8eaee",
   border: "#c9ced6",
   ink: "#1b1f27",
-  inkDim: "#59636f",
+  inkDim: "#515a65",
   inkFaint: "#8a939f",
-  addr: "#855a0b",
-  sym: "#0a5fc2",
-  xref: "#10703f",
-  imm: "#b8185a",
-  error: "#bd261e",
-  warn: "#835b00",
-  hint: "#0366a1",
-  selection: "#0a5fc226",
+  addr: "#78510a",
+  sym: "#0956b1",
+  xref: "#0f663a",
+  imm: "#ac1654",
+  error: "#ab221b",
+  warn: "#765200",
+  hint: "#035d93",
+  selection: "#0956b126",
   lineHighlight: "#0000000a",
 };
 

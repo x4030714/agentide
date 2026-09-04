@@ -37,14 +37,21 @@
    * effect fails, `[data-effect="off"]` swaps these for opaque equivalents rather than
    * leaving the app to render over whatever the compositor last drew.
    */
-  --ground: rgb(244 245 248 / 70%);
+  --ground: rgb(244 245 248 / 55%);
   /**
-   * Opaque, and exactly Monaco's own `editor.background`. Content panes are where the
-   * text lives, so they are the half of the rule that does not let the desktop through;
-   * leaving them at 88% also put a translucent pane around an opaque editor, which read
-   * as a seam. Translucency is the rail and the title bar's job.
+   * Translucent too, by request: the desktop shows through the transcript and the
+   * editor, not just the chrome. The effective 82% is the most transparent this can be
+   * while every role below still clears 4.5:1 against the worst case, which for a light
+   * pane is a black wallpaper compositing it down to #d1d1d1. Monaco's own background
+   * is transparent to match, or the editor would stay an opaque rectangle inside a
+   * see-through pane.
+   *
+   * 62%, not 82%, because a content pane composites *over* `.app`'s ground rather than
+   * over the desktop: 1-(1-0.62)(1-0.53) = 0.82 effective, which is the figure the role
+   * colours below were solved against. Setting 82% here would have shipped 91% and a
+   * barely-translucent pane.
    */
-  --surface: #ffffff;
+  --surface: rgb(255 255 255 / 62%);
   --elevated: rgb(255 255 255 / 97%);
   --sunken: rgb(0 0 0 / 4%);
 
@@ -53,7 +60,7 @@
   --border: rgb(0 0 0 / 16%);
 
   --ink: #1b1f27;
-  --ink-dim: #59636f;
+  --ink-dim: #515a65;
   --ink-faint: #8a939f;
 
   /**
@@ -65,20 +72,20 @@
    * measurement. Kept as-is rather than re-brightened: they read well, and a role that
    * clears its floor by a margin is not a defect.
    */
-  --addr: #855a0b; /* 4.59:1 worst case, 6.06:1 on white */
-  --sym: #0a5fc2; /* 4.66 / 6.12 */
-  --xref: #10703f; /* 4.68 / 6.16 */
-  --imm: #b8185a; /* 4.82 / 6.33 */
-  --uncommitted: #9c1489; /* 5.55 / 7.30 */
+  --addr: #78510a; /* 4.62:1 worst case */
+  --sym: #0956b1; /* 4.62 */
+  --xref: #0f663a; /* 4.62 */
+  --imm: #ac1654; /* 4.59 */
+  --uncommitted: #9c1489; /* 4.79 */
 
-  --error: #bd261e; /* 4.60 / 6.07 */
-  --warn: #835b00; /* 4.60 / 6.07 */
-  --hint: #0366a1; /* 4.67 / 6.14 */
+  --error: #ab221b; /* 4.63 */
+  --warn: #765200; /* 4.62 */
+  --hint: #035d93; /* 4.60 */
 
   /* Fields, for states that colour a whole row rather than its text. */
-  --tint-accent: rgb(10 95 194 / 11%);
-  --tint-addr: rgb(133 90 11 / 12%);
-  --tint-error: rgb(189 38 30 / 10%);
+  --tint-accent: rgb(9 86 177 / 12%);
+  --tint-addr: rgb(120 81 10 / 13%);
+  --tint-error: rgb(171 34 27 / 11%);
 
   --shadow-1:
     0 1px 2px rgb(15 20 30 / 8%),
@@ -91,8 +98,8 @@
 /* System dark, unless a light theme was explicitly chosen. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ground: rgb(17 19 23 / 68%);
-    --surface: #151819;
+    --ground: rgb(17 19 23 / 53%);
+    --surface: rgb(21 24 29 / 62%);
     --elevated: rgb(33 37 44 / 97%);
     --sunken: rgb(0 0 0 / 22%);
 
@@ -100,23 +107,23 @@
     --border: rgb(255 255 255 / 17%);
 
     --ink: #e9edf3;
-    --ink-dim: #a3acb9;
+    --ink-dim: #a7afbc;
     --ink-faint: #6e7885;
 
     --addr: #e3ae52;
     --sym: #7cbaff;
     --xref: #5fd693;
     --imm: #ff8fa8;
-    --uncommitted: #ec84d6;
+    --uncommitted: #ee8fda;
 
     /* Dark-theme roles, same check: 88% of #151819 over white composites to #313438. */
-    --error: #ff6f66; /* 4.61:1 worst case */
+    --error: #ff8f88; /* 4.61:1 worst case */
     --warn: #f2c14a; /* 7.47 */
     --hint: #6ad0ff; /* 7.21 */
 
     --tint-accent: rgb(124 186 255 / 14%);
     --tint-addr: rgb(227 174 82 / 14%);
-    --tint-error: rgb(255 111 102 / 13%);
+    --tint-error: rgb(255 143 136 / 13%);
 
     --shadow-1:
       0 1px 2px rgb(0 0 0 / 32%),
@@ -129,8 +136,8 @@
 
 /* The manual override wins in both directions. */
 :root[data-theme="dark"] {
-  --ground: rgb(17 19 23 / 68%);
-  --surface: #151819;
+  --ground: rgb(17 19 23 / 53%);
+  --surface: rgb(21 24 29 / 62%);
   --elevated: rgb(33 37 44 / 97%);
   --sunken: rgb(0 0 0 / 22%);
 
@@ -138,22 +145,22 @@
   --border: rgb(255 255 255 / 17%);
 
   --ink: #e9edf3;
-  --ink-dim: #a3acb9;
+  --ink-dim: #a7afbc;
   --ink-faint: #6e7885;
 
   --addr: #e3ae52;
   --sym: #7cbaff;
   --xref: #5fd693;
   --imm: #ff8fa8;
-  --uncommitted: #ec84d6;
+  --uncommitted: #ee8fda;
 
-  --error: #ff6f66;
+  --error: #ff8f88;
   --warn: #f2c14a;
   --hint: #6ad0ff;
 
   --tint-accent: rgb(124 186 255 / 14%);
   --tint-addr: rgb(227 174 82 / 14%);
-  --tint-error: rgb(255 111 102 / 13%);
+  --tint-error: rgb(255 143 136 / 13%);
 
   --shadow-1:
     0 1px 2px rgb(0 0 0 / 32%),
