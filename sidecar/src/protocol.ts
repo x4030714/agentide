@@ -109,6 +109,25 @@ export type PermissionDecision = z.infer<typeof PermissionDecisionSchema>;
  * needs; the fields describing modes this protocol does not plumb are dropped here
  * rather than forwarded and ignored.
  */
+/**
+ * One slash command this installation accepts, as the SDK reports it.
+ *
+ * Read from the SDK rather than listed here: commands come from the CLI build, the
+ * user's own `.claude/commands`, and any plugin they have enabled, so a hardcoded list
+ * would be wrong on every machine including this one.
+ */
+export const SlashCommandSchema = z.strictObject({
+  /** Without the leading slash. */
+  name: z.string(),
+  description: z.string(),
+  /** What arguments it takes, e.g. "<file>". Empty when it takes none. */
+  argumentHint: z.string(),
+  /** Other spellings that resolve to it, e.g. /cost for /usage. */
+  aliases: z.array(z.string()).optional(),
+});
+
+export type SlashCommand = z.infer<typeof SlashCommandSchema>;
+
 export const ModelInfoSchema = z.strictObject({
   /** The id to send back as `PromptOptions.model`. */
   value: z.string(),
@@ -177,6 +196,7 @@ export const SidecarMessageSchema = z.discriminatedUnion("t", [
    * before one has started. Not tied to a session -- it describes the installation.
    */
   z.strictObject({ t: z.literal("models"), models: z.array(ModelInfoSchema) }),
+  z.strictObject({ t: z.literal("commands"), commands: z.array(SlashCommandSchema) }),
   /** A tool call that fell through to a prompt. Await a `permission_reply` with this id. */
   z.strictObject({
     t: z.literal("permission_request"),

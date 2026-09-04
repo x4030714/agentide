@@ -411,6 +411,19 @@ pub enum DoneReason {
 /// rename in the SDK should fail a fixture here rather than empty a menu at runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SlashCommand {
+    /// Without the leading slash.
+    pub name: String,
+    pub description: String,
+    /// What arguments it takes, e.g. `"<file>"`. Empty when it takes none.
+    pub argument_hint: String,
+    /// Other spellings that resolve to it, e.g. `/cost` for `/usage`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     /// The id to send back as [`PromptOptions::model`].
     pub value: String,
@@ -491,6 +504,10 @@ pub enum AgentEvent {
     /// turn: the list only exists on a live query, so there is none before one starts.
     #[serde(rename_all = "camelCase")]
     Models { models: Vec<ModelInfo> },
+    /// The slash commands this installation accepts. Arrives with the models and for the
+    /// same reason: both describe the installation, and both need a live query to read.
+    #[serde(rename_all = "camelCase")]
+    Commands { commands: Vec<SlashCommand> },
     /// A tool call awaiting approval. Answer with `agent_permission_reply`.
     #[serde(rename_all = "camelCase")]
     PermissionRequest {

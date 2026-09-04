@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import {
   agentInterrupt,
@@ -19,6 +19,7 @@ import type {
   Checkpoint,
   EffortLevel,
   JsonObject,
+  SlashCommand,
   ToolResult,
   WirePath,
 } from "../lib/protocol";
@@ -47,6 +48,12 @@ interface TranscriptProps {
    * without saying so.
    */
   resumeConversation: string | null;
+  /**
+   * The user started a new conversation. The parent clears whatever it was continuing:
+   * this pane owns the transcript, but which past conversation is being resumed is the
+   * parent's state.
+   */
+  onNewConversation: () => void;
 }
 
 /** Survives a restart: this is the control, so it is also the setting. */
@@ -94,9 +101,10 @@ export function TranscriptPane({
   onToolCall,
   hostTools,
   resumeConversation,
+  onNewConversation,
 }: TranscriptProps) {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
-  const [sessionId] = useState(newSessionId);
+  const [sessionId, setSessionId] = useState(newSessionId);
   const [draft, setDraft] = useState("");
   const [model, setModelState] = useState<string | null>(() => stored(MODEL_KEY));
   const [effort, setEffortState] = useState<EffortLevel | null>(() => stored<EffortLevel>(EFFORT_KEY));
@@ -225,6 +233,22 @@ export function TranscriptPane({
     })();
   }, [draft, running, state.status, sessionId, model, effort, mode, promptMode, root, resumeConversation, onTurnStart]);
 
+  /**
+   * Start over: a new session id, an empty transcript, nothing resumed.
+   *
+   * The sidecar is left running. It holds no per-conversation state of its own -- the
+   * SDK's transcript is keyed by session id and a new id is simply a new one -- so
+   * restarting it would cost a second of startup to achieve nothing.
+   */
+  const newConversation = useCallback(() => {
+    setSessionId(newSessionId());
+    setDraft("");
+    setExpanded(new Set());
+    dispatch({ t: "conversation_reset" });
+    onNewConversation();
+    pinned.current = true;
+  }, [onNewConversation]);
+
   const answer = useCallback((id: string, decision: "allow" | "deny") => {
     agentPermissionReply(id, decision).catch(() => {
       /* Already answered -- the `permission_decided` event tells the row what happened. */
@@ -275,6 +299,17 @@ export function TranscriptPane({
         ) : (
           state.meta.model && <span className="measure">{state.meta.model}</span>
         )}
+        {/* Disabled rather than hidden while a turn runs: a control that vanishes when
+            you reach for it is worse than one that says why it will not work. */}
+        <button
+          type="button"
+          className="ghost-button"
+          disabled={running || state.rows.length === 0}
+          title="Start a new conversation"
+          onClick={newConversation}
+        >
+          New
+        </button>
         {running && (
           <button
             type="button"
@@ -326,6 +361,7 @@ export function TranscriptPane({
         onSubmit={submit}
         disabled={!root || state.status === "exited"}
         running={running}
+        commands={state.commands}
       />
     </div>
   );
@@ -534,14 +570,52 @@ function Composer({
   onSubmit,
   disabled,
   running,
+  commands,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   disabled: boolean;
   running: boolean;
+  /** What this installation accepts, as the SDK reported it. */
+  commands: SlashCommand[];
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const [highlight, setHighlight] = useState(0);
+
+  /**
+   * The commands worth offering for what has been typed so far.
+   *
+   * Only while the draft is a single `/word` with no space after it: past that the user
+   * is writing the command's arguments, and a menu over the top of that is in the way.
+   * Aliases match too but are not listed, because `/cost` and `/usage` being two rows
+   * for one command makes the list longer without making it more useful.
+   */
+  const matches = useMemo(() => {
+    const typed = /^\/(\S*)$/.exec(value);
+    if (!typed) return [];
+    const query = typed[1].toLowerCase();
+    return commands
+      .filter(
+        (command) =>
+          command.name.toLowerCase().startsWith(query) ||
+          command.aliases?.some((alias) => alias.toLowerCase().startsWith(query)),
+      )
+      .slice(0, 8);
+  }, [value, commands]);
+
+  // Any change to the list puts the selection back at the top, so typing one more
+  // character cannot leave the highlight on a row that has moved.
+  useEffect(() => {
+    setHighlight(0);
+  }, [matches.length, value]);
+
+  const complete = (command: SlashCommand) => {
+    // A command that takes arguments keeps the cursor after a space, ready for them; one
+    // that does not is left ready to send.
+    onChange(`/${command.name}${command.argumentHint ? " " : ""}`);
+    ref.current?.focus();
+  };
 
   // Grow to the content, to a point; past that the field scrolls.
   useEffect(() => {
@@ -553,6 +627,27 @@ function Composer({
 
   return (
     <div className="composer">
+      {matches.length > 0 && (
+        <div className="command-menu" role="listbox" aria-label="Commands">
+          {matches.map((command, index) => (
+            <button
+              key={command.name}
+              type="button"
+              role="option"
+              aria-selected={index === highlight}
+              className={`command-row${index === highlight ? " is-on" : ""}`}
+              onMouseEnter={() => setHighlight(index)}
+              onClick={() => complete(command)}
+            >
+              <span className="command-name">/{command.name}</span>
+              {command.argumentHint && (
+                <span className="command-args">{command.argumentHint}</span>
+              )}
+              <span className="command-note">{command.description}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <span className="composer-mark" aria-hidden="true">
         &gt;
       </span>
@@ -568,6 +663,32 @@ function Composer({
         }
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
+          if (matches.length > 0) {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const step = event.key === "ArrowDown" ? 1 : -1;
+              setHighlight((at) => (at + step + matches.length) % matches.length);
+              return;
+            }
+            if (event.key === "Tab") {
+              event.preventDefault();
+              complete(matches[highlight]);
+              return;
+            }
+            if (event.key === "Escape") {
+              // Dismiss the menu without losing what was typed.
+              event.preventDefault();
+              onChange(`${value} `);
+              return;
+            }
+            if (event.key === "Enter" && !event.shiftKey && matches[highlight].argumentHint) {
+              // A command that wants arguments should not be sent by the Enter that
+              // picked it out of the list.
+              event.preventDefault();
+              complete(matches[highlight]);
+              return;
+            }
+          }
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             onSubmit();

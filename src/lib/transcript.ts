@@ -19,7 +19,7 @@
  * renumbers, so a row can be referred to after the fact.
  */
 
-import type { AgentEvent, JsonObject, ModelInfo } from "./protocol";
+import type { AgentEvent, JsonObject, ModelInfo, SlashCommand } from "./protocol";
 
 /** What drives a tool row's colour: what kind of thing the agent reached for. */
 export type ToolClass =
@@ -100,6 +100,8 @@ export type TranscriptStatus = "idle" | "starting" | "ready" | "running" | "exit
 export interface TranscriptState {
   rows: Row[];
   status: TranscriptStatus;
+  /** Slash commands this installation accepts, as the SDK reported them. */
+  commands: SlashCommand[];
   sessionId: string | null;
   meta: TranscriptMeta;
   /**
@@ -138,7 +140,18 @@ export interface TranscriptState {
 }
 
 /** A prompt the person submitted. Not on the wire — the UI raises it locally. */
-export type TranscriptAction = { t: "prompt_submitted"; text: string } | AgentEvent;
+export type TranscriptAction =
+  | { t: "prompt_submitted"; text: string }
+  /**
+   * Start a new conversation in the same sidecar.
+   *
+   * Everything the conversation accumulated goes -- rows, addresses, turn count, the
+   * derived indices -- while everything that describes the *installation* stays: the
+   * model list and the command list were read once per sidecar and are still true. The
+   * status stays too, because the sidecar did not restart and is still ready.
+   */
+  | { t: "conversation_reset" }
+  | AgentEvent;
 
 export function initialState(): TranscriptState {
   return {
@@ -153,6 +166,7 @@ export function initialState(): TranscriptState {
     turnClosed: false,
     thinking: null,
     models: [],
+    commands: [],
   };
 }
 
@@ -317,8 +331,22 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
         (addr, turn) => ({ kind: "prompt", addr, turn, text: action.text }),
       );
 
+    case "conversation_reset": {
+      const fresh = initialState();
+      return {
+        ...fresh,
+        status: state.status === "exited" ? "exited" : "ready",
+        models: state.models,
+        commands: state.commands,
+        meta: { ...fresh.meta, pid: state.meta.pid, sdkVersion: state.meta.sdkVersion },
+      };
+    }
+
     case "models":
       return { ...state, models: action.models };
+
+    case "commands":
+      return { ...state, commands: action.commands };
 
     case "ready":
       return {

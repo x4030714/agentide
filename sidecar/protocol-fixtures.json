@@ -24,13 +24,18 @@
         "t": "prompt",
         "sessionId": "s-2",
         "cwd": "//server/share/project",
-        "text": "line one\nline two\ttabbed \"quoted\" \\ backslash \u00e9",
+        "text": "line one\nline two\ttabbed \"quoted\" \\ backslash é",
         "options": {
           "model": "claude-opus-5",
           "effort": "xhigh",
           "permissionMode": "acceptEdits",
-          "allowedTools": ["Read", "Glob"],
-          "disallowedTools": ["Bash(rm *)"],
+          "allowedTools": [
+            "Read",
+            "Glob"
+          ],
+          "disallowedTools": [
+            "Bash(rm *)"
+          ],
           "maxTurns": 12,
           "includePartialMessages": true,
           "systemPromptAppend": "Match rustfmt's max_width of 100.\nDo not add a dependency without asking."
@@ -39,7 +44,11 @@
     },
     {
       "name": "permission allow, input unchanged",
-      "message": { "t": "permission_reply", "id": "p-1", "decision": "allow" }
+      "message": {
+        "t": "permission_reply",
+        "id": "p-1",
+        "decision": "allow"
+      }
     },
     {
       "name": "permission allow with edited input",
@@ -47,7 +56,10 @@
         "t": "permission_reply",
         "id": "p-2",
         "decision": "allow",
-        "updatedInput": { "file_path": "C:/Users/tung/Desktop/agentide/src/App.tsx", "limit": 40 }
+        "updatedInput": {
+          "file_path": "C:/Users/tung/Desktop/agentide/src/App.tsx",
+          "limit": 40
+        }
       }
     },
     {
@@ -64,7 +76,10 @@
       "message": {
         "t": "tool_reply",
         "id": "c-1",
-        "result": { "ok": true, "text": "src/App.tsx:12:4-12:31" }
+        "result": {
+          "ok": true,
+          "text": "src/App.tsx:12:4-12:31"
+        }
       }
     },
     {
@@ -72,16 +87,35 @@
       "message": {
         "t": "tool_reply",
         "id": "c-2",
-        "result": { "ok": false, "error": "no editor is open" }
+        "result": {
+          "ok": false,
+          "error": "no editor is open"
+        }
       }
     },
-    { "name": "interrupt", "message": { "t": "interrupt", "sessionId": "s-1" } },
-    { "name": "ping", "message": { "t": "ping", "id": "ping-1" } }
+    {
+      "name": "interrupt",
+      "message": {
+        "t": "interrupt",
+        "sessionId": "s-1"
+      }
+    },
+    {
+      "name": "ping",
+      "message": {
+        "t": "ping",
+        "id": "ping-1"
+      }
+    }
   ],
   "sidecarToHost": [
     {
       "name": "ready",
-      "message": { "t": "ready", "pid": 4242, "sdkVersion": "0.3.259" }
+      "message": {
+        "t": "ready",
+        "pid": 4242,
+        "sdkVersion": "0.3.259"
+      }
     },
     {
       "name": "event carrying an opaque SDKMessage",
@@ -95,7 +129,12 @@
           "parent_tool_use_id": null,
           "message": {
             "id": "msg_01",
-            "content": [{ "type": "text", "text": "Reading src/fs.rs" }],
+            "content": [
+              {
+                "type": "text",
+                "text": "Reading src/fs.rs"
+              }
+            ],
             "stop_reason": null
           }
         }
@@ -112,7 +151,13 @@
             "displayName": "Sonnet 5",
             "description": "Fast, for everyday coding",
             "supportsEffort": true,
-            "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]
+            "supportedEffortLevels": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
           },
           {
             "value": "claude-3-5-haiku-20241022",
@@ -124,7 +169,39 @@
     },
     {
       "name": "models, none reported",
-      "message": { "t": "models", "models": [] }
+      "message": {
+        "t": "models",
+        "models": []
+      }
+    },
+    {
+      "name": "commands, one with aliases and one without",
+      "message": {
+        "t": "commands",
+        "commands": [
+          {
+            "name": "usage",
+            "description": "Show token use and cost",
+            "argumentHint": "",
+            "aliases": [
+              "cost",
+              "stats"
+            ]
+          },
+          {
+            "name": "review",
+            "description": "Review the working tree",
+            "argumentHint": "<path>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "commands, none reported",
+      "message": {
+        "t": "commands",
+        "commands": []
+      }
     },
     {
       "name": "permission request",
@@ -147,7 +224,10 @@
         "id": "c-1",
         "sessionId": "s-1",
         "name": "ide_diagnostics",
-        "args": { "path": "C:/Users/tung/Desktop/agentide/src/App.tsx", "severity": "error" }
+        "args": {
+          "path": "C:/Users/tung/Desktop/agentide/src/App.tsx",
+          "severity": "error"
+        }
       }
     },
     {
@@ -162,15 +242,27 @@
     },
     {
       "name": "done, success",
-      "message": { "t": "done", "sessionId": "s-1", "reason": "success" }
+      "message": {
+        "t": "done",
+        "sessionId": "s-1",
+        "reason": "success"
+      }
     },
     {
       "name": "done, interrupted",
-      "message": { "t": "done", "sessionId": "s-1", "reason": "interrupted" }
+      "message": {
+        "t": "done",
+        "sessionId": "s-1",
+        "reason": "interrupted"
+      }
     },
     {
       "name": "done, turn limit",
-      "message": { "t": "done", "sessionId": "s-1", "reason": "max_turns" }
+      "message": {
+        "t": "done",
+        "sessionId": "s-1",
+        "reason": "max_turns"
+      }
     },
     {
       "name": "done, failed",
@@ -181,6 +273,12 @@
         "error": "authentication_failed"
       }
     },
-    { "name": "pong", "message": { "t": "pong", "id": "ping-1" } }
+    {
+      "name": "pong",
+      "message": {
+        "t": "pong",
+        "id": "ping-1"
+      }
+    }
   ]
 }

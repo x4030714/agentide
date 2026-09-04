@@ -224,6 +224,23 @@ export type PermissionDecision = "allow" | "deny";
  * One model this installation can run, as the agent SDK reports it. Arrives in a
  * `models` event; the list is not hardcoded anywhere.
  */
+/**
+ * One slash command this installation accepts.
+ *
+ * Reported by the SDK rather than listed here: commands come from the CLI build, the
+ * user's own `.claude/commands`, and any plugin they have enabled, so a hardcoded list
+ * would be wrong on every machine.
+ */
+export interface SlashCommand {
+  /** Without the leading slash. */
+  name: string;
+  description: string;
+  /** What arguments it takes, e.g. "<file>". Empty when it takes none. */
+  argumentHint: string;
+  /** Other spellings that resolve to it, e.g. `/cost` for `/usage`. */
+  aliases?: string[];
+}
+
 export interface ModelInfo {
   /** The id to send back as `PromptOptions.model`. */
   value: string;
@@ -287,6 +304,7 @@ export type AgentEvent =
    * to show before the first prompt has been sent. Not tied to a session.
    */
   | { t: "models"; models: ModelInfo[] }
+  | { t: "commands"; commands: SlashCommand[] }
   /** A tool call awaiting approval. Answer with `agentPermissionReply`. */
   | {
       t: "permission_request";

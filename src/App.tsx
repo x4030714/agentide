@@ -164,6 +164,7 @@ export default function App() {
             onTurnStart={onTurnStart}
             onTurnEnd={onTurnEnd}
             resumeConversation={resumed}
+            onNewConversation={() => setResumed(null)}
             onToolCall={onToolCall}
             hostTools={HOST_TOOL_NAMES}
           />

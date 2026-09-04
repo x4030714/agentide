@@ -1,5 +1,6 @@
 /**
- * The model catalogue, published once per sidecar.
+ * What this installation can do: the models it offers and the slash commands it accepts.
+ * Published once per sidecar.
  *
  * `supportedModels()` lives on a running `Query` -- `startup()` hands back a `WarmQuery`,
  * which does not expose it -- so the list cannot be read without a live turn, and this
@@ -8,10 +9,14 @@
  * installation, not the turn.
  */
 
-import type { ModelInfo as SdkModelInfo, Query } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  ModelInfo as SdkModelInfo,
+  Query,
+  SlashCommand as SdkSlashCommand,
+} from "@anthropic-ai/claude-agent-sdk";
 
 import type { HostLink } from "./host.ts";
-import type { ModelInfo } from "./protocol.ts";
+import type { ModelInfo, SlashCommand } from "./protocol.ts";
 
 export class ModelCatalogue {
   readonly #link: HostLink;
@@ -47,7 +52,30 @@ export class ModelCatalogue {
       },
       (error: unknown) => warn(`could not read the model list: ${describe(error)}`),
     );
+
+    // Asked at the same moment and for the same reason: both describe the installation
+    // rather than the turn, and both need a live `Query` to ask.
+    void running.supportedCommands().then(
+      (commands) => {
+        if (!Array.isArray(commands)) {
+          warn("the SDK reported no command list");
+          return;
+        }
+        this.#link.send({ t: "commands", commands: commands.map(forwardCommand) });
+      },
+      (error: unknown) => warn(`could not read the command list: ${describe(error)}`),
+    );
   }
+}
+
+/** Narrow one command row to the wire shape, for the same reason as `forward`. */
+function forwardCommand(command: SdkSlashCommand): SlashCommand {
+  return {
+    name: command.name,
+    description: command.description,
+    argumentHint: command.argumentHint,
+    ...(command.aliases && command.aliases.length > 0 ? { aliases: command.aliases } : {}),
+  };
 }
 
 /**

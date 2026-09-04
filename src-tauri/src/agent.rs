@@ -36,6 +36,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::fs::WorkspaceState;
 use crate::ipc::{
     AgentEvent, DoneReason, ErrorCode, IpcError, JsonMap, ModelInfo, PermissionDecision,
+    SlashCommand,
     PromptOptions, ReplySource, ToolResult, WirePath,
 };
 
@@ -89,6 +90,9 @@ enum SidecarMessage {
     /// Sent once per sidecar, during its first turn. Not tied to a session.
     #[serde(rename_all = "camelCase")]
     Models { models: Vec<ModelInfo> },
+    /// Sent with the models, for the same reason: both describe the installation.
+    #[serde(rename_all = "camelCase")]
+    Commands { commands: Vec<SlashCommand> },
     #[serde(rename_all = "camelCase")]
     PermissionRequest {
         id: String,
@@ -351,6 +355,9 @@ impl Router {
             }
             SidecarMessage::Models { models } => {
                 self.emit(AgentEvent::Models { models });
+            }
+            SidecarMessage::Commands { commands } => {
+                self.emit(AgentEvent::Commands { commands });
             }
             SidecarMessage::PermissionRequest {
                 id,
