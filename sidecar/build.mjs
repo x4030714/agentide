@@ -1,0 +1,27 @@
+/**
+ * Bundle the sidecar to `dist/main.js`.
+ *
+ * Not a single-file executable. The agent SDK ships a native `claude` binary in a
+ * platform package and resolves it from disk at runtime, so a `--compile`-style build
+ * would produce something that still needs `node_modules` beside it. Two externals keep
+ * that resolution working and keep one copy of `zod` in the process -- the MCP server
+ * compares schema instances, and a second bundled copy breaks tool registration.
+ *
+ * Development runs `node sidecar/dist/main.js`. Release will ship this file plus a Node
+ * runtime and those two packages as a Tauri `externalBin`; see `resolve_command` in
+ * `src-tauri/src/agent.rs`.
+ */
+
+import { build } from "esbuild";
+
+await build({
+  entryPoints: ["src/main.ts"],
+  outfile: "dist/main.js",
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  sourcemap: true,
+  external: ["@anthropic-ai/claude-agent-sdk", "zod"],
+  logLevel: "info",
+});

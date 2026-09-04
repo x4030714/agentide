@@ -1,0 +1,206 @@
+/**
+ * The Disassembly Listing — the visual world.
+ *
+ * Tokens, faces, and the browser surfaces the platform would otherwise style for us.
+ * Component rules live in App.css; nothing here knows about a specific pane.
+ *
+ * The four ink roles are a semantic system, not a swatch set. A colour means one thing,
+ * and it means that thing in every surface that can currently express it. Where each
+ * role lands today:
+ *
+ *   --addr      gutter offsets, the caret, the active row, focus
+ *   --sym       directories in the tree, resolved types in the syntax theme
+ *   --addr-dim  the addr role quieted, in both its senses: Monaco's resting line
+ *               numbers, and a file the watcher has seen modified.
+ *   --xref      files created since the workspace opened; string escapes in code
+ *   --imm       literals in the syntax theme. No surface outside it yet: its other
+ *               meaning is a removal, and a removed row simply leaves the tree.
+ *   --uncommitted  content that exists but is not committed to disk — the editor
+ *               chrome's unsaved-buffer dot today, patched hunks in the phase 2 queue.
+ *
+ * A role with nowhere honest to land is left unused rather than sprinkled, and said
+ * so here rather than quietly claimed.
+ */
+
+@import "@fontsource/iosevka/400.css";
+@import "@fontsource/iosevka/500.css";
+@import "@fontsource/iosevka/700.css";
+@import "@fontsource/archivo-narrow/latin-500.css";
+@import "@fontsource/archivo-narrow/latin-600.css";
+
+:root {
+  /* Grounds. The gutter is darker than the listing, the way an address column is. */
+  --ground: #0e1013;
+  --gutter: #0a0c0f;
+  --raised: #14171c;
+
+  /**
+   * Three rule weights, split by what each actually carries.
+   *
+   * `--rule` draws region boundaries — a pane's underline, the status bar's top edge.
+   * Nothing depends on seeing it; the panes are told apart by legend and content. It
+   * sits at 2.01:1, deliberately under the 3:1 non-text floor, because putting every
+   * boundary at 3:1 turns one continuous ground into a grid of boxes, which is the
+   * single move this world exists to refuse.
+   *
+   * `--rule-strong` draws component boundaries — button borders and the pane drag
+   * handles — which a person must be able to find at rest, so it clears 3:1 (3.18:1)
+   * even though it costs the frame some delicacy. There the line is the affordance.
+   */
+  --rule: #3d4657;
+  --rule-strong: #5a6473;
+  /**
+   * Third weight, split out because depth and indent guides are not what the two above
+   * carry. Nesting is already conveyed by horizontal text offset; the guide only makes
+   * it faster to scan, so it is reinforcement rather than information and belongs at the
+   * quietest weight. Sharing `--rule` with the pane underlines made the tree's indent
+   * rails read louder than the region boundaries around them, which inverts the frame.
+   */
+  --rule-guide: #2b3340;
+
+  /**
+   * Ink. Three steps, and the third is not a text colour: `--ink-faint` (2.38:1) is for
+   * disabled affordances and the `;` comment mark only — never for anything a person
+   * needs to read or find. Readable chrome uses `--ink-dim`, which clears 5.24:1.
+   */
+  --ink: #c9d2db;
+  --ink-dim: #7c8798;
+  --ink-faint: #48515f;
+
+  /* The four semantic roles. */
+  --addr: #c99a3e; /* offsets, line numbers, turn indices, the caret — 7.42:1 */
+  --addr-dim: #9e7c36; /* resting line numbers, and modified files — 4.89:1 */
+  /**
+   * The addr-dim step lifted for use on the active row's tinted field, where the
+   * plain step falls to 3.70:1. 4.88:1 on that field, 6.46:1 on the ground, and still
+   * visibly below `--addr` so the mark stays distinguishable from the active state.
+   */
+  --addr-lift: #b89043;
+  --sym: #6fb2ff; /* symbols the language server resolved — 8.61:1 */
+  --xref: #4fcb7b; /* references, callers, additions — 9.22:1 */
+  --imm: #e86a8c; /* literals, constants, removals — 6.24:1 */
+
+  /* Uncommitted. An unsaved buffer now; patched hunks in phase 2 — 5.98:1 */
+  --uncommitted: #e45cc0;
+
+  /* Diagnostics. */
+  --error: #ff5c57;
+  --warn: #f0b429;
+  --hint: #57c7ff;
+
+  /* Tints, for fields rather than text. */
+  --tint-addr: rgb(201 154 62 / 18%);
+  --tint-sym: rgb(111 178 255 / 14%);
+
+  --mono: "Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --legend: "Archivo Narrow", "Segoe UI", system-ui, sans-serif;
+
+  /* A listing is a fixed grid. One row height, everywhere. */
+  --row: 20px;
+  --header: 26px;
+
+  color-scheme: dark;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: var(--row);
+  color: var(--ink);
+  background: var(--ground);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* --- Browser surfaces -------------------------------------------------------
+   These ship with defaults that belong to no design system. */
+
+::selection {
+  background: var(--tint-sym);
+  color: #ffffff;
+}
+
+:root {
+  caret-color: var(--addr);
+}
+
+:focus-visible {
+  outline: 1px solid var(--addr);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* Must be brighter than the resting thumb (--rule-strong, 3.18:1), not dimmer. */
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-dim);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* --- Shared grammar --------------------------------------------------------- */
+
+/**
+ * A panel legend. Condensed small caps riding on a boundary rule, the way an
+ * instrument panel is etched rather than labelled.
+ */
+.legend {
+  font-family: var(--legend);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  line-height: 1;
+}
+
+/**
+ * Meta information speaks in the listing's own voice: an assembly comment.
+ * Used for empty states, notes, and anything that is not itself data.
+ */
+.note {
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+
+.note::before {
+  content: "; ";
+  color: var(--ink-faint);
+}
+
+.note.is-error {
+  color: var(--error);
+}
+
+/* A right-aligned measurement column. */
+.measure {
+  color: var(--ink-dim);
+  font-size: 11px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

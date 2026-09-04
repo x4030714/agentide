@@ -1,0 +1,159 @@
+{
+  "_comment": [
+    "Canonical wire messages for the sidecar protocol defined in sidecar/src/protocol.ts.",
+    "Both sides read this file: sidecar/src/codec.test.ts and the agent::tests::fixtures_*",
+    "tests in src-tauri/src/agent.rs (via include_str!). Each side parses every message",
+    "into its own typed representation, re-serializes it, and requires the result to equal",
+    "the entry below. A field renamed, retyped or dropped on one side only fails there.",
+    "Every variant of HostMessage and SidecarMessage needs at least one entry, once with",
+    "optional fields present and once without."
+  ],
+  "hostToSidecar": [
+    {
+      "name": "prompt without options",
+      "message": {
+        "t": "prompt",
+        "sessionId": "s-1",
+        "cwd": "C:/Users/tung/Desktop/agentide",
+        "text": "rename the function in src/fs.rs and update its callers"
+      }
+    },
+    {
+      "name": "prompt with every option",
+      "message": {
+        "t": "prompt",
+        "sessionId": "s-2",
+        "cwd": "//server/share/project",
+        "text": "line one\nline two\ttabbed \"quoted\" \\ backslash \u00e9",
+        "options": {
+          "model": "claude-opus-5",
+          "permissionMode": "acceptEdits",
+          "allowedTools": ["Read", "Glob"],
+          "disallowedTools": ["Bash(rm *)"],
+          "maxTurns": 12,
+          "includePartialMessages": true
+        }
+      }
+    },
+    {
+      "name": "permission allow, input unchanged",
+      "message": { "t": "permission_reply", "id": "p-1", "decision": "allow" }
+    },
+    {
+      "name": "permission allow with edited input",
+      "message": {
+        "t": "permission_reply",
+        "id": "p-2",
+        "decision": "allow",
+        "updatedInput": { "file_path": "C:/Users/tung/Desktop/agentide/src/App.tsx", "limit": 40 }
+      }
+    },
+    {
+      "name": "permission deny with a reason",
+      "message": {
+        "t": "permission_reply",
+        "id": "p-3",
+        "decision": "deny",
+        "message": "the user rejected this edit"
+      }
+    },
+    {
+      "name": "tool reply, success",
+      "message": {
+        "t": "tool_reply",
+        "id": "c-1",
+        "result": { "ok": true, "text": "src/App.tsx:12:4-12:31" }
+      }
+    },
+    {
+      "name": "tool reply, failure",
+      "message": {
+        "t": "tool_reply",
+        "id": "c-2",
+        "result": { "ok": false, "error": "no editor is open" }
+      }
+    },
+    { "name": "interrupt", "message": { "t": "interrupt", "sessionId": "s-1" } },
+    { "name": "ping", "message": { "t": "ping", "id": "ping-1" } }
+  ],
+  "sidecarToHost": [
+    {
+      "name": "ready",
+      "message": { "t": "ready", "pid": 4242, "sdkVersion": "0.3.259" }
+    },
+    {
+      "name": "event carrying an opaque SDKMessage",
+      "message": {
+        "t": "event",
+        "sessionId": "s-1",
+        "msg": {
+          "type": "assistant",
+          "uuid": "0f9a2f1e-1d3b-4a5c-9e7f-2b6c8d0a1e34",
+          "session_id": "8c1f0d4a-77b2-4f31-9a5e-5d2c3b4a6f78",
+          "parent_tool_use_id": null,
+          "message": {
+            "id": "msg_01",
+            "content": [{ "type": "text", "text": "Reading src/fs.rs" }],
+            "stop_reason": null
+          }
+        }
+      }
+    },
+    {
+      "name": "permission request",
+      "message": {
+        "t": "permission_request",
+        "id": "p-1",
+        "sessionId": "s-1",
+        "tool": "Edit",
+        "input": {
+          "file_path": "C:/Users/tung/Desktop/agentide/src-tauri/src/fs.rs",
+          "old_string": "fn list_dir",
+          "new_string": "fn read_dir"
+        }
+      }
+    },
+    {
+      "name": "tool call",
+      "message": {
+        "t": "tool_call",
+        "id": "c-1",
+        "sessionId": "s-1",
+        "name": "ide_diagnostics",
+        "args": { "path": "C:/Users/tung/Desktop/agentide/src/App.tsx", "severity": "error" }
+      }
+    },
+    {
+      "name": "tool call with no arguments",
+      "message": {
+        "t": "tool_call",
+        "id": "c-2",
+        "sessionId": "s-1",
+        "name": "ide_open_editors",
+        "args": {}
+      }
+    },
+    {
+      "name": "done, success",
+      "message": { "t": "done", "sessionId": "s-1", "reason": "success" }
+    },
+    {
+      "name": "done, interrupted",
+      "message": { "t": "done", "sessionId": "s-1", "reason": "interrupted" }
+    },
+    {
+      "name": "done, turn limit",
+      "message": { "t": "done", "sessionId": "s-1", "reason": "max_turns" }
+    },
+    {
+      "name": "done, failed",
+      "message": {
+        "t": "done",
+        "sessionId": "s-2",
+        "reason": "error",
+        "error": "authentication_failed"
+      }
+    },
+    { "name": "pong", "message": { "t": "pong", "id": "ping-1" } }
+  ]
+}
