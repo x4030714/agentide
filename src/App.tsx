@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 
+import { useAppearance } from "./lib/appearance";
 import { openWorkspace, pickFolder } from "./lib/bridge";
-import { errorMessage, parentOf } from "./lib/protocol";
+import { errorMessage } from "./lib/protocol";
 import type { FsEvent, WirePath, Workspace } from "./lib/protocol";
 import { EditorPane } from "./panes/Editor";
 import { FileTree } from "./panes/FileTree";
+import { TitleBar } from "./panes/TitleBar";
 import { TranscriptPane } from "./panes/Transcript";
 import "./App.css";
 
@@ -17,6 +19,7 @@ export default function App() {
   const [activePath, setActivePath] = useState<WirePath | null>(null);
   const [changes, setChanges] = useState<FsEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [appearance, setAppearance] = useAppearance();
 
   const open = useCallback(async (path: string) => {
     try {
@@ -44,7 +47,12 @@ export default function App() {
 
   return (
     <div className="app">
-      <ModuleHeader workspace={workspace} error={error} />
+      <TitleBar
+        workspace={workspace}
+        appearance={appearance}
+        onAppearance={setAppearance}
+      />
+      {error && <p className="note is-error app-error">{error}</p>}
 
       {/**
        * The agent leads and the editor is the surface it acts on, so the transcript is
@@ -92,35 +100,6 @@ export default function App() {
         </Panel>
       </Group>
     </div>
-  );
-}
-
-/**
- * The listing's file header: what is loaded, and from where. The workspace folder is
- * the resolved symbol in the path, so it carries the symbol role; its parents do not.
- */
-function ModuleHeader({
-  workspace,
-  error,
-}: {
-  workspace: Workspace | null;
-  error: string | null;
-}) {
-  const parent = workspace ? parentOf(workspace.root) : null;
-
-  return (
-    <header className="module-header">
-      <span className="module-name">agentide</span>
-      {workspace ? (
-        <span className="module-path" title={workspace.root}>
-          {parent && <span className="module-parent">{parent}/</span>}
-          <span className="module-workspace">{workspace.name}</span>
-        </span>
-      ) : (
-        <span className="note">no module loaded</span>
-      )}
-      {error && <span className="module-status is-error">{error}</span>}
-    </header>
   );
 }
 

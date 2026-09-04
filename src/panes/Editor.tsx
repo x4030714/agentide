@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { readFile, writeFile } from "../lib/bridge";
 import { formatSize } from "../lib/format";
 import { IconReload } from "../lib/icons";
-import { monaco, THEME } from "../lib/monaco-setup";
+import { useResolvedAppearance } from "../lib/appearance";
+import { monaco, themeFor } from "../lib/monaco-setup";
 import { baseName, errorMessage, parentOf, toFileUri } from "../lib/protocol";
 import type { FileContents, FsEvent, WirePath } from "../lib/protocol";
 
@@ -53,6 +54,7 @@ export function EditorPane({ path, changes }: EditorPaneProps) {
   const [dirty, setDirty] = useState(false);
   const [staleOnDisk, setStaleOnDisk] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const appearance = useResolvedAppearance();
 
   const editorRef = useRef<MonacoNs.IStandaloneCodeEditor | null>(null);
   const fileRef = useRef<FileContents | null>(null);
@@ -218,7 +220,7 @@ export function EditorPane({ path, changes }: EditorPaneProps) {
           <MonacoEditor
             path={toFileUri(file.path)}
             defaultValue={file.text}
-            theme={THEME}
+            theme={themeFor(appearance)}
             options={EDITOR_OPTIONS}
             onMount={onMount}
             onChange={onChange}

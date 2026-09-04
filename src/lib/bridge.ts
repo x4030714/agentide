@@ -7,8 +7,10 @@
  */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
+import { MAXIMIZED_EVENT } from "./protocol";
 import type {
   AgentEvent,
   AgentStartOptions,
@@ -137,3 +139,53 @@ export async function agentPermissionReply(
 export async function agentToolReply(id: string, result: ToolResult): Promise<void> {
   return invoke("agent_tool_reply", { id, result });
 }
+
+
+// ---------------------------------------------------------------------------
+// Window chrome -- wrappers over `src-tauri/src/window.rs`
+//
+// The window is frameless (`decorations: false`) and transparent, so the title bar is
+// ours to draw. Give the bar a `data-tauri-drag-region` attribute to make dragging it
+// move the window; Tauri handles double-click-to-maximize on that element itself.
+// Resizing is still the OS's: the frame is invisible, but its hit-testing is not gone.
+// ---------------------------------------------------------------------------
+
+export const windowChrome = {
+  /** Send the window to the taskbar. */
+  async minimize(): Promise<void> {
+    return invoke("window_minimize");
+  },
+
+  /** Maximize when restored, restore when maximized. */
+  async toggleMaximize(): Promise<void> {
+    return invoke("window_toggle_maximize");
+  },
+
+  /** Close the window, which quits the app and stops the sidecar with it. */
+  async close(): Promise<void> {
+    return invoke("window_close");
+  },
+
+  /** The state now, for the title bar's first paint. */
+  async isMaximized(): Promise<boolean> {
+    return invoke<boolean>("window_is_maximized");
+  },
+
+  /**
+   * Run `handler` whenever the window is maximized or restored, whoever did it -- the
+   * title bar's button, a double click on the drag region, a Win+Arrow snap, a drag to
+   * the top of the screen. Resolves to the unsubscribe function.
+   */
+  async onMaximizedChange(handler: (maximized: boolean) => void): Promise<() => void> {
+    return listen<boolean>(MAXIMIZED_EVENT, (event) => handler(event.payload));
+  },
+
+  /**
+   * Whether the translucent backdrop applied. False on a machine whose Windows is too
+   * old for it, and on any non-Windows build: the window is then an ordinary opaque one
+   * and the CSS has to supply its own background rather than tinting the desktop.
+   */
+  async effectActive(): Promise<boolean> {
+    return invoke<boolean>("window_effect_active");
+  },
+};

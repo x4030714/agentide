@@ -76,3 +76,76 @@ export function IconFolder({ size = 12, className }: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Window controls. Drawn at a 10px box with a 1px stroke rather than the 1.5 the rest
+ * of the family uses: these are hairline glyphs by convention on every platform, and a
+ * heavier stroke reads as a toolbar button instead of window chrome.
+ */
+function WinGlyph({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+export const IconMinimize = () => (
+  <WinGlyph>
+    <path d="M0.5 5h9" />
+  </WinGlyph>
+);
+
+export const IconMaximize = () => (
+  <WinGlyph>
+    <rect x="0.5" y="0.5" width="9" height="9" />
+  </WinGlyph>
+);
+
+/** Two offset frames: the standard "restore down" mark. */
+export const IconRestore = () => (
+  <WinGlyph>
+    <rect x="0.5" y="2.5" width="7" height="7" />
+    <path d="M2.5 2.5v-2h7v7h-2" />
+  </WinGlyph>
+);
+
+export const IconClose = () => (
+  <WinGlyph>
+    <path d="M0.7 0.7l8.6 8.6M9.3 0.7L0.7 9.3" />
+  </WinGlyph>
+);
+
+/** Appearance. A sun and a moon share one box so the swap does not shift the row. */
+export function IconTheme({ dark, size = 13 }: { dark: boolean; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {dark ? (
+        <path d="M11.5 8.4A5 5 0 0 1 5.6 2.5a5 5 0 1 0 5.9 5.9Z" />
+      ) : (
+        <>
+          <circle cx="7" cy="7" r="2.6" />
+          <path d="M7 1v1.4M7 11.6V13M1 7h1.4M11.6 7H13M2.8 2.8l1 1M10.2 10.2l1 1M11.2 2.8l-1 1M3.8 10.2l-1 1" />
+        </>
+      )}
+    </svg>
+  );
+}

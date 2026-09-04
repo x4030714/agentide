@@ -1,6 +1,7 @@
 mod agent;
 mod fs;
 mod ipc;
+mod window;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -9,6 +10,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(fs::WorkspaceState::default())
         .manage(agent::AgentState::default())
+        .manage(window::ChromeState::default())
+        .setup(|app| {
+            // The window is frameless and transparent; this is what makes it translucent
+            // and what keeps the frontend's title bar in step with the maximized state.
+            window::setup(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             fs::open_workspace,
             fs::close_workspace,
@@ -21,6 +29,11 @@ pub fn run() {
             agent::agent_interrupt,
             agent::agent_permission_reply,
             agent::agent_tool_reply,
+            window::window_minimize,
+            window::window_toggle_maximize,
+            window::window_close,
+            window::window_is_maximized,
+            window::window_effect_active,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

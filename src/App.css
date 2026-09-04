@@ -1,78 +1,128 @@
 /**
- * Component grammar for The Disassembly Listing. Tokens live in styles/world.css.
+ * Component grammar for Quiet Instrument. Tokens live in styles/world.css.
  *
- * One surface rule governs everything here: the app is a single continuous listing,
- * not a set of shaded chrome bars. Panes are separated by hairline boundary rules and
- * share one ground. Shading a sidebar differently from the editor is the habit this
- * world exists to refuse.
+ * The surface rule, and everything else follows from it: **chrome is translucent,
+ * content is opaque.** The title bar, the tree rail and the pane headers let the
+ * blurred desktop through — that is the whole reason the window is see-through. The
+ * transcript, editor and terminal sit on `--surface`, because text over a moving
+ * backdrop is unreadable, and an app that ships it looks better in a screenshot than
+ * it does at 2am.
+ *
+ * Nothing floats. Panes are separated by hairlines inside one rounded window, not
+ * scattered as cards on a background — a card grid is the lazy container, and a pro
+ * tool is one instrument, not a tray of them.
  */
 
 @import "./styles/world.css";
 
+/**
+ * The window itself. Rounded, because the OS frame is gone and this is now the only
+ * thing drawing a window edge; the hairline inset keeps it legible against a busy
+ * desktop, which a radius alone does not.
+ */
 .app {
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
+  background: var(--ground);
+  border-radius: var(--r-window);
+  box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
-/* --- Module header ----------------------------------------------------------
-   The listing's file header: what is loaded, and from where. */
+/* --- Title bar -------------------------------------------------------------- */
 
-.module-header {
+.titlebar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex: 0 0 auto;
-  height: 28px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--rule);
+  height: var(--titlebar);
+  /* Right padding is short: the window buttons carry their own inset off the edge. */
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--hairline);
+  user-select: none;
 }
 
-.module-name {
-  font-family: var(--legend);
-  font-size: 11px;
+.titlebar-mark {
+  flex: 0 0 auto;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  letter-spacing: -0.01em;
   color: var(--ink);
 }
 
-.module-path {
+/**
+ * The document title, macOS-style: what is open, centred in the bar's own reading
+ * order rather than absolutely, so it can never collide with the window buttons.
+ */
+.titlebar-title {
   display: flex;
   align-items: baseline;
   min-width: 0;
-  font-size: 11px;
+  margin: 0 auto;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
-/**
- * Only the parents truncate. The workspace name never does, so the identifying part of
- * the path is always readable. (No `direction: rtl` trick here -- it moves the ellipsis
- * to the front but also reorders the trailing slash, which prints the path wrong.)
- */
-.module-parent {
-  min-width: 0;
-  color: var(--ink-dim);
+.titlebar-workspace {
+  font-weight: 550;
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* The workspace folder itself is the resolved symbol in that path. */
-.module-workspace {
-  flex: 0 0 auto;
-  font-weight: 500;
-  color: var(--sym);
+.titlebar-parent {
+  min-width: 0;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.module-status {
-  margin-left: auto;
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   flex: 0 0 auto;
-  font-size: 11px;
+}
+
+/**
+ * Window buttons. Windows order and Windows semantics — a Mac-style traffic light on
+ * the left would look the part and then behave wrongly for every muscle memory this
+ * machine has. `margin-right` keeps them clear of the ~4px native resize band, which
+ * the webview never receives events inside.
+ */
+.win-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
   color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-control);
+  cursor: default;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
 }
 
-.module-status.is-error {
-  color: var(--error);
+.win-button:last-child {
+  margin-right: 5px;
+}
+
+.win-button:hover {
+  color: var(--ink);
+  background: var(--sunken);
+}
+
+.win-button.is-close:hover {
+  color: #ffffff;
+  background: #d13438;
 }
 
 /* --- Frame ------------------------------------------------------------------ */
@@ -83,16 +133,12 @@
 }
 
 .separator {
-  /* A drag handle is a component, so it uses the boundary weight, not the hairline. */
   position: relative;
-  background: var(--rule-strong);
-  transition: background 90ms cubic-bezier(0.2, 0, 0, 1);
+  background: var(--hairline);
+  transition: background var(--t-fast) var(--ease);
 }
 
-/**
- * The handle paints as a 1px hairline but grabs at 7px. Panels are collapsible, and a
- * collapsed pane's only way back is this handle -- a 1px pointer target is not one.
- */
+/* Paints as a hairline, grabs at 7px — the same reason as before. */
 .separator::after {
   content: "";
   position: absolute;
@@ -101,11 +147,11 @@
 
 .separator:hover,
 .separator[data-resize-handle-active] {
-  background: var(--addr);
+  background: var(--sym);
 }
 
 .separator:focus-visible {
-  background: var(--addr);
+  background: var(--sym);
   outline: none;
 }
 
@@ -122,18 +168,23 @@
   flex-direction: column;
   height: 100%;
   min-width: 0;
-  background: var(--ground);
 }
 
-/* A boundary rule with its legend riding on it. */
+/** Content panes are opaque; the tree rail stays on the translucent ground. */
+.pane.transcript,
+.pane.editor,
+.pane.terminal {
+  background: var(--surface);
+}
+
 .pane-header {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
   height: var(--header);
-  padding: 0 8px;
-  border-bottom: 1px solid var(--rule);
+  padding: 0 10px;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .pane-header .legend {
@@ -144,7 +195,6 @@
   text-overflow: ellipsis;
 }
 
-/* An open file names itself in the listing's own face, not in the legend face. */
 .pane-header .filename {
   display: flex;
   align-items: center;
@@ -152,6 +202,7 @@
   flex: 1 1 auto;
   min-width: 0;
   font-size: 12px;
+  font-weight: 500;
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -162,17 +213,18 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 2px 0;
+  padding: 4px 0;
 }
 
 .pane-body.is-flush {
+  position: relative;
   overflow: hidden;
   padding: 0;
 }
 
 .pane-body .note {
   display: block;
-  padding: 4px 10px;
+  padding: 6px 12px;
 }
 
 /* --- Controls --------------------------------------------------------------- */
@@ -182,121 +234,115 @@
   align-items: center;
   gap: 5px;
   flex: 0 0 auto;
-  height: 18px;
-  padding: 0 7px;
-  font-family: var(--legend);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  height: 22px;
+  padding: 0 9px;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
   color: var(--ink-dim);
-  background: transparent;
-  border: 1px solid var(--rule-strong);
-  border-radius: 2px;
-  cursor: pointer;
+  background: var(--sunken);
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  cursor: default;
   transition:
-    color 90ms cubic-bezier(0.2, 0, 0, 1),
-    border-color 90ms cubic-bezier(0.2, 0, 0, 1);
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
 }
 
-.ghost-button:hover {
+.ghost-button:hover:not(:disabled) {
   color: var(--ink);
-  border-color: var(--addr);
+  border-color: var(--border);
+}
+
+.ghost-button:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 
 .ghost-button:disabled {
   color: var(--ink-faint);
-  border-color: var(--rule);
+  background: transparent;
   cursor: default;
 }
 
 .ghost-button.is-warn {
   color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
 }
 
-.ghost-button.is-warn:hover {
-  color: var(--ground);
+.ghost-button.is-warn:hover:not(:disabled) {
+  color: #ffffff;
   background: var(--warn);
-  border-color: var(--warn);
+  border-color: transparent;
 }
 
-/* --- Tree ------------------------------------------------------------------
-   A segment listing: name, and the length column a listing always carries. */
+.ghost-button.is-primary {
+  color: #ffffff;
+  background: var(--sym);
+}
+
+.ghost-button.is-primary:hover:not(:disabled) {
+  color: #ffffff;
+  filter: brightness(1.08);
+}
+
+/* --- Tree ------------------------------------------------------------------- */
 
 .tree-row {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 5px;
-  width: 100%;
+  gap: 6px;
+  width: calc(100% - 8px);
   height: var(--row);
-  /* Indent, and the depth guides that make the indent legible as structure. */
-  padding-left: calc(10px + var(--depth, 0) * 14px);
-  padding-right: 10px;
+  margin: 0 4px;
+  padding-left: calc(6px + var(--depth, 0) * 13px);
+  padding-right: 8px;
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--ink);
   text-align: left;
-  background-color: transparent;
-  background-image: repeating-linear-gradient(
-    to right,
-    var(--rule-guide) 0 1px,
-    transparent 1px 14px
-  );
-  background-position: 10px 0;
-  background-size: calc(var(--depth, 0) * 14px) 100%;
-  background-repeat: no-repeat;
+  background: transparent;
   border: 0;
+  border-radius: var(--r-chip);
   cursor: default;
   white-space: nowrap;
-  transition: background-color 90ms cubic-bezier(0.2, 0, 0, 1);
+  transition: background var(--t-fast) var(--ease);
 }
 
 .tree-row:hover {
-  background-color: var(--raised);
+  background: var(--sunken);
 }
 
 /**
- * The active file is a field, not an outline -- but a tint over near-black can only
- * ever reach ~1.4:1, so the field reinforces the state and does not carry it. The
- * carrier is the hue shift: the row's ink moves to the addr role, which is where the
- * listing puts the address you are currently at.
+ * Selection is a filled pill, the way a Mac source list does it — a full-strength
+ * accent field with white ink, rather than the tint-plus-hue-shift the previous world
+ * needed. A tint cannot carry a state on its own; a filled field can.
  */
 .tree-row.is-active {
-  background-color: var(--tint-addr);
-  transition: background-color 240ms cubic-bezier(0.2, 0, 0, 1);
+  background: var(--sym);
 }
 
 .tree-row.is-active .tree-name,
-.tree-row.is-active .tree-chevron {
-  color: var(--addr);
-}
-
-/**
- * The active row recolours only an *unmarked* measurement. A watcher role always wins
- * over the active state: repainting a created file amber would report it as modified,
- * which contradicts the role system on the one row being looked at.
- */
-.tree-row.is-active .measure:not(.is-created):not(.is-modified) {
-  color: var(--addr);
+.tree-row.is-active .tree-chevron,
+.tree-row.is-active .measure {
+  color: #ffffff;
 }
 
 .tree-row:focus-visible {
-  outline: 1px solid var(--addr);
-  outline-offset: -1px;
+  outline: 2px solid var(--sym);
+  outline-offset: -2px;
 }
 
-/* The only resting indicator of expand state, so it may not sit at --ink-faint. */
 .tree-chevron {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--ink-dim);
+  color: var(--ink-faint);
+  transition: color var(--t-fast) var(--ease);
 }
 
 .tree-row:hover .tree-chevron {
-  color: var(--ink);
+  color: var(--ink-dim);
 }
 
 .tree-name {
@@ -304,79 +350,70 @@
   text-overflow: ellipsis;
 }
 
-/* A directory is a namespace: a resolved symbol. A file is plain listing ink. */
 .tree-row.is-dir .tree-name {
-  color: var(--sym);
+  font-weight: 500;
 }
 
-/* Files touched since the workspace opened, in the roles those changes mean. */
+/* Watcher roles still carry, and still outrank the selection field. */
 .measure.is-created {
   color: var(--xref);
 }
 
 .measure.is-modified {
-  color: var(--addr-dim);
+  color: var(--addr);
 }
 
-/* On the active row's tinted field --addr-dim falls to 3.70:1, so it steps up. */
+.tree-row.is-active .measure.is-created,
 .tree-row.is-active .measure.is-modified {
-  color: var(--addr-lift);
+  color: rgb(255 255 255 / 82%);
 }
 
-/* --- Transcript ------------------------------------------------------------
-   The agent's turn drawn as a function in a listing: an address column that never
-   renumbers, one addressed row per tool call, and a boundary rule opening each turn. */
+/* --- Transcript ------------------------------------------------------------- */
 
 .transcript-body {
-  padding: 2px 0 6px;
+  padding: 6px 0 10px;
 }
 
 .t-row {
   display: grid;
-  grid-template-columns: 5ch minmax(0, 1fr);
-  gap: 8px;
-  padding: 0 10px;
+  grid-template-columns: 4ch minmax(0, 1fr);
+  gap: 10px;
+  padding: 1px 12px;
   align-items: baseline;
 }
 
-/* A turn is fenced the way a listing fences a subroutine. */
 .t-row.opens-turn {
-  margin-top: 7px;
-  padding-top: 7px;
-  border-top: 1px solid var(--rule);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
 }
 
+/** The address column survives the redesign: the anchor is function, not decoration. */
 .t-addr {
-  color: var(--addr-dim);
-  font-size: 11px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   user-select: none;
 }
 
-/* What you asked for, in the listing's own voice. */
 .t-prompt {
-  /* Tool rows are tabular and span; prose is read, so it keeps a measure. */
   max-width: 74ch;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--ink);
-  font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.t-prompt::before {
-  content: "; ";
-  color: var(--ink-faint);
 }
 
 .t-text {
   max-width: 74ch;
+  font-size: 12.5px;
   color: var(--ink);
-  font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-/* Collapsed or not, this is text a person reads -- never --ink-faint. */
 .t-thinking {
   max-width: 74ch;
   padding: 0;
@@ -386,7 +423,7 @@
   text-align: left;
   background: none;
   border: 0;
-  cursor: pointer;
+  cursor: default;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -395,72 +432,48 @@
   color: var(--ink);
 }
 
-/**
- * The live slot in the header. Amber because it is the addr role's job: where the run
- * currently is. It pulses rather than spins -- a listing has no spinner, and the number
- * beside it is already doing the work of saying that something is happening.
- */
-.measure.is-thinking {
-  color: var(--addr);
-  animation: thinking-pulse 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-@keyframes thinking-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .measure.is-thinking {
-    animation: none;
-  }
-}
-
-/* --- Tool rows --- */
-
 .t-tool,
 .t-permission {
   display: grid;
-  grid-template-columns: 14ch minmax(0, 1fr) auto;
-  gap: 8px;
+  grid-template-columns: 13ch minmax(0, 1fr) auto;
+  gap: 10px;
   align-items: baseline;
   width: 100%;
   min-height: var(--row);
-  padding: 0;
+  padding: 0 6px;
+  margin-left: -6px;
   font: inherit;
   font-size: 12px;
   text-align: left;
-  background: none;
+  background: transparent;
   border: 0;
+  border-radius: var(--r-chip);
   cursor: default;
 }
 
 .t-tool.is-expandable {
-  cursor: pointer;
+  cursor: default;
+}
+
+.t-tool.is-expandable:hover {
+  background: var(--sunken);
 }
 
 .t-tool.is-expandable:focus-visible {
-  outline: 1px solid var(--addr);
-  outline-offset: -1px;
+  outline: 2px solid var(--sym);
+  outline-offset: -2px;
 }
 
+/** The op column keeps its class colour: what the agent reached for is the signal. */
 .t-op {
+  font-family: var(--mono);
+  font-size: 11.5px;
   color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/**
- * The op column carries the class of thing the agent reached for. `semantic` is the
- * one that matters: a call to the language server is the thing this IDE exists to do,
- * so it reads as a resolved symbol rather than as one more tool.
- */
 .t-tool.is-read .t-op {
   color: var(--ink);
 }
@@ -470,14 +483,14 @@
 .t-tool.is-exec .t-op {
   color: var(--warn);
 }
-.t-tool.is-semantic .t-op {
-  color: var(--sym);
-}
+.t-tool.is-semantic .t-op,
 .t-tool.is-agent .t-op {
   color: var(--sym);
 }
 
 .t-operand {
+  font-family: var(--mono);
+  font-size: 11.5px;
   color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -497,30 +510,6 @@
   color: var(--ink-faint);
 }
 
-.t-detail {
-  margin: 2px 0 4px;
-  max-height: 220px;
-  overflow: auto;
-  color: var(--ink-dim);
-  font: inherit;
-  font-size: 11px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/* --- Permission --- */
-
-.t-permission.is-pending,
-.t-tool.is-awaiting {
-  background: var(--tint-addr);
-}
-
-.t-permission.is-pending .t-op,
-.t-tool.is-awaiting .t-op {
-  color: var(--addr);
-}
-
-/* A denied call is finished, not merely quiet: it never ran. */
 .t-tool.is-denied .t-op,
 .t-tool.is-denied .t-operand {
   color: var(--ink-faint);
@@ -530,12 +519,36 @@
   color: var(--warn);
 }
 
+.t-detail {
+  margin: 4px 0 6px;
+  max-height: 220px;
+  padding: 8px 10px;
+  overflow: auto;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--sunken);
+  border-radius: var(--r-control);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/** A call waiting on you: a real field, because this one must not be missable. */
+.t-permission.is-pending,
+.t-tool.is-awaiting {
+  background: var(--tint-addr);
+  box-shadow: inset 0 0 0 1px var(--addr);
+}
+
+.t-permission.is-pending .t-op,
+.t-tool.is-awaiting .t-op {
+  color: var(--addr);
+}
+
 .t-actions {
   display: flex;
   gap: 6px;
 }
-
-/* --- Turn close --- */
 
 .t-turn {
   color: var(--ink-faint);
@@ -546,66 +559,70 @@
   color: var(--error);
 }
 
-/* --- Run controls ---------------------------------------------------------
-   What the next turn runs on, directly above the prompt it applies to. */
+/* The live reasoning estimate. Pulses, never spins. */
+.measure.is-thinking {
+  color: var(--sym);
+  animation: thinking-pulse 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes thinking-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* --- Run controls ----------------------------------------------------------- */
 
 .run-controls {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
+  align-items: center;
+  gap: 14px;
   flex: 0 0 auto;
-  padding: 4px 10px 3px;
-  border-top: 1px solid var(--rule);
+  padding: 6px 12px 2px;
 }
 
 .control {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
 }
 
-/**
- * A native select, stripped to the listing's grammar: no chrome at rest, the value in
- * the listing's own face, and the addr role on hover because changing it changes where
- * the next turn goes. Native because it is keyboard-operable and screen-reader-correct
- * for free, which a hand-rolled popup would have to earn back.
- */
 .control-select {
   appearance: none;
-  padding: 0 14px 0 0;
+  height: 22px;
+  padding: 0 18px 0 8px;
   font: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--ink);
-  background: transparent;
-  background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%),
-    linear-gradient(135deg, var(--ink-dim) 50%, transparent 50%);
-  background-position: right 5px top 55%, right 1px top 55%;
+  background-color: var(--sunken);
+  background-image: linear-gradient(45deg, transparent 50%, currentcolor 50%),
+    linear-gradient(135deg, currentcolor 50%, transparent 50%);
+  background-position: right 9px center, right 5px center;
   background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
-  border: 0;
-  border-radius: 0;
-  cursor: pointer;
-  transition: color 90ms cubic-bezier(0.2, 0, 0, 1);
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  cursor: default;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    background-color var(--t-fast) var(--ease);
 }
 
-.control-select:hover {
-  color: var(--addr);
-}
-
-.control-select:focus-visible {
-  outline: 1px solid var(--addr);
-  outline-offset: 2px;
+.control-select:hover:not(:disabled) {
+  border-color: var(--border);
 }
 
 .control-select:disabled {
   color: var(--ink-faint);
-  cursor: default;
 }
 
-/* The webview draws the open list itself, so the options need their own ground. */
 .control-select option {
   color: var(--ink);
-  background: var(--raised);
+  background: var(--elevated);
 }
 
 .control-note {
@@ -613,28 +630,41 @@
   font-size: 11px;
 }
 
-/* --- Composer --- */
+/* --- Composer --------------------------------------------------------------- */
 
 .composer {
-  display: grid;
-  grid-template-columns: 5ch minmax(0, 1fr);
+  display: flex;
+  align-items: flex-start;
   gap: 8px;
   flex: 0 0 auto;
-  padding: 5px 10px;
+  margin: 4px 10px 10px;
+  padding: 7px 10px;
+  background: var(--sunken);
+  border: 1px solid transparent;
+  border-radius: var(--r-panel);
+  transition: border-color var(--t-base) var(--ease);
+}
+
+.composer:focus-within {
+  border-color: var(--sym);
 }
 
 .composer-mark {
-  color: var(--addr);
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-family: var(--mono);
   font-size: 12px;
+  line-height: 20px;
   user-select: none;
 }
 
 .composer-input {
+  flex: 1 1 auto;
   resize: none;
   padding: 0;
   font: inherit;
-  font-size: 12px;
-  line-height: var(--row);
+  font-size: 12.5px;
+  line-height: 20px;
   color: var(--ink);
   background: transparent;
   border: 0;
@@ -642,7 +672,7 @@
 }
 
 .composer-input::placeholder {
-  color: var(--ink-dim);
+  color: var(--ink-faint);
 }
 
 .composer-input:disabled {
@@ -651,36 +681,21 @@
 
 /* --- Editor ----------------------------------------------------------------- */
 
-.pane-body.is-flush {
-  position: relative;
-}
-
 /**
- * The one authored moment in the build: opening a file makes the tree row and the
- * editor's address column agree. The row's field arrives over 240ms, and on the same
- * curve an amber address rule runs down the gutter's edge and then withdraws.
- *
- * Everything else in this world is snap-to-address, deliberately. This is the single
- * exception, and it exists because that agreement is the app's whole gesture.
+ * The one authored moment, carried over: opening a file runs an accent rule down the
+ * gutter's edge as the tree row's selection arrives, on the same curve.
  */
 .gutter-sync {
   position: absolute;
   top: 0;
   left: 0;
-  width: 1px;
+  width: 2px;
   height: 100%;
-  background: var(--addr);
+  background: var(--sym);
   transform-origin: top;
   pointer-events: none;
-  /**
-   * Monaco's view layers are z-indexed inside the same stacking context, so an
-   * unindexed sibling renders correctly and is painted over by the editor's own gutter
-   * background -- the animation fired and was invisible. Verified by pixel-scanning a
-   * frozen frame: the element reported opacity 1 at x=809 while no amber pixel existed
-   * in that column.
-   */
-  z-index: 5;
-  animation: gutter-sync 440ms cubic-bezier(0.2, 0, 0, 1) forwards;
+  border-radius: 0 2px 2px 0;
+  animation: gutter-sync var(--t-slow) var(--ease) forwards;
 }
 
 @keyframes gutter-sync {
@@ -699,21 +714,27 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gutter-sync {
+  .gutter-sync,
+  .measure.is-thinking {
     animation: none;
+  }
+
+  .gutter-sync {
     opacity: 0;
   }
 
   .tree-row,
-  .tree-row.is-active {
+  .ghost-button,
+  .composer,
+  .separator {
     transition: none;
   }
 }
 
 .dirty-dot {
   flex: 0 0 auto;
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--uncommitted);
 }
@@ -723,18 +744,18 @@
   align-items: center;
   gap: 12px;
   flex: 0 0 auto;
-  height: 20px;
-  padding: 0 10px;
+  height: 24px;
+  padding: 0 12px;
   font-size: 11px;
-  color: var(--ink-dim);
-  border-top: 1px solid var(--rule);
+  color: var(--ink-faint);
+  border-top: 1px solid var(--hairline);
 }
 
-/* Same rule as the module header: the directory gives way, the name never does. */
 .status-path {
   display: flex;
   align-items: baseline;
   min-width: 0;
+  font-family: var(--mono);
 }
 
 .status-dir {

@@ -195,6 +195,9 @@ pub enum ErrorCode {
     Watch,
     /// The agent sidecar is not running, cannot be started, or cannot be reached.
     Agent,
+    /// A window operation the runtime refused -- in practice only during shutdown, once
+    /// the window the command names is gone.
+    Window,
 }
 
 /// The error every command returns. `Serialize` so Tauri can hand it to the frontend.

@@ -1,111 +1,217 @@
 /**
- * The Disassembly Listing — the visual world.
+ * Quiet Instrument — the visual world.
  *
- * Tokens, faces, and the browser surfaces the platform would otherwise style for us.
- * Component rules live in App.css; nothing here knows about a specific pane.
+ * A Mac pro-tool register: native chrome, real rounding, a translucent ground the
+ * desktop shows through, and colour spent only where it means something. The reference
+ * shelf is Nova, Xcode and Proxyman rather than a Sequoia settings pane — dense and
+ * information-first, because this is a surface someone sits in for hours.
  *
- * The four ink roles are a semantic system, not a swatch set. A colour means one thing,
- * and it means that thing in every surface that can currently express it. Where each
- * role lands today:
+ * Two rules govern everything here.
  *
- *   --addr      gutter offsets, the caret, the active row, focus
- *   --sym       directories in the tree, resolved types in the syntax theme
- *   --addr-dim  the addr role quieted, in both its senses: Monaco's resting line
- *               numbers, and a file the watcher has seen modified.
- *   --xref      files created since the workspace opened; string escapes in code
- *   --imm       literals in the syntax theme. No surface outside it yet: its other
- *               meaning is a removal, and a removed row simply leaves the tree.
- *   --uncommitted  content that exists but is not committed to disk — the editor
- *               chrome's unsaved-buffer dot today, patched hunks in the phase 2 queue.
+ * 1. **Surfaces are translucent; content is not.** Chrome (title bar, rails, headers)
+ *    lets the blurred desktop through. Anything you read — code, transcript, tree — sits
+ *    on a near-opaque surface, because text over a moving backdrop is unreadable and
+ *    every app that ships it is prettier in screenshots than in use.
  *
- * A role with nowhere honest to land is left unused rather than sprinkled, and said
- * so here rather than quietly claimed.
+ * 2. **The four semantic roles survive the redesign.** addr / sym / xref / imm are not
+ *    styling: they carry diagnostic severity, diff add-remove, and cross-references, and
+ *    Phases 2 and 4 depend on them. They are retuned per theme, never dropped.
+ *
+ * Both themes are real. The app follows the OS appearance and `[data-theme]` overrides
+ * it, the way a Mac app does.
  */
 
+@import "@fontsource/geist-sans/latin-400.css";
+@import "@fontsource/geist-sans/latin-500.css";
+@import "@fontsource/geist-sans/latin-600.css";
 @import "@fontsource/iosevka/400.css";
 @import "@fontsource/iosevka/500.css";
-@import "@fontsource/iosevka/700.css";
-@import "@fontsource/archivo-narrow/latin-500.css";
-@import "@fontsource/archivo-narrow/latin-600.css";
 
 :root {
-  /* Grounds. The gutter is darker than the listing, the way an address column is. */
-  --ground: #0e1013;
-  --gutter: #0a0c0f;
-  --raised: #14171c;
+  color-scheme: light dark;
+
+  /* --- Light, the default. Dark overrides follow. --- */
 
   /**
-   * Three rule weights, split by what each actually carries.
+   * Alpha is the point: `--ground` is what the blur shows through. When the window
+   * effect fails, `[data-effect="off"]` swaps these for opaque equivalents rather than
+   * leaving the app to render over whatever the compositor last drew.
+   */
+  --ground: rgb(244 245 248 / 70%);
+  /**
+   * Opaque, and exactly Monaco's own `editor.background`. Content panes are where the
+   * text lives, so they are the half of the rule that does not let the desktop through;
+   * leaving them at 88% also put a translucent pane around an opaque editor, which read
+   * as a seam. Translucency is the rail and the title bar's job.
+   */
+  --surface: #ffffff;
+  --elevated: rgb(255 255 255 / 97%);
+  --sunken: rgb(0 0 0 / 4%);
+
+  /** Hairlines separate; borders identify a control. Only the second must be findable. */
+  --hairline: rgb(0 0 0 / 9%);
+  --border: rgb(0 0 0 / 16%);
+
+  --ink: #1b1f27;
+  --ink-dim: #59636f;
+  --ink-faint: #8a939f;
+
+  /**
+   * The four semantic roles.
    *
-   * `--rule` draws region boundaries — a pane's underline, the status bar's top edge.
-   * Nothing depends on seeing it; the panes are told apart by legend and content. It
-   * sits at 2.01:1, deliberately under the 3:1 non-text floor, because putting every
-   * boundary at 3:1 turns one continuous ground into a grid of boxes, which is the
-   * single move this world exists to refuse.
-   *
-   * `--rule-strong` draws component boundaries — button borders and the pane drag
-   * handles — which a person must be able to find at rest, so it clears 3:1 (3.18:1)
-   * even though it costs the frame some delicacy. There the line is the affordance.
+   * These were solved against a translucent surface's worst-case composite (#e0e0e0,
+   * an 88% white pane over a black desktop). The surface is opaque now, so each has
+   * more headroom than its comment claims — the number quoted is the floor, not the
+   * measurement. Kept as-is rather than re-brightened: they read well, and a role that
+   * clears its floor by a margin is not a defect.
    */
-  --rule: #3d4657;
-  --rule-strong: #5a6473;
+  --addr: #855a0b; /* 4.59:1 worst case, 6.06:1 on white */
+  --sym: #0a5fc2; /* 4.66 / 6.12 */
+  --xref: #10703f; /* 4.68 / 6.16 */
+  --imm: #b8185a; /* 4.82 / 6.33 */
+  --uncommitted: #9c1489; /* 5.55 / 7.30 */
+
+  --error: #bd261e; /* 4.60 / 6.07 */
+  --warn: #835b00; /* 4.60 / 6.07 */
+  --hint: #0366a1; /* 4.67 / 6.14 */
+
+  /* Fields, for states that colour a whole row rather than its text. */
+  --tint-accent: rgb(10 95 194 / 11%);
+  --tint-addr: rgb(133 90 11 / 12%);
+  --tint-error: rgb(189 38 30 / 10%);
+
+  --shadow-1:
+    0 1px 2px rgb(15 20 30 / 8%),
+    0 1px 1px rgb(15 20 30 / 5%);
+  --shadow-2:
+    0 10px 28px rgb(15 20 30 / 14%),
+    0 2px 6px rgb(15 20 30 / 8%);
+}
+
+/* System dark, unless a light theme was explicitly chosen. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: rgb(17 19 23 / 68%);
+    --surface: #151819;
+    --elevated: rgb(33 37 44 / 97%);
+    --sunken: rgb(0 0 0 / 22%);
+
+    --hairline: rgb(255 255 255 / 9%);
+    --border: rgb(255 255 255 / 17%);
+
+    --ink: #e9edf3;
+    --ink-dim: #a3acb9;
+    --ink-faint: #6e7885;
+
+    --addr: #e3ae52;
+    --sym: #7cbaff;
+    --xref: #5fd693;
+    --imm: #ff8fa8;
+    --uncommitted: #ec84d6;
+
+    /* Dark-theme roles, same check: 88% of #151819 over white composites to #313438. */
+    --error: #ff6f66; /* 4.61:1 worst case */
+    --warn: #f2c14a; /* 7.47 */
+    --hint: #6ad0ff; /* 7.21 */
+
+    --tint-accent: rgb(124 186 255 / 14%);
+    --tint-addr: rgb(227 174 82 / 14%);
+    --tint-error: rgb(255 111 102 / 13%);
+
+    --shadow-1:
+      0 1px 2px rgb(0 0 0 / 32%),
+      0 1px 1px rgb(0 0 0 / 22%);
+    --shadow-2:
+      0 12px 32px rgb(0 0 0 / 44%),
+      0 2px 8px rgb(0 0 0 / 28%);
+  }
+}
+
+/* The manual override wins in both directions. */
+:root[data-theme="dark"] {
+  --ground: rgb(17 19 23 / 68%);
+  --surface: #151819;
+  --elevated: rgb(33 37 44 / 97%);
+  --sunken: rgb(0 0 0 / 22%);
+
+  --hairline: rgb(255 255 255 / 9%);
+  --border: rgb(255 255 255 / 17%);
+
+  --ink: #e9edf3;
+  --ink-dim: #a3acb9;
+  --ink-faint: #6e7885;
+
+  --addr: #e3ae52;
+  --sym: #7cbaff;
+  --xref: #5fd693;
+  --imm: #ff8fa8;
+  --uncommitted: #ec84d6;
+
+  --error: #ff6f66;
+  --warn: #f2c14a;
+  --hint: #6ad0ff;
+
+  --tint-accent: rgb(124 186 255 / 14%);
+  --tint-addr: rgb(227 174 82 / 14%);
+  --tint-error: rgb(255 111 102 / 13%);
+
+  --shadow-1:
+    0 1px 2px rgb(0 0 0 / 32%),
+    0 1px 1px rgb(0 0 0 / 22%);
+  --shadow-2:
+    0 12px 32px rgb(0 0 0 / 44%),
+    0 2px 8px rgb(0 0 0 / 28%);
+}
+
+/**
+ * No window effect on this machine. The window is `transparent: true`, so a failed
+ * blur leaves clear glass rather than an opaque window — the ground has to become
+ * solid or the desktop shows through unblurred behind the chrome. Content panes are
+ * already opaque and need no fallback.
+ */
+:root[data-effect="off"] {
+  --ground: #f4f5f8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-effect="off"]:not([data-theme="light"]) {
+    --ground: #111317;
+  }
+}
+
+:root[data-theme="dark"][data-effect="off"] {
+  --ground: #111317;
+}
+
+:root {
+  /* Rounding. The window is the largest radius; nothing inside exceeds its panel step. */
+  --r-window: 10px;
+  --r-panel: 8px;
+  --r-control: 6px;
+  --r-chip: 5px;
+
   /**
-   * Third weight, split out because depth and indent guides are not what the two above
-   * carry. Nesting is already conveyed by horizontal text offset; the guide only makes
-   * it faster to scan, so it is reinforcement rather than information and belongs at the
-   * quietest weight. Sharing `--rule` with the pane underlines made the tree's indent
-   * rails read louder than the region boundaries around them, which inverts the frame.
+   * One curve, everywhere. Decelerating hard from a fast start is what reads as
+   * "smooth" rather than "animated" — the eye sees the arrival, not the travel.
    */
-  --rule-guide: #2b3340;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --t-fast: 120ms;
+  --t-base: 180ms;
+  --t-slow: 260ms;
 
-  /**
-   * Ink. Three steps, and the third is not a text colour: `--ink-faint` (2.38:1) is for
-   * disabled affordances and the `;` comment mark only — never for anything a person
-   * needs to read or find. Readable chrome uses `--ink-dim`, which clears 5.24:1.
-   */
-  --ink: #c9d2db;
-  --ink-dim: #7c8798;
-  --ink-faint: #48515f;
+  /* UI rows are roomier than code lines; they are read at a glance, not scanned. */
+  --row: 24px;
+  --titlebar: 38px;
+  --header: 30px;
 
-  /* The four semantic roles. */
-  --addr: #c99a3e; /* offsets, line numbers, turn indices, the caret — 7.42:1 */
-  --addr-dim: #9e7c36; /* resting line numbers, and modified files — 4.89:1 */
-  /**
-   * The addr-dim step lifted for use on the active row's tinted field, where the
-   * plain step falls to 3.70:1. 4.88:1 on that field, 6.46:1 on the ground, and still
-   * visibly below `--addr` so the mark stays distinguishable from the active state.
-   */
-  --addr-lift: #b89043;
-  --sym: #6fb2ff; /* symbols the language server resolved — 8.61:1 */
-  --xref: #4fcb7b; /* references, callers, additions — 9.22:1 */
-  --imm: #e86a8c; /* literals, constants, removals — 6.24:1 */
-
-  /* Uncommitted. An unsaved buffer now; patched hunks in phase 2 — 5.98:1 */
-  --uncommitted: #e45cc0;
-
-  /* Diagnostics. */
-  --error: #ff5c57;
-  --warn: #f0b429;
-  --hint: #57c7ff;
-
-  /* Tints, for fields rather than text. */
-  --tint-addr: rgb(201 154 62 / 18%);
-  --tint-sym: rgb(111 178 255 / 14%);
-
+  --ui: "Geist Sans", -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --legend: "Archivo Narrow", "Segoe UI", system-ui, sans-serif;
 
-  /* A listing is a fixed grid. One row height, everywhere. */
-  --row: 20px;
-  --header: 26px;
-
-  color-scheme: dark;
-  font-family: var(--mono);
+  font-family: var(--ui);
   font-size: 13px;
-  font-variant-numeric: tabular-nums;
+  font-feature-settings: "cv01", "ss01";
   line-height: var(--row);
   color: var(--ink);
-  background: var(--ground);
 }
 
 * {
@@ -120,39 +226,51 @@ body,
   overflow: hidden;
 }
 
-/* --- Browser surfaces -------------------------------------------------------
-   These ship with defaults that belong to no design system. */
+/**
+ * Transparent all the way down: the window effect is painted by the OS behind the
+ * webview, so any opaque ancestor hides it. `.app` supplies the only ground.
+ */
+html,
+body {
+  background: transparent;
+}
+
+/* --- Browser surfaces ------------------------------------------------------ */
 
 ::selection {
-  background: var(--tint-sym);
-  color: #ffffff;
+  background: var(--tint-accent);
+  color: var(--ink);
 }
 
 :root {
-  caret-color: var(--addr);
+  caret-color: var(--sym);
+  accent-color: var(--sym);
 }
 
 :focus-visible {
-  outline: 1px solid var(--addr);
+  outline: 2px solid var(--sym);
   outline-offset: 1px;
+  border-radius: var(--r-chip);
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
+/* An overlay scrollbar: present when needed, never a groove down the side. */
 ::-webkit-scrollbar-thumb {
-  background: var(--rule-strong);
+  background: var(--ink-faint);
   border: 3px solid transparent;
+  border-radius: 8px;
   background-clip: content-box;
+  opacity: 0.5;
 }
 
-/* Must be brighter than the resting thumb (--rule-strong, 3.18:1), not dimmer. */
 ::-webkit-scrollbar-thumb:hover {
   background: var(--ink-dim);
   background-clip: content-box;
@@ -162,43 +280,32 @@ body,
   background: transparent;
 }
 
-/* --- Shared grammar --------------------------------------------------------- */
+/* --- Shared grammar -------------------------------------------------------- */
 
-/**
- * A panel legend. Condensed small caps riding on a boundary rule, the way an
- * instrument panel is etched rather than labelled.
- */
+/** A section label. Sentence case at UI weight — not the etched small caps of before. */
 .legend {
-  font-family: var(--legend);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.005em;
   color: var(--ink-dim);
   line-height: 1;
 }
 
-/**
- * Meta information speaks in the listing's own voice: an assembly comment.
- * Used for empty states, notes, and anything that is not itself data.
- */
+/** Secondary prose: empty states, notes, anything that is not itself data. */
 .note {
   color: var(--ink-dim);
   font-size: 12px;
-}
-
-.note::before {
-  content: "; ";
-  color: var(--ink-faint);
 }
 
 .note.is-error {
   color: var(--error);
 }
 
-/* A right-aligned measurement column. */
+/** A right-aligned measurement. Mono, because these are compared down a column. */
 .measure {
   color: var(--ink-dim);
+  font-family: var(--mono);
   font-size: 11px;
   text-align: right;
   font-variant-numeric: tabular-nums;

@@ -26,3 +26,10 @@ tauri-plugin-dialog = "2"
 notify = "7"
 ignore = "0.4"
 
+# Both are already in the tree as dependencies of tauri's own (error-swallowing) window
+# effects support; `window.rs` calls them directly because it has to report whether the
+# effect applied, and to pick the effect by OS build.
+[target.'cfg(windows)'.dependencies]
+window-vibrancy = "0.6"
+windows-version = "0.1"
+

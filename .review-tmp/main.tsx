@@ -15,6 +15,14 @@ import App from "../src/App";
 const ROOT = "C:/Users/tung/Desktop/agentide";
 localStorage.setItem("agentide.lastWorkspace", ROOT);
 
+// `?theme=light|dark` pins the appearance, so a capture can show either on demand
+// instead of depending on whatever the headless browser reports for prefers-color-scheme.
+const pinned = new URLSearchParams(location.search).get("theme");
+if (pinned === "light" || pinned === "dark") {
+  localStorage.setItem("agentide.appearance", pinned);
+  document.documentElement.dataset.theme = pinned;
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<App />);
 
 /** Drive the real components into a content-full state for the capture. */

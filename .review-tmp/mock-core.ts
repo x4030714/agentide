@@ -188,6 +188,14 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       scriptTurn((e) => ch?.onmessage?.(e));
       return undefined as T;
     }
+    case "window_minimize":
+    case "window_toggle_maximize":
+    case "window_close":
+      return undefined as T;
+    case "window_is_maximized":
+      return false as T;
+    case "window_effect_active":
+      return true as T;
     case "agent_stop":
     case "agent_prompt":
     case "agent_interrupt":

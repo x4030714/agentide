@@ -24,7 +24,9 @@ export type ErrorCode =
   | "io"
   | "watch"
   /** The agent sidecar is not running, cannot be started, or cannot be reached. */
-  | "agent";
+  | "agent"
+  /** A window operation the runtime refused; in practice only during shutdown. */
+  | "window";
 
 export interface IpcError {
   code: ErrorCode;
@@ -300,3 +302,17 @@ export interface AgentStartOptions {
    */
   hostPermissions?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Window chrome
+//
+// The window is frameless and transparent, so the title bar is the frontend's to draw.
+// Mirrored from `src-tauri/src/window.rs`.
+// ---------------------------------------------------------------------------
+
+/**
+ * Tauri event carrying the new value whenever the main window is maximized or restored
+ * -- by our own button, a double click on the drag region, a Win+Arrow snap or a drag to
+ * the top of the screen. Subscribe through `onMaximizedChange` rather than by name.
+ */
+export const MAXIMIZED_EVENT = "window://maximized";

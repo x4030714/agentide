@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@tauri-apps/api/core": here("./.review-tmp/mock-core.ts"),
+      "@tauri-apps/api/event": here("./.review-tmp/mock-event.ts"),
       "@tauri-apps/plugin-dialog": here("./.review-tmp/mock-dialog.ts"),
     },
   },
