@@ -1,4 +1,4 @@
-import { readFile } from "./bridge";
+import { readFile, writeFile } from "./bridge";
 import { HOST_TOOL_NAMES } from "./ide-tool-names";
 import type { Json } from "./lsp-client";
 import type { LspWorkspace } from "./lsp-monaco";
@@ -82,6 +82,8 @@ export async function answerIdeTool(
         return await ideDocumentSymbols(args, deps);
       case "ide_workspace_symbols":
         return await ideWorkspaceSymbols(args, deps);
+      case "ide_rename_symbol":
+        return await ideRenameSymbol(args, deps);
       default:
         return toolError(`${name} is not a tool this build answers.`);
     }
@@ -483,6 +485,151 @@ function lineOf(diagnostic: Json): number {
 
 function byPath(a: [WirePath, unknown], b: [WirePath, unknown]): number {
   return a[0].localeCompare(b[0]);
+}
+
+// --- Rename ---------------------------------------------------------------------
+
+interface TextEdit {
+  start: { line: number; character: number };
+  end: { line: number; character: number };
+  newText: string;
+}
+
+/**
+ * Apply a file's edits to its text.
+ *
+ * Back to front. Every edit's range is expressed against the *original* text, so applying
+ * one from the start shifts every position after it and each subsequent edit lands in the
+ * wrong place -- silently, producing plausible-looking wrong code. Sorting descending
+ * means no applied edit can move a range that has not been applied yet.
+ */
+function applyEdits(text: string, edits: TextEdit[]): string {
+  const lineStarts = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "\n") lineStarts.push(index + 1);
+  }
+  const offsetOf = (position: { line: number; character: number }) => {
+    const start = lineStarts[Math.min(position.line, lineStarts.length - 1)] ?? 0;
+    return Math.min(start + position.character, text.length);
+  };
+
+  const ordered = [...edits].sort((a, b) => offsetOf(b.start) - offsetOf(a.start));
+  let out = text;
+  for (const edit of ordered) {
+    out = out.slice(0, offsetOf(edit.start)) + edit.newText + out.slice(offsetOf(edit.end));
+  }
+  return out;
+}
+
+function toTextEdit(value: unknown): TextEdit | null {
+  const edit = value as Json;
+  if (!edit || !isRange(edit.range)) return null;
+  const range = edit.range as unknown as TextEdit;
+  return { start: range.start, end: range.end, newText: String(edit.newText ?? "") };
+}
+
+function isRange(value: unknown): boolean {
+  const range = value as { start?: { line?: unknown }; end?: { line?: unknown } } | undefined;
+  return typeof range?.start?.line === "number" && typeof range?.end?.line === "number";
+}
+
+async function ideRenameSymbol(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
+  const at = position(args, deps.root);
+  if ("error" in at) return toolError(at.error);
+  const newName = typeof args.newName === "string" ? args.newName.trim() : "";
+  if (!newName) return toolError("`newName` is required.");
+  const lsp = deps.lsp();
+  if (!lsp) return toolError("No workspace is open.");
+
+  const edit = await lsp.ask<Json>(at.path, "textDocument/rename", {
+    position: { line: at.line - 1, character: at.column - 1 },
+    newName,
+  });
+  if (!edit) {
+    return toolError(
+      `Nothing at ${display(at.path, deps.root)}:${at.line}:${at.column} can be renamed. ` +
+        "Point at the symbol's name, not at whitespace or a keyword.",
+    );
+  }
+  if ("error" in edit) return toolError(String((edit as { error: string }).error));
+
+  // `documentChanges` is the richer form and the one rust-analyzer sends. Its entries are
+  // either a versioned edit or a file operation, and the two are told apart by `kind`.
+  const perFile = new Map<WirePath, TextEdit[]>();
+  const fileOperations: string[] = [];
+
+  const collect = (uri: unknown, edits: unknown) => {
+    if (typeof uri !== "string" || !Array.isArray(edits)) return;
+    const path = uriPath(uri);
+    const parsed = edits.map(toTextEdit).filter((one): one is TextEdit => one !== null);
+    if (parsed.length === 0) return;
+    perFile.set(path, [...(perFile.get(path) ?? []), ...parsed]);
+  };
+
+  if (Array.isArray(edit.documentChanges)) {
+    for (const change of edit.documentChanges as Json[]) {
+      if (typeof change.kind === "string") {
+        fileOperations.push(String(change.kind));
+        continue;
+      }
+      collect((change.textDocument as Json)?.uri, change.edits);
+    }
+  } else if (edit.changes && typeof edit.changes === "object") {
+    for (const [uri, edits] of Object.entries(edit.changes as Record<string, unknown>)) {
+      collect(uri, edits);
+    }
+  }
+
+  /**
+   * A rename that also moves files is refused whole rather than applied in part.
+   *
+   * rust-analyzer asks for this when the symbol is a module whose name maps to a file.
+   * There is no filesystem-rename command in this app yet, so applying only the text
+   * would leave code referring to a file that does not exist -- broken in a way that
+   * looks like the rename worked. A refusal the model can route around is better.
+   */
+  if (fileOperations.length > 0) {
+    return toolError(
+      `This rename also needs to ${fileOperations.join(" and ")} files, which this build ` +
+        "cannot do, so nothing was changed. Rename it with Edit and move the file yourself.",
+    );
+  }
+
+  if (perFile.size === 0) {
+    return toolError(
+      `The language server returned no edits for renaming to '${newName}'. ` +
+        "Either the position is not a symbol, or the new name is already what it is called.",
+    );
+  }
+
+  // Everything is read and rewritten through the same path the editor uses, so an open
+  // buffer's unsaved edits are the basis of the rename rather than being overwritten by
+  // it -- the server's positions came from that buffer, not from the file on disk.
+  const written: string[] = [];
+  let edits = 0;
+  for (const [path, fileEdits] of [...perFile].sort(byPath)) {
+    const model = monaco.editor.getModel(monaco.Uri.parse(toFileUri(path)));
+    const before = model && !model.isDisposed() ? model.getValue() : (await readFile(path)).text;
+    const after = applyEdits(before, fileEdits);
+    if (after === before) continue;
+    await writeFile(path, after);
+    if (model && !model.isDisposed()) model.setValue(after);
+    written.push(`${display(path, deps.root)}  (${fileEdits.length})`);
+    edits += fileEdits.length;
+  }
+
+  if (written.length === 0) return toolOk("The rename produced no change.");
+  return toolOk(
+    [
+      `Renamed to '${newName}': ${edits} edit${edits === 1 ? "" : "s"} in ${written.length} file${
+        written.length === 1 ? "" : "s"
+      }.`,
+      ...written,
+      lsp.statusNote(),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
 }
 
 /** One line: a message with newlines in it wrecks a `path:line  message` listing. */

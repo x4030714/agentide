@@ -289,6 +289,39 @@ export function createIdeServer(link: HostLink, sessionId: string) {
     },
   );
 
+  const ideRenameSymbol = tool(
+    "ide_rename_symbol",
+    [
+      "Rename a symbol everywhere it is used, using the language server's own rename --",
+      "the same one the user's 'rename symbol' command performs.",
+      "This is the correct way to rename anything shared. It updates every real use,",
+      "including uses through imports, re-exports and trait implementations, and it does",
+      "not touch a comment, a string, or an unrelated identifier that happens to match.",
+      "A find-and-replace over the same name does the opposite on both counts, which is",
+      "why it is the wrong tool for this even when it looks like it worked.",
+      "The edit is applied to the files directly and is covered by the turn's checkpoint,",
+      "so the user can undo all of it at once.",
+      "Renames that would also move a file are refused rather than half-applied; do those",
+      "with Edit.",
+    ].join(" "),
+    {
+      path: z.string().describe("Absolute path to a file containing the symbol."),
+      line: z.number().int().min(1).describe("1-based line of the symbol."),
+      column: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("1-based column within the symbol name. Defaults to the start of the line."),
+      newName: z.string().describe("The new name, without any surrounding punctuation."),
+    },
+    async (args) => proxy("ide_rename_symbol", args as JsonObject),
+    {
+      annotations: { title: "Rename symbol", readOnlyHint: false, idempotentHint: false },
+      searchHint: "Rename a symbol across the project, correctly",
+    },
+  );
+
   return createSdkMcpServer({
     name: IDE_SERVER_NAME,
     version: "0.1.0",
@@ -317,6 +350,7 @@ export function createIdeServer(link: HostLink, sessionId: string) {
       ideReferences,
       ideDocumentSymbols,
       ideWorkspaceSymbols,
+      ideRenameSymbol,
     ],
   });
 }
@@ -344,4 +378,5 @@ export const IDE_TOOL_NAMES = [
   "ide_references",
   "ide_document_symbols",
   "ide_workspace_symbols",
+  "ide_rename_symbol",
 ] as const;

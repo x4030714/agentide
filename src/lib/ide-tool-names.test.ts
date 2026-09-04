@@ -18,7 +18,7 @@ describe("ide tool names", () => {
   const declared = [...sidecarSource.matchAll(/\btool\(\s*"(ide_\w+)"/g)].map((match) => match[1]);
 
   it("declares at least the tools this build was written against", () => {
-    expect(declared.length).toBeGreaterThanOrEqual(8);
+    expect(declared.length).toBeGreaterThanOrEqual(9);
   });
 
   it("answers exactly the tools the sidecar declares", () => {

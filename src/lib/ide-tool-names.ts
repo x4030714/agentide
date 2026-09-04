@@ -18,4 +18,5 @@ export const HOST_TOOL_NAMES = [
   "ide_references",
   "ide_document_symbols",
   "ide_workspace_symbols",
+  "ide_rename_symbol",
 ] as const;
