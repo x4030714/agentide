@@ -9,6 +9,7 @@ import { ChangesPane } from "./panes/Changes";
 import { EditorPane } from "./panes/Editor";
 import { FileTree } from "./panes/FileTree";
 import { TitleBar } from "./panes/TitleBar";
+import { TerminalPane } from "./panes/Terminal";
 import { TranscriptPane } from "./panes/Transcript";
 import "./App.css";
 
@@ -148,12 +149,8 @@ export default function App() {
               </div>
             </Panel>
             <Separator className="separator horizontal" />
-            {/* Phase 3 fills this with xterm.js over a PTY. */}
             <Panel id="terminal" defaultSize="28" minSize="8" collapsible>
-              <UnmappedRegion
-                legend="Terminal"
-                note="region not mapped — the pty attaches in phase 3"
-              />
+              <TerminalPane root={workspace?.root ?? null} />
             </Panel>
           </Group>
         </Panel>
@@ -162,16 +159,3 @@ export default function App() {
   );
 }
 
-/** A pane whose backing service does not exist yet, stated in the listing's own voice. */
-function UnmappedRegion({ legend, note }: { legend: string; note: string }) {
-  return (
-    <div className="pane">
-      <div className="pane-header">
-        <span className="legend">{legend}</span>
-      </div>
-      <div className="pane-body">
-        <p className="note">{note}</p>
-      </div>
-    </div>
-  );
-}

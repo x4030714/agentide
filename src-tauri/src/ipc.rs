@@ -203,6 +203,8 @@ pub enum ErrorCode {
     /// A window operation the runtime refused -- in practice only during shutdown, once
     /// the window the command names is gone.
     Window,
+    /// A terminal session that cannot be started, or is no longer running.
+    Pty,
 }
 
 /// The error every command returns. `Serialize` so Tauri can hand it to the frontend.
@@ -733,4 +735,58 @@ pub struct RewindResult {
     pub deleted: Vec<WirePath>,
     /// Created since the checkpoint and deliberately left alone.
     pub kept: Vec<WirePath>,
+}
+
+// ---------------------------------------------------------------------------
+// Terminal
+//
+// The shapes `pty.rs` hands the frontend. Output itself is not one of them: it crosses
+// as raw bytes on the same channel, because a pty produces bytes and decoding a chunk
+// that ends mid-character corrupts it. See the `pty.rs` module docs.
+
+/// What to start. Everything but the id has a default: the workspace root, the user's
+/// shell, and a terminal the size of a terminal.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtySpawnOptions {
+    /// The frontend's handle for this session. Reusing one replaces the session it
+    /// names, killing the process that was there.
+    pub id: String,
+    /// Defaults to the open workspace, then to the home directory.
+    pub cwd: Option<WirePath>,
+    /// argv, where `command[0]` is the program. Omitted means an interactive shell.
+    pub command: Option<Vec<String>>,
+    pub rows: Option<u16>,
+    pub cols: Option<u16>,
+}
+
+/// A session that is running, as `pty_spawn` reports it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyInfo {
+    pub id: String,
+    /// What was actually started: the resolved shell, unless a command was given.
+    pub program: String,
+    pub cwd: WirePath,
+    /// `None` if the platform will not say.
+    pub pid: Option<u32>,
+    pub rows: u16,
+    pub cols: u16,
+}
+
+/// The JSON half of a pty channel; the other half is raw output bytes.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum PtyEvent {
+    /// The child is gone, and so is the session: writing to the id now fails. Always the
+    /// last thing a session sends, and it arrives after the last of its output.
+    #[serde(rename_all = "camelCase")]
+    Exited {
+        id: String,
+        /// `None` only when the platform would not report a code.
+        code: Option<u32>,
+        /// The signal that ended it, on platforms that have them.
+        signal: Option<String>,
+        message: String,
+    },
 }

@@ -2,6 +2,7 @@ mod agent;
 mod checkpoints;
 mod fs;
 mod ipc;
+mod pty;
 mod window;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -11,6 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(fs::WorkspaceState::default())
         .manage(agent::AgentState::default())
+        .manage(pty::PtyState::default())
         .manage(window::ChromeState::default())
         .setup(|app| {
             // The window is frameless and transparent; this is what makes it translucent
@@ -38,6 +40,10 @@ pub fn run() {
             checkpoints::checkpoint_revert_file,
             checkpoints::checkpoint_revert_hunks,
             checkpoints::checkpoint_rewind,
+            pty::pty_spawn,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_kill,
             window::window_minimize,
             window::window_toggle_maximize,
             window::window_close,
@@ -47,10 +53,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // The sidecar is a child process, not a thread: nothing else stops it when
-            // the window closes, and managed state is not guaranteed to be dropped here.
+            // The sidecar and every pty are child processes, not threads: nothing else
+            // stops them when the window closes, and managed state is not guaranteed to
+            // be dropped here.
             if matches!(event, tauri::RunEvent::Exit) {
                 agent::shutdown(app);
+                pty::shutdown(app);
             }
         });
 }

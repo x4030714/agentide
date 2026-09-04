@@ -33,7 +33,9 @@ export type ErrorCode =
    * A hunk no longer matches the file it was computed from. Always a refusal to act,
    * never a partial apply: a stale hunk applied blind corrupts the file.
    */
-  | "stale";
+  | "stale"
+  /** A terminal session that cannot be started, or is no longer running. */
+  | "pty";
 
 export interface IpcError {
   code: ErrorCode;
@@ -428,3 +430,67 @@ export interface RewindResult {
   /** Created since the checkpoint and deliberately left alone. */
   kept: WirePath[];
 }
+
+// ---------------------------------------------------------------------------
+// Terminal
+//
+// Mirrors `src-tauri/src/ipc.rs`; the mechanism is in `src-tauri/src/pty.rs`.
+//
+// A pty session's channel carries two shapes. Output is *bytes* — an `ArrayBuffer`,
+// never a string, because a read boundary lands mid-UTF-8-character often enough that
+// decoding a chunk on its own visibly corrupts it. Hand it to xterm.js as a `Uint8Array`
+// and its decoder carries the split character into the next chunk. Everything else is a
+// `PtyEvent` object. `ptySpawn` in `bridge.ts` splits the two, so nothing above it has
+// to know they share a channel.
+//
+// Scrollback is the terminal's: the Rust side keeps no history and cannot replay a
+// session, so a terminal that is unmounted and remounted starts blank unless the
+// frontend kept the buffer.
+// ---------------------------------------------------------------------------
+
+export interface PtySpawnOptions {
+  /**
+   * This frontend's handle for the session — a tab id. Spawning onto an id that is
+   * already running replaces it, killing the process that was there.
+   */
+  id: string;
+  /** Defaults to the open workspace, then to the home directory. */
+  cwd?: WirePath;
+  /**
+   * argv, where `command[0]` is the program. Omitted means an interactive shell:
+   * PowerShell 7 if it is installed, else Windows PowerShell, else `cmd.exe`, and
+   * `$SHELL` elsewhere. `AGENTIDE_SHELL` in the environment overrides all of it.
+   */
+  command?: string[];
+  /** Defaults to 24x80. Send the real size with `ptyResize` once the pane is measured. */
+  rows?: number;
+  cols?: number;
+}
+
+/** A session that is running, as `ptySpawn` reports it. */
+export interface PtyInfo {
+  id: string;
+  /** What was actually started: the resolved shell, unless a command was given. */
+  program: string;
+  cwd: WirePath;
+  pid: number | null;
+  rows: number;
+  cols: number;
+}
+
+/**
+ * The object half of a pty channel; the other half is raw output.
+ *
+ * `exited` is the last thing a session sends, and it arrives after the last of its
+ * output. The session is gone with it: `ptyWrite` and `ptyResize` on that id then reject
+ * with a `"pty"` error rather than swallowing what is typed.
+ */
+export type PtyEvent = {
+  t: "exited";
+  id: string;
+  /** Null only when the platform would not report a code. */
+  code: number | null;
+  /** The signal that ended it, on platforms that have them. */
+  signal: string | null;
+  message: string;
+};

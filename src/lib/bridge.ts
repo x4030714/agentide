@@ -30,6 +30,9 @@ import type {
   FileHunks,
   RevertOutcome,
   RewindResult,
+  PtyEvent,
+  PtyInfo,
+  PtySpawnOptions,
 } from "./protocol";
 
 /** Native folder picker. Returns null when the user cancels. */
@@ -272,4 +275,63 @@ export async function checkpointRewind(
   deleteCreated?: boolean,
 ): Promise<RewindResult> {
   return invoke<RewindResult>("checkpoint_rewind", { checkpoint, deleteCreated });
+}
+
+// ---------------------------------------------------------------------------
+// Terminal -- wrappers over `src-tauri/src/pty.rs`
+// ---------------------------------------------------------------------------
+
+/**
+ * Start a shell -- or `options.command` -- in a pty and subscribe to it.
+ *
+ * `onOutput` receives bytes, not text, and must go straight to xterm.js:
+ * `terminal.write(chunk)` takes a `Uint8Array` and keeps the decoder state that a chunk
+ * ending mid-character needs. Decoding it here instead would corrupt those characters.
+ * Chunks are already coalesced by the Rust side (~12ms, up to 64 KiB), so there is
+ * nothing to gain by batching them again.
+ *
+ * `onEvent` fires once, with `exited`, after the last output of the session. Spawning
+ * onto an id that is already running replaces it and kills the process that was there,
+ * which the old session reports on its own channel.
+ */
+export async function ptySpawn(
+  options: PtySpawnOptions,
+  onOutput: (chunk: Uint8Array) => void,
+  onEvent: (event: PtyEvent) => void,
+): Promise<PtyInfo> {
+  const channel = new Channel<ArrayBuffer | PtyEvent>();
+  // One channel, two shapes: raw output arrives as an ArrayBuffer, everything else as an
+  // object. See the terminal notes in `protocol.ts`.
+  channel.onmessage = (message) => {
+    if (message instanceof ArrayBuffer) onOutput(new Uint8Array(message));
+    else onEvent(message);
+  };
+  return invoke<PtyInfo>("pty_spawn", { options, onEvent: channel });
+}
+
+/**
+ * Send input to the shell. This is what xterm.js's `onData` hands you, unchanged --
+ * keystrokes, pasted text and the escape sequences the terminal generates.
+ *
+ * Rejects with a `"pty"` error once the session has exited, so input is never silently
+ * dropped into a dead terminal.
+ */
+export async function ptyWrite(id: string, data: string): Promise<void> {
+  return invoke("pty_write", { id, data });
+}
+
+/**
+ * Tell the shell the terminal changed shape -- from the fit addon, on every pane resize.
+ * A pty that is never resized keeps wrapping at 24x80.
+ */
+export async function ptyResize(id: string, rows: number, cols: number): Promise<void> {
+  return invoke("pty_resize", { id, rows, cols });
+}
+
+/**
+ * End a session and everything running in it. Safe to call twice, and safe to call on a
+ * session that has already exited -- closing a tab should not have to check first.
+ */
+export async function ptyKill(id: string): Promise<void> {
+  return invoke("pty_kill", { id });
 }

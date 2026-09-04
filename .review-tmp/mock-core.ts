@@ -10,6 +10,8 @@
  * never sees it. Each later phase gets reviewed through it, so it stays.
  */
 
+import { scriptShell } from "./pty-script";
+
 const ROOT = "C:/Users/tung/Desktop/agentide";
 
 interface Entry {
@@ -261,6 +263,25 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       return { path: String(args?.path), action: "restored", hunks: 0 } as T;
     case "checkpoint_rewind":
       return { safety: CHECKPOINT, checkpoint: CHECKPOINT, restored: [], deleted: [], kept: [] } as T;
+    case "pty_spawn": {
+      // A scripted shell session, so the terminal can be reviewed without a real pty.
+      const opts = args?.options as { id?: string } | undefined;
+      // The channel arrives as `onEvent`; output and events share it.
+      const out = args?.onEvent as { onmessage?: (m: unknown) => void } | undefined;
+      scriptShell((chunk) => out?.onmessage?.(chunk));
+      return {
+        id: opts?.id ?? "t1",
+        program: "powershell.exe",
+        cwd: ROOT,
+        pid: 24810,
+        rows: 24,
+        cols: 100,
+      } as T;
+    }
+    case "pty_write":
+    case "pty_resize":
+    case "pty_kill":
+      return undefined as T;
     case "agent_stop":
     case "agent_prompt":
     case "agent_interrupt":
