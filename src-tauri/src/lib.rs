@@ -1,4 +1,5 @@
 mod agent;
+mod checkpoints;
 mod fs;
 mod ipc;
 mod window;
@@ -29,6 +30,14 @@ pub fn run() {
             agent::agent_interrupt,
             agent::agent_permission_reply,
             agent::agent_tool_reply,
+            checkpoints::checkpoint_create,
+            checkpoints::checkpoint_list,
+            checkpoints::checkpoint_diff,
+            checkpoints::checkpoint_file_diff,
+            checkpoints::checkpoint_hunks,
+            checkpoints::checkpoint_revert_file,
+            checkpoints::checkpoint_revert_hunks,
+            checkpoints::checkpoint_rewind,
             window::window_minimize,
             window::window_toggle_maximize,
             window::window_close,

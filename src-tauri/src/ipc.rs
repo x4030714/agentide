@@ -195,6 +195,11 @@ pub enum ErrorCode {
     Watch,
     /// The agent sidecar is not running, cannot be started, or cannot be reached.
     Agent,
+    /// A checkpoint operation the shadow repository refused.
+    Checkpoint,
+    /// A hunk no longer matches the file it was computed from. Always a refusal to act,
+    /// never a partial apply: a stale hunk applied blind corrupts the file.
+    Stale,
     /// A window operation the runtime refused -- in practice only during shutdown, once
     /// the window the command names is gone.
     Window,
@@ -585,4 +590,147 @@ mod tests {
         assert_eq!(wire, WirePath::parse(SAMPLE).unwrap());
         assert!(serde_json::from_str::<WirePath>("\"nope\"").is_err());
     }
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoints
+//
+// The shadow git repository at `.agentide/checkpoints.git` is what makes every agent
+// edit reversible. These are the shapes it hands the frontend; the mechanism lives in
+// `checkpoints.rs`.
+
+/// One commit in the shadow repository.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Checkpoint {
+    pub id: String,
+    /// The first seven characters, for display. The full id is what commands take.
+    pub short_id: String,
+    /// Unix epoch milliseconds.
+    pub created_ms: u64,
+    pub label: String,
+    /// `None` only for the first checkpoint of a workspace.
+    pub parent: Option<String>,
+    pub files_changed: u32,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// How a file differs from the checkpoint it is compared against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileChange {
+    Added,
+    Modified,
+    Deleted,
+}
+
+/// Why a file's text is absent from a diff. The row still renders; only the content is
+/// withheld, so the queue never silently drops a change it cannot display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Omitted {
+    /// Not text, so there is nothing a diff editor could show.
+    Binary,
+    /// Larger than the per-file cap.
+    TooLarge,
+    /// The bulk diff's total budget ran out. Re-request this file on its own.
+    Budget,
+    NotUtf8,
+}
+
+/// One changed file, with both sides of the text where they can be shown.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffFile {
+    pub path: WirePath,
+    /// Workspace-relative, forward-slashed. What git was asked about.
+    pub relative: String,
+    pub status: FileChange,
+    pub added: u32,
+    pub removed: u32,
+    pub binary: bool,
+    /// The text at the checkpoint. `None` for an added file, or when `omitted` is set.
+    pub before: Option<String>,
+    /// The text now. `None` for a deleted file, or when `omitted` is set.
+    pub after: Option<String>,
+    pub omitted: Option<Omitted>,
+}
+
+/// Every changed file between two points, or between a checkpoint and the work tree.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointDiff {
+    pub from: String,
+    /// `None` means "against the working tree as it is now".
+    pub to: Option<String>,
+    pub files: Vec<DiffFile>,
+}
+
+/// One hunk of a file's patch.
+///
+/// `id` is content-derived, not positional: it is recomputed from the file as it stands
+/// whenever hunks are requested, so an id that no longer matches anything is a stale
+/// hunk and reverting it fails with `ErrorCode::Stale` rather than applying elsewhere.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hunk {
+    pub id: String,
+    /// The `@@ ... @@` line, for display.
+    pub header: String,
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// One file's hunks against a checkpoint.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileHunks {
+    pub path: WirePath,
+    pub relative: String,
+    /// Binary files have no hunks; `hunks` is empty and the whole file is the unit.
+    pub binary: bool,
+    pub hunks: Vec<Hunk>,
+}
+
+/// What reverting actually did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RevertAction {
+    /// Put back from the checkpoint.
+    Restored,
+    /// It did not exist at the checkpoint, so it was removed.
+    Deleted,
+    /// Already matched the checkpoint; nothing was written.
+    Unchanged,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevertOutcome {
+    pub path: WirePath,
+    pub action: RevertAction,
+    /// How many hunks were reverted; 0 for a whole-file revert.
+    pub hunks: u32,
+}
+
+/// The result of rewinding the work tree to a checkpoint.
+///
+/// `safety` is taken *before* the rewind, so the rewind is itself undoable — the one
+/// operation here that can remove work needs an escape hatch of its own.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewindResult {
+    pub safety: Checkpoint,
+    /// Taken after, so the timeline records the rewind rather than hiding it.
+    pub checkpoint: Checkpoint,
+    pub restored: Vec<WirePath>,
+    /// Created since the checkpoint and removed by the rewind.
+    pub deleted: Vec<WirePath>,
+    /// Created since the checkpoint and deliberately left alone.
+    pub kept: Vec<WirePath>,
 }

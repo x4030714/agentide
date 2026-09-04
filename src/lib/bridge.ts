@@ -24,6 +24,12 @@ import type {
   ToolResult,
   WirePath,
   Workspace,
+  Checkpoint,
+  CheckpointDiff,
+  DiffFile,
+  FileHunks,
+  RevertOutcome,
+  RewindResult,
 } from "./protocol";
 
 /** Native folder picker. Returns null when the user cancels. */
@@ -189,3 +195,81 @@ export const windowChrome = {
     return invoke<boolean>("window_effect_active");
   },
 };
+
+// ---------------------------------------------------------------------------
+// Checkpoints
+
+/**
+ * Commit the current tree to the shadow repository.
+ *
+ * Cheap enough to run before every turn, which is the point: a turn without a
+ * checkpoint before it is a turn that cannot be undone.
+ */
+export async function checkpointCreate(label: string): Promise<Checkpoint> {
+  return invoke<Checkpoint>("checkpoint_create", { label });
+}
+
+/** Newest first. */
+export async function checkpointList(limit?: number): Promise<Checkpoint[]> {
+  return invoke<Checkpoint[]>("checkpoint_list", { limit });
+}
+
+/**
+ * Every changed file between a checkpoint and `to` — or, with `to` omitted, between it
+ * and the working tree as it stands. Files whose text is too large or not text at all
+ * come back flagged rather than dropped.
+ */
+export async function checkpointDiff(from: string, to?: string): Promise<CheckpointDiff> {
+  return invoke<CheckpointDiff>("checkpoint_diff", { from, to });
+}
+
+/** One file's two sides — for re-reading a row after a revert, or one the bulk diff's budget left out. */
+export async function checkpointFileDiff(
+  checkpoint: string,
+  path: WirePath,
+): Promise<DiffFile | null> {
+  return invoke<DiffFile | null>("checkpoint_file_diff", { checkpoint, path });
+}
+
+/** One file's hunks, recomputed from the file as it stands right now. */
+export async function checkpointHunks(
+  checkpoint: string,
+  path: WirePath,
+): Promise<FileHunks> {
+  return invoke<FileHunks>("checkpoint_hunks", { checkpoint, path });
+}
+
+/** Put one file back the way it was. A file that did not exist then is removed. */
+export async function checkpointRevertFile(
+  checkpoint: string,
+  path: WirePath,
+): Promise<RevertOutcome> {
+  return invoke<RevertOutcome>("checkpoint_revert_file", { checkpoint, path });
+}
+
+/**
+ * Put selected hunks back. All-or-nothing: if any id is stale, or the subset will not
+ * reverse-apply, nothing is written and this rejects with `"stale"`.
+ */
+export async function checkpointRevertHunks(
+  checkpoint: string,
+  path: WirePath,
+  hunks: string[],
+): Promise<RevertOutcome> {
+  return invoke<RevertOutcome>("checkpoint_revert_hunks", { checkpoint, path, hunks });
+}
+
+/**
+ * Restore the whole work tree to a checkpoint.
+ *
+ * Takes a safety checkpoint first, so the rewind is itself undoable. `deleteCreated`
+ * defaults to true — files made since the checkpoint are removed, and every one of them
+ * is in the safety checkpoint. Pass false to keep them; they come back in `kept`.
+ * Nothing the ignore rules exclude is ever deleted, captured or restored.
+ */
+export async function checkpointRewind(
+  checkpoint: string,
+  deleteCreated?: boolean,
+): Promise<RewindResult> {
+  return invoke<RewindResult>("checkpoint_rewind", { checkpoint, deleteCreated });
+}

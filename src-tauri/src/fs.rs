@@ -23,7 +23,11 @@ use crate::ipc::{
 };
 
 /// Directories that never belong in the tree, whatever `.gitignore` says.
-const ALWAYS_IGNORED: [&str; 4] = [".git", "node_modules", "target", "dist"];
+/// Never listed, and never checkpointed. `.agentide` holds the shadow repository
+/// itself, so leaving it out is what stops a checkpoint committing its own git
+/// directory; `checkpoints.rs` writes this same list into the shadow repo's
+/// `info/exclude` so the tree and the checkpoints cannot drift apart.
+pub const ALWAYS_IGNORED: [&str; 5] = [".git", ".agentide", "node_modules", "target", "dist"];
 
 /// Opening anything larger than this in the editor is a mistake, not a feature.
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;

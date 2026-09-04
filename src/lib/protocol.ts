@@ -26,7 +26,14 @@ export type ErrorCode =
   /** The agent sidecar is not running, cannot be started, or cannot be reached. */
   | "agent"
   /** A window operation the runtime refused; in practice only during shutdown. */
-  | "window";
+  | "window"
+  /** A checkpoint operation the shadow repository refused. */
+  | "checkpoint"
+  /**
+   * A hunk no longer matches the file it was computed from. Always a refusal to act,
+   * never a partial apply: a stale hunk applied blind corrupts the file.
+   */
+  | "stale";
 
 export interface IpcError {
   code: ErrorCode;
@@ -316,3 +323,108 @@ export interface AgentStartOptions {
  * the top of the screen. Subscribe through `onMaximizedChange` rather than by name.
  */
 export const MAXIMIZED_EVENT = "window://maximized";
+
+// ---------------------------------------------------------------------------
+// Checkpoints
+//
+// Mirrors the shapes in `src-tauri/src/ipc.rs`. The shadow git repository at
+// `.agentide/checkpoints.git` is what makes every agent edit reversible; the user's own
+// `.git`, index and history are never read or written.
+
+/** One commit in the shadow repository. */
+export interface Checkpoint {
+  id: string;
+  /** First seven characters, for display. Commands take the full id. */
+  shortId: string;
+  createdMs: number;
+  label: string;
+  /** `null` only for a workspace's first checkpoint. */
+  parent: string | null;
+  filesChanged: number;
+  added: number;
+  removed: number;
+}
+
+export type FileChange = "added" | "modified" | "deleted";
+
+/**
+ * Why a file's text is absent from a diff. The row still renders — only the content is
+ * withheld, so the queue never silently drops a change it cannot display.
+ */
+export type Omitted = "binary" | "tooLarge" | "budget" | "notUtf8";
+
+/** One changed file, with both sides where they can be shown. */
+export interface DiffFile {
+  path: WirePath;
+  /** Workspace-relative, forward-slashed. */
+  relative: string;
+  status: FileChange;
+  added: number;
+  removed: number;
+  binary: boolean;
+  /** Text at the checkpoint. Absent for an added file, or when `omitted` is set. */
+  before: string | null;
+  /** Text now. Absent for a deleted file, or when `omitted` is set. */
+  after: string | null;
+  omitted: Omitted | null;
+}
+
+export interface CheckpointDiff {
+  from: string;
+  /** `null` means "against the working tree as it is now". */
+  to: string | null;
+  files: DiffFile[];
+}
+
+/**
+ * One hunk of a file's patch.
+ *
+ * `id` is content-derived, not positional, and is recomputed from the file as it stands
+ * each time hunks are requested. An id that no longer matches anything is stale, and
+ * reverting it fails with `ErrorCode` `"stale"` rather than applying somewhere else.
+ */
+export interface Hunk {
+  id: string;
+  /** The `@@ … @@` line, for display. */
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  added: number;
+  removed: number;
+}
+
+export interface FileHunks {
+  path: WirePath;
+  relative: string;
+  /** Binary files have no hunks; the whole file is the unit. */
+  binary: boolean;
+  hunks: Hunk[];
+}
+
+export type RevertAction = "restored" | "deleted" | "unchanged";
+
+export interface RevertOutcome {
+  path: WirePath;
+  action: RevertAction;
+  /** Hunks reverted; 0 for a whole-file revert. */
+  hunks: number;
+}
+
+/**
+ * The result of rewinding the work tree to a checkpoint.
+ *
+ * `safety` is taken *before* the rewind, so the rewind is itself undoable — this is the
+ * one operation that can remove work.
+ */
+export interface RewindResult {
+  safety: Checkpoint;
+  /** Taken after, so the timeline records the rewind rather than hiding it. */
+  checkpoint: Checkpoint;
+  restored: WirePath[];
+  /** Created since the checkpoint and removed by the rewind. */
+  deleted: WirePath[];
+  /** Created since the checkpoint and deliberately left alone. */
+  kept: WirePath[];
+}
