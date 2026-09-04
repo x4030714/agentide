@@ -4,9 +4,19 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import { useAppearance } from "./lib/appearance";
 import { openWorkspace, pickFolder } from "./lib/bridge";
 import { errorMessage } from "./lib/protocol";
-import type { Checkpoint, FsEvent, WirePath, Workspace } from "./lib/protocol";
+import { answerIdeTool, HOST_TOOL_NAMES } from "./lib/ide-host";
+import { useLsp } from "./lib/useLsp";
+import type {
+  Checkpoint,
+  FsEvent,
+  JsonObject,
+  ToolResult,
+  WirePath,
+  Workspace,
+} from "./lib/protocol";
 import { ChangesPane } from "./panes/Changes";
 import { EditorPane } from "./panes/Editor";
+import type { RevealTarget } from "./panes/Editor";
 import { FileTree } from "./panes/FileTree";
 import { TitleBar } from "./panes/TitleBar";
 import { TerminalPane } from "./panes/Terminal";
@@ -27,6 +37,50 @@ export default function App() {
   const [reviewRevision, setReviewRevision] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
   const [tab, setTab] = useState<"editor" | "changes">("editor");
+  /**
+   * Where the editor should put the cursor next. Carries a nonce because jumping twice to
+   * the same line is a real thing to ask for -- go to definition, scroll away, go again --
+   * and identical props would make the second one do nothing.
+   */
+  const [reveal, setReveal] = useState<RevealTarget | null>(null);
+
+  /**
+   * Go-to-definition landing in another file. The tab switch is part of the answer: a
+   * jump that silently changes the editor behind the Changes tab looks like nothing
+   * happened.
+   */
+  const openAt = useCallback(
+    (path: WirePath, line?: number, column?: number, endLine?: number, endColumn?: number) => {
+      setActivePath(path);
+      setTab("editor");
+      setReveal((previous) => ({
+        path,
+        line,
+        column,
+        endLine,
+        endColumn,
+        nonce: (previous?.nonce ?? 0) + 1,
+      }));
+    },
+    [],
+  );
+
+  const lsp = useLsp(workspace?.root ?? null, openAt);
+
+  /**
+   * The `ide_*` tools, answered here because this is the only component that holds all
+   * the pieces at once: the workspace root, the language servers and the ability to move
+   * the editor. The transcript owns the sidecar but knows none of that.
+   */
+  const onToolCall = useCallback(
+    (name: string, args: JsonObject): Promise<ToolResult> =>
+      answerIdeTool(name, args, {
+        root: workspace?.root ?? null,
+        lsp: lsp.workspace,
+        openFile: openAt,
+      }),
+    [workspace?.root, lsp.workspace, openAt],
+  );
 
   const onTurnStart = useCallback((next: Checkpoint) => {
     setCheckpoint(next);
@@ -99,6 +153,8 @@ export default function App() {
             root={workspace?.root ?? null}
             onTurnStart={onTurnStart}
             onTurnEnd={onTurnEnd}
+            onToolCall={onToolCall}
+            hostTools={HOST_TOOL_NAMES}
           />
         </Panel>
         <Separator className="separator vertical" />
@@ -136,7 +192,12 @@ export default function App() {
                   {/* Both stay mounted: switching tabs must not drop the editor's
                       undo stack or re-fetch a diff you were halfway through reading. */}
                   <div className="tab-panel" hidden={tab !== "editor"}>
-                    <EditorPane path={activePath} changes={changes} />
+                    <EditorPane
+                      path={activePath}
+                      changes={changes}
+                      reveal={reveal}
+                      lsp={lsp}
+                    />
                   </div>
                   <div className="tab-panel" hidden={tab !== "changes"}>
                     <ChangesPane

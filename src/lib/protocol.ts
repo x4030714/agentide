@@ -132,8 +132,14 @@ export function baseName(path: WirePath): string {
  * The `file://` URI form Monaco wants for a model. Kept next to the path helpers
  * because it is the third shape of the same path, and Phase 4's LSP client needs it too.
  *
- * Only the characters that would break URI parsing are escaped -- percent-encoding the
- * drive colon would produce a URI Monaco cannot turn back into a path.
+ * Only the characters that would break URI parsing are escaped. The drive colon is left
+ * alone deliberately, and it costs nothing: Monaco normalises `file:///C:/a/b.rs` and
+ * `file:///c%3A/a/b.rs` to the same URI, so both find the same model. Verified against
+ * Monaco's own `URI` in `lsp-session.test.ts`, which is also where the inverse
+ * (`uriToPath`) is pinned to this.
+ *
+ * This is the app's only path-to-URI function, and adding a second one is the mistake
+ * this comment exists to prevent -- see the note on `uriToPath`.
  */
 export function toFileUri(path: WirePath): string {
   const encoded = path.replace(

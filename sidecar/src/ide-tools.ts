@@ -1,17 +1,17 @@
 /**
- * The `ide` MCP server: the tools that make this an IDE agent rather than a terminal
+ * The `agentide` MCP server: the tools that make this an IDE agent rather than a terminal
  * agent in a window.
  *
  * Every handler here is a proxy. It computes nothing, reads nothing and caches nothing;
  * it emits a `tool_call` and waits for the host's `tool_reply`. The data these tools
  * return -- what you have selected, which files are open, what the language server
  * currently believes -- lives in the webview and the Rust core, and a copy of it in this
- * process would be a stale copy. Keeping the boundary this thin is also what lets the
- * backends land later without touching the model-facing surface: the descriptions and
- * schemas below are the contract, and Phases 3 and 4 only change who answers.
+ * process would be a stale copy. Keeping the boundary this thin is what let the backends
+ * land without touching the model-facing surface: the descriptions and schemas below are
+ * the contract, and the phases that followed only changed who answers.
  *
- * Until those phases land the host answers every call with an explicit "not available
- * yet", which the model sees as a tool error and can route around.
+ * The host answers a tool it does not implement with an explicit error rather than
+ * silence, which the model sees as a failed tool and can route around.
  */
 
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
@@ -20,14 +20,24 @@ import { z } from "zod";
 import { HostLink, TOOL_TIMEOUT_MS } from "./host.ts";
 import type { JsonObject, ToolResult } from "./protocol.ts";
 
-/** The MCP server name. Tools reach the model as `mcp__ide__<tool>`. */
-export const IDE_SERVER_NAME = "ide";
+/**
+ * The MCP server name. Tools reach the model as `mcp__agentide__<tool>`.
+ *
+ * Not "ide": Claude Code ships its own MCP server under that name for editor integration,
+ * and ours was being shadowed by it -- connecting successfully and then contributing zero
+ * tools, with no error on either side. The name has to be one nothing else claims.
+ */
+export const IDE_SERVER_NAME = "agentide";
 
 const INSTRUCTIONS = [
-  "Tools for the editor the user is working in.",
+  "Tools for the editor the user is working in, backed by a live language server.",
   "Prefer them over guessing from the filesystem: ide_selection and ide_open_editors tell",
   "you what the user is actually looking at, and ide_diagnostics reports the language",
   "server's live view of a file without running a build.",
+  "For anything about a symbol -- where it is defined, who uses it, what a file contains --",
+  "prefer ide_definition, ide_references, ide_document_symbols and ide_workspace_symbols",
+  "over Grep. They resolve through imports and generics, they do not match comments or",
+  "strings, and they cost a fraction of the tokens a text search over a common name does.",
 ].join(" ");
 
 /**
@@ -63,7 +73,7 @@ async function callHost(
 }
 
 /**
- * Build the `ide` server for one session.
+ * Build the `agentide` server for one session.
  *
  * One server per session rather than one per process: the handlers close over the
  * session id, which is what lets the host attribute a `tool_call` to the transcript that
@@ -78,6 +88,7 @@ export function createIdeServer(link: HostLink, sessionId: string) {
       "Open a file in the user's editor and move their cursor to it. Use this to show the",
       "user the code you are talking about instead of pasting it into your reply, and",
       "before proposing a change to a location they cannot currently see.",
+      "The editor shows one file at a time, so this replaces what they were looking at.",
       "This does not read the file -- use Read for that.",
     ].join(" "),
     {
@@ -108,12 +119,6 @@ export function createIdeServer(link: HostLink, sessionId: string) {
         .min(1)
         .optional()
         .describe("1-based column within `endLine`. Defaults to the end of that line."),
-      preview: z
-        .boolean()
-        .optional()
-        .describe(
-          "Open as a preview tab that the next preview open replaces, rather than pinning a new tab. Use true when you are showing several files in a row.",
-        ),
     },
     async (args) => proxy("ide_open", args as JsonObject),
     {
@@ -142,8 +147,8 @@ export function createIdeServer(link: HostLink, sessionId: string) {
   const ideOpenEditors = tool(
     "ide_open_editors",
     [
-      "List the files open in the editor, in tab order, marking which one is focused and",
-      "which have unsaved changes. This is the user's working set: it is a much better",
+      "List the files loaded in the editor, oldest first, marking which one is on screen",
+      "and which have unsaved changes. This is the user's working set: it is a much better",
       "starting point for 'where is this handled?' than searching the whole project, and",
       "it tells you when the version on disk is not the version the user is looking at.",
     ].join(" "),
@@ -185,12 +190,148 @@ export function createIdeServer(link: HostLink, sessionId: string) {
     },
   );
 
+  const ideDefinition = tool(
+    "ide_definition",
+    [
+      "Jump to where a symbol is defined, using the language server's resolved answer --",
+      "the same one 'go to definition' gives the user. Give the position of a use of the",
+      "symbol and this returns where it is declared.",
+      "This is exact where a text search is not: it follows imports, re-exports, trait",
+      "implementations and generics, and it will not match a comment, a string or an",
+      "unrelated identifier that happens to share the name. Prefer it over Grep whenever",
+      "you have a position to ask about.",
+    ].join(" "),
+    {
+      path: z.string().describe("Absolute path to the file containing the symbol."),
+      line: z.number().int().min(1).describe("1-based line of the symbol."),
+      column: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("1-based column within the symbol name. Defaults to the start of the line."),
+    },
+    async (args) => proxy("ide_definition", args as JsonObject),
+    {
+      annotations: { title: "Go to definition", readOnlyHint: true, openWorldHint: false },
+      searchHint: "Where a symbol is defined, resolved not guessed",
+    },
+  );
+
+  const ideReferences = tool(
+    "ide_references",
+    [
+      "Find every use of a symbol across the project, resolved by the language server.",
+      "This is the tool to use before changing or removing anything shared: it answers",
+      "'what will this break?' precisely, where a text search over a common name returns",
+      "mostly noise and still misses uses through aliases and re-exports.",
+      "Results are grouped by file, most relevant first.",
+    ].join(" "),
+    {
+      path: z.string().describe("Absolute path to a file containing the symbol."),
+      line: z.number().int().min(1).describe("1-based line of the symbol."),
+      column: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("1-based column within the symbol name. Defaults to the start of the line."),
+      includeDeclaration: z
+        .boolean()
+        .optional()
+        .describe("Include the declaration itself in the results. Defaults to true."),
+    },
+    async (args) => proxy("ide_references", args as JsonObject),
+    {
+      annotations: { title: "Find references", readOnlyHint: true, openWorldHint: false },
+      searchHint: "Every real use of a symbol, before you change it",
+    },
+  );
+
+  const ideDocumentSymbols = tool(
+    "ide_document_symbols",
+    [
+      "List the structure of one file -- its types, functions, methods and constants, with",
+      "the line each starts on, nested as they are nested in the source.",
+      "Read this before reading a large file: it is a few hundred tokens for an outline",
+      "that tells you which ranges are worth reading, instead of spending thousands on the",
+      "whole file to find one function.",
+    ].join(" "),
+    {
+      path: z.string().describe("Absolute path to the file."),
+    },
+    async (args) => proxy("ide_document_symbols", args as JsonObject),
+    {
+      annotations: { title: "Outline a file", readOnlyHint: true, openWorldHint: false },
+      searchHint: "A file's structure without reading the file",
+    },
+  );
+
+  const ideWorkspaceSymbols = tool(
+    "ide_workspace_symbols",
+    [
+      "Search the whole project for a symbol by name -- types, functions, traits, methods,",
+      "constants -- and get where each is defined.",
+      "Use this to locate something when you know what it is called but not where it lives.",
+      "It matches names, not text, so it will not return the hundred call sites and comments",
+      "that mention it; for those, use ide_references.",
+      "Matching is fuzzy, so a partial or camel-case fragment works.",
+    ].join(" "),
+    {
+      query: z
+        .string()
+        .describe("Symbol name or fragment. An empty query is not useful; name something."),
+    },
+    async (args) => proxy("ide_workspace_symbols", args as JsonObject),
+    {
+      annotations: { title: "Search symbols", readOnlyHint: true, openWorldHint: false },
+      searchHint: "Find a type or function by name across the project",
+    },
+  );
+
   return createSdkMcpServer({
     name: IDE_SERVER_NAME,
     version: "0.1.0",
     instructions: INSTRUCTIONS,
-    tools: [ideOpen, ideSelection, ideOpenEditors, ideDiagnostics],
+    /**
+     * Load these into the prompt rather than hiding them behind tool search.
+     *
+     * Not an optimisation -- without it the tools do not reach the model at all. MCP
+     * startup is non-blocking by default, so at the moment the first turn's prompt is
+     * built this server has not connected yet, its tools are not in the search index,
+     * and a model looking for them by exact name finds nothing. The observed symptom is
+     * an agent that reasons about `ide_definition`, cannot find it, and falls back to
+     * Grep -- with no error anywhere to say why.
+     *
+     * The cost is that startup now waits for this server (capped at 5s). It is an
+     * in-process server, so that wait is nothing, and these tools are the reason this
+     * app exists rather than an optional extra.
+     */
+    alwaysLoad: true,
+    tools: [
+      ideOpen,
+      ideSelection,
+      ideOpenEditors,
+      ideDiagnostics,
+      ideDefinition,
+      ideReferences,
+      ideDocumentSymbols,
+      ideWorkspaceSymbols,
+    ],
   });
+}
+
+/**
+ * The names these tools reach the model under: `mcp__agentide__ide_open` and so on.
+ *
+ * Used to auto-approve them. Seven of the eight only read state the user is already
+ * looking at, and the eighth moves the cursor in their own editor -- there is nothing to
+ * approve. Prompting anyway would be worse than not prompting: a dialog that is always
+ * answered "Allow" teaches the habit of allowing without reading, and the prompts that
+ * matter are the ones about writing to files.
+ */
+export function ideToolNames(): string[] {
+  return IDE_TOOL_NAMES.map((name) => `mcp__${IDE_SERVER_NAME}__${name}`);
 }
 
 /** Tool names this server exposes, for the host's routing table. Keep in sync above. */
@@ -199,4 +340,8 @@ export const IDE_TOOL_NAMES = [
   "ide_selection",
   "ide_open_editors",
   "ide_diagnostics",
+  "ide_definition",
+  "ide_references",
+  "ide_document_symbols",
+  "ide_workspace_symbols",
 ] as const;

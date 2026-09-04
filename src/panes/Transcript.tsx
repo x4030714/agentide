@@ -7,13 +7,21 @@ import {
   agentPrompt,
   agentStart,
   agentStop,
+  agentToolReply,
 } from "../lib/bridge";
 import { errorMessage } from "../lib/protocol";
 import { isEditMode, modeOptions } from "../lib/editmode";
 import type { EditMode } from "../lib/editmode";
 import { isPromptMode, readTunedPrompt } from "../lib/promptmode";
 import type { PromptMode } from "../lib/promptmode";
-import type { AgentEvent, Checkpoint, EffortLevel, WirePath } from "../lib/protocol";
+import type {
+  AgentEvent,
+  Checkpoint,
+  EffortLevel,
+  JsonObject,
+  ToolResult,
+  WirePath,
+} from "../lib/protocol";
 import { formatAddr, formatTokens, initialState, reduce } from "../lib/transcript";
 import { RunControls } from "./RunControls";
 import type { Row } from "../lib/transcript";
@@ -24,6 +32,13 @@ interface TranscriptProps {
   onTurnStart: (checkpoint: Checkpoint) => void;
   /** The turn ended, so the review queue should re-read. */
   onTurnEnd: () => void;
+  /**
+   * Answer one `ide_*` call. Owned by the parent, which is what holds the editor and the
+   * language servers; this pane only knows when a call arrives.
+   */
+  onToolCall: (name: string, args: JsonObject) => Promise<ToolResult>;
+  /** The names `onToolCall` will answer. Anything else is answered by the Rust core. */
+  hostTools: readonly string[];
 }
 
 /** Survives a restart: this is the control, so it is also the setting. */
@@ -60,11 +75,17 @@ function newSessionId(): string {
  * renumbers, one addressed row per tool call, and a boundary rule closing each turn.
  *
  * The pane owns the sidecar's lifetime. It declares `hostPermissions: true` because it
- * renders an approval row; it declares no `hostTools`, so the Rust core answers every
- * `ide_*` call immediately with "not available in this build" rather than stalling a
- * turn on a backend that arrives in phase 3.
+ * renders an approval row, and it declares the `ide_*` tools its parent can answer --
+ * anything outside that list is refused by the Rust core immediately, which is what keeps
+ * an unimplemented tool from stalling a turn until the sidecar's timeout.
  */
-export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps) {
+export function TranscriptPane({
+  root,
+  onTurnStart,
+  onTurnEnd,
+  onToolCall,
+  hostTools,
+}: TranscriptProps) {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [sessionId] = useState(newSessionId);
   const [draft, setDraft] = useState("");
@@ -88,14 +109,34 @@ export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps
   const bodyRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
 
+  // The sidecar is started once, on mount; both of these are read from a ref so a new
+  // callback identity from the parent does not restart it.
+  const toolCallRef = useRef(onToolCall);
+  const hostToolsRef = useRef(hostTools);
+  useEffect(() => {
+    toolCallRef.current = onToolCall;
+    hostToolsRef.current = hostTools;
+  }, [onToolCall, hostTools]);
+
   useEffect(() => {
     let cancelled = false;
     const onEvent = (event: AgentEvent) => {
       if (cancelled) return;
       dispatch(event);
       if (event.t === "done" || event.t === "exited") onTurnEnd();
+      if (event.t === "tool_call") {
+        // Every call must be answered, including the ones that fail: an unanswered
+        // `tool_call` leaves the turn waiting on the sidecar's timeout with no sign of
+        // why. `answerIdeTool` already catches its own errors; this catches the rest.
+        void toolCallRef.current(event.name, event.args)
+          .catch((err) => ({ ok: false, error: errorMessage(err) }) as ToolResult)
+          .then((result) => agentToolReply(event.id, result))
+          .catch(() => {
+            /* The reply itself failed -- the session is already gone. */
+          });
+      }
     };
-    agentStart(onEvent, { hostPermissions: true, hostTools: [] }).catch((err) => {
+    agentStart(onEvent, { hostPermissions: true, hostTools: [...hostToolsRef.current] }).catch((err) => {
       if (!cancelled) setStartError(errorMessage(err));
     });
     return () => {

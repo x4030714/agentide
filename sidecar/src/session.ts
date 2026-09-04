@@ -9,7 +9,7 @@
 import { query, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { HostLink } from "./host.ts";
-import { createIdeServer } from "./ide-tools.ts";
+import { createIdeServer, IDE_SERVER_NAME, ideToolNames } from "./ide-tools.ts";
 import { ModelCatalogue } from "./models.ts";
 import { createPermissionHandler } from "./permissions.ts";
 import type { DoneReason, JsonObject, PromptOptions } from "./protocol.ts";
@@ -131,12 +131,18 @@ export class Session {
       effort: options?.effort,
       resume: this.#resumeId,
       permissionMode: options?.permissionMode,
-      allowedTools: options?.allowedTools,
+      // The IDE tools are added rather than replacing what the host asked for:
+      // `allowedTools` is an auto-approve list, not a restriction, so this widens nothing
+      // else. See `ideToolNames` for why these do not need a prompt.
+      allowedTools: [...(options?.allowedTools ?? []), ...ideToolNames()],
       disallowedTools: options?.disallowedTools,
       maxTurns: options?.maxTurns,
       includePartialMessages: options?.includePartialMessages,
       canUseTool: createPermissionHandler(this.#link, this.#sessionId),
-      mcpServers: { ide: createIdeServer(this.#link, this.#sessionId) },
+      // Keyed by `IDE_SERVER_NAME`, not a literal: the key is what the model sees in
+      // `mcp__<key>__<tool>`, so a key that drifts from the server's own name is the
+      // same class of bug as the one that made these tools invisible for three phases.
+      mcpServers: { [IDE_SERVER_NAME]: createIdeServer(this.#link, this.#sessionId) },
       // The editing agent's own prompt, not a bare model. Without this the built-in
       // Read/Edit/Bash tools arrive with no instructions on how to use them well.
       //
