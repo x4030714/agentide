@@ -1692,3 +1692,109 @@
   border-radius: 50%;
   background: var(--sym);
 }
+
+/* Rendered Markdown inside a reply.
+   The bubble already sets the measure, colour and leading, so these only handle the
+   rhythm between blocks and the two things that need their own surface: code, and the
+   headings a long reply uses to organise itself. */
+.t-text > .md-p:first-child,
+.t-text > .md-heading:first-child,
+.t-text > .md-list:first-child,
+.t-text > .md-code:first-child {
+  margin-top: 0;
+}
+
+.t-text > :last-child {
+  margin-bottom: 0;
+}
+
+.md-p {
+  margin: 0 0 0.7em;
+}
+
+/* More space above than below: a heading belongs to what follows it. */
+.md-heading {
+  margin: 1.1em 0 0.35em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.md-heading.is-h1 {
+  font-size: 1.12em;
+}
+
+.md-heading.is-h2 {
+  font-size: 1.05em;
+}
+
+.md-heading.is-h3 {
+  font-size: 1em;
+  color: var(--ink-dim);
+}
+
+.md-list {
+  margin: 0 0 0.7em;
+  padding-left: 1.4em;
+}
+
+.md-list li {
+  margin-bottom: 0.2em;
+}
+
+.md-list li::marker {
+  color: var(--ink-dim);
+}
+
+/* Code sits in the same recess the tool details use, so a block of output looks the
+   same wherever it appears in the transcript. */
+.md-code {
+  position: relative;
+  margin: 0.5em 0 0.7em;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--sunken);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-control);
+}
+
+.md-code code {
+  font: inherit;
+  white-space: pre;
+}
+
+/* The language, set where it labels rather than where it competes. */
+.md-lang {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  user-select: none;
+}
+
+.md-inline-code {
+  padding: 1px 4px;
+  font-family: var(--mono);
+  font-size: 0.92em;
+  color: var(--sym);
+  background: var(--sunken);
+  border-radius: var(--r-chip);
+}
+
+.md-rule {
+  margin: 0.9em 0;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+/* Marked as a link without pretending to be one: nothing here opens a browser. */
+.md-link {
+  color: var(--sym);
+  text-decoration: underline;
+  text-decoration-color: var(--hairline);
+  text-underline-offset: 2px;
+}

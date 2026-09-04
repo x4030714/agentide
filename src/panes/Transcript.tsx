@@ -23,6 +23,7 @@ import type {
   WirePath,
 } from "../lib/protocol";
 import { formatAddr, formatTokens, initialState, reduce } from "../lib/transcript";
+import { Markdown } from "./Markdown";
 import { RunControls } from "./RunControls";
 import type { Row } from "../lib/transcript";
 
@@ -370,7 +371,11 @@ const TranscriptRow = memo(function TranscriptRow({
       return (
         <div className={cls}>
           {addr}
-          <span className="t-text">{row.text}</span>
+          {/* The reply is Markdown; the prompt above is not, because that one is
+              exactly what the person typed and must not be reinterpreted. */}
+          <div className="t-text">
+            <Markdown source={row.text} />
+          </div>
         </div>
       );
 
