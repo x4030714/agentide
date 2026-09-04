@@ -163,6 +163,33 @@ function scriptTurn(emit: (e: unknown) => void) {
   at(1000, { t: "done", sessionId: S, reason: "success" });
 }
 
+const BEFORE = `pub fn open_workspace(
+    state: State<'_, WorkspaceState>,
+    path: String,
+) -> Result<Workspace, IpcError> {
+    let root = WirePath::canonical(&path)?;
+    let watcher = watch(&root, on_event)?;
+    Ok(Workspace { root, name })
+}
+`;
+
+const AFTER = `pub fn open_root(
+    state: State<'_, WorkspaceState>,
+    path: String,
+) -> Result<Workspace, IpcError> {
+    let root = WirePath::canonical(&path)?;
+    let watcher = watch(&root, on_event)?;
+    state.set_root(root.clone());
+    Ok(Workspace { root, name })
+}
+`;
+
+const CHECKPOINT = {
+  id: "9f2c1ab4e7d05c3b8a61", shortId: "9f2c1ab", createdMs: Date.now() - 62_000,
+  label: "rename open_workspace and update its callers", parent: "1188aa",
+  filesChanged: 3, added: 14, removed: 9,
+};
+
 export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   await new Promise((r) => setTimeout(r, 10));
   switch (cmd) {
@@ -196,6 +223,44 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       return false as T;
     case "window_effect_active":
       return true as T;
+    case "checkpoint_create":
+      return CHECKPOINT as T;
+    case "checkpoint_list":
+      return [CHECKPOINT] as T;
+    case "checkpoint_diff":
+      return {
+        from: CHECKPOINT.id,
+        to: null,
+        files: [
+          { path: `${ROOT}/src-tauri/src/fs.rs`, relative: "src-tauri/src/fs.rs",
+            status: "modified", added: 6, removed: 4, binary: false,
+            before: BEFORE, after: AFTER, omitted: null },
+          { path: `${ROOT}/src-tauri/src/lib.rs`, relative: "src-tauri/src/lib.rs",
+            status: "modified", added: 2, removed: 2, binary: false,
+            before: "    fs::open_workspace,", after: "    fs::open_root,", omitted: null },
+          { path: `${ROOT}/src/lib/bridge.ts`, relative: "src/lib/bridge.ts",
+            status: "modified", added: 6, removed: 3, binary: false,
+            before: "export async function openWorkspace(", after: "export async function openRoot(",
+            omitted: null },
+        ],
+      } as T;
+    case "checkpoint_hunks":
+      return {
+        path: String(args?.path), relative: "src-tauri/src/fs.rs", binary: false,
+        hunks: [
+          { id: "h1", header: "@@ -18,7 +18,7 @@ impl WorkspaceState", oldStart: 18,
+            oldLines: 7, newStart: 18, newLines: 7, added: 1, removed: 1 },
+          { id: "h2", header: "@@ -64,9 +64,11 @@ pub fn open_workspace", oldStart: 64,
+            oldLines: 9, newStart: 64, newLines: 11, added: 4, removed: 2 },
+          { id: "h3", header: "@@ -140,4 +142,5 @@ fn watch", oldStart: 140,
+            oldLines: 4, newStart: 142, newLines: 5, added: 1, removed: 1 },
+        ],
+      } as T;
+    case "checkpoint_revert_file":
+    case "checkpoint_revert_hunks":
+      return { path: String(args?.path), action: "restored", hunks: 0 } as T;
+    case "checkpoint_rewind":
+      return { safety: CHECKPOINT, checkpoint: CHECKPOINT, restored: [], deleted: [], kept: [] } as T;
     case "agent_stop":
     case "agent_prompt":
     case "agent_interrupt":

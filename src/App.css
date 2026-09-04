@@ -802,3 +802,289 @@
 .status-message.is-error {
   color: var(--error);
 }
+
+/* --- Tabbed work column ------------------------------------------------------ */
+
+.tabbed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--surface);
+}
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  flex: 0 0 auto;
+  height: var(--header);
+  padding: 0 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-control);
+  cursor: default;
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab.is-on {
+  color: var(--ink);
+  background: var(--sunken);
+}
+
+/** The count is the whole reason this tab exists; it reads as a state, not a label. */
+.tab-count {
+  min-width: 16px;
+  padding: 0 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: #ffffff;
+  background: var(--sym-fill);
+  border-radius: 7px;
+}
+
+.tab-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tab-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/**
+ * `display: flex` above outranks the `hidden` attribute's own `display: none`, so
+ * without this both panels paint at once, stacked. Any rule that sets `display` on an
+ * element that also uses `hidden` needs this pair.
+ */
+.tab-panel[hidden] {
+  display: none;
+}
+
+/* --- Changes ------------------------------------------------------------------ */
+
+.changes-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.change-list {
+  flex: 0 0 auto;
+  max-height: 33%;
+  overflow: auto;
+  padding: 4px;
+}
+
+.change-row {
+  display: grid;
+  grid-template-columns: 3px minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+  transition: background var(--t-fast) var(--ease);
+}
+
+.change-row:hover {
+  background: var(--sunken);
+}
+
+.change-row.is-selected {
+  background: var(--sym-fill);
+}
+
+.change-row.is-selected .change-name,
+.change-row.is-selected .change-dir,
+.change-row.is-selected .stat-added,
+.change-row.is-selected .stat-removed {
+  color: #ffffff;
+}
+
+/**
+ * The status mark is a bar, not a letter: A/M/D is a legend you have to learn, and the
+ * three roles already mean added, changed and removed everywhere else in the app.
+ */
+.change-mark {
+  align-self: stretch;
+  border-radius: 2px;
+}
+
+.change-row.is-added .change-mark {
+  background: var(--xref);
+}
+
+.change-row.is-modified .change-mark {
+  background: var(--addr);
+}
+
+.change-row.is-deleted .change-mark {
+  background: var(--imm);
+}
+
+.change-name {
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.change-dir {
+  min-width: 0;
+  color: var(--ink-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.change-stat {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-added {
+  color: var(--xref);
+}
+
+.stat-removed {
+  color: var(--imm);
+}
+
+.change-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.change-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+}
+
+.change-actions .legend {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hunk-list {
+  flex: 0 0 auto;
+  max-height: 96px;
+  overflow: auto;
+  padding: 0 10px 6px;
+}
+
+.hunk-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: var(--r-chip);
+  cursor: default;
+}
+
+.hunk-row:hover {
+  background: var(--sunken);
+}
+
+.hunk-header {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.change-diff {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+/* --- Segmented control -------------------------------------------------------- */
+
+.segmented {
+  display: inline-flex;
+  gap: 1px;
+  flex: 0 0 auto;
+  padding: 2px;
+  background: var(--sunken);
+  border-radius: var(--r-control);
+}
+
+.segment {
+  padding: 0 9px;
+  height: 18px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: default;
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+
+.segment:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.segment.is-on {
+  color: var(--ink);
+  background: var(--elevated);
+  box-shadow: var(--shadow-1);
+}
+
+.segment:disabled {
+  color: var(--ink-dim);
+  cursor: default;
+}

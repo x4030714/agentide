@@ -4,7 +4,8 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import { useAppearance } from "./lib/appearance";
 import { openWorkspace, pickFolder } from "./lib/bridge";
 import { errorMessage } from "./lib/protocol";
-import type { FsEvent, WirePath, Workspace } from "./lib/protocol";
+import type { Checkpoint, FsEvent, WirePath, Workspace } from "./lib/protocol";
+import { ChangesPane } from "./panes/Changes";
 import { EditorPane } from "./panes/Editor";
 import { FileTree } from "./panes/FileTree";
 import { TitleBar } from "./panes/TitleBar";
@@ -20,6 +21,19 @@ export default function App() {
   const [changes, setChanges] = useState<FsEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [appearance, setAppearance] = useAppearance();
+  /** The checkpoint the current turn started from, and what the review queue reads against. */
+  const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
+  const [reviewRevision, setReviewRevision] = useState(0);
+  const [changeCount, setChangeCount] = useState(0);
+  const [tab, setTab] = useState<"editor" | "changes">("editor");
+
+  const onTurnStart = useCallback((next: Checkpoint) => {
+    setCheckpoint(next);
+    setChangeCount(0);
+  }, []);
+
+  // A finished turn is the moment the queue becomes worth reading.
+  const onTurnEnd = useCallback(() => setReviewRevision((n) => n + 1), []);
 
   const open = useCallback(async (path: string) => {
     try {
@@ -80,13 +94,58 @@ export default function App() {
          * "agent leads"; taking columns off the primary language to restate it does not.
          */}
         <Panel id="transcript" defaultSize="37" minSize="20" collapsible>
-          <TranscriptPane root={workspace?.root ?? null} />
+          <TranscriptPane
+            root={workspace?.root ?? null}
+            onTurnStart={onTurnStart}
+            onTurnEnd={onTurnEnd}
+          />
         </Panel>
         <Separator className="separator vertical" />
         <Panel id="work" defaultSize="49" minSize="22">
           <Group orientation="vertical">
             <Panel id="editor" defaultSize="72" minSize="30">
-              <EditorPane path={activePath} changes={changes} />
+              {/**
+               * One column, two jobs: the file you are reading and the changes waiting
+               * on you. Tabbed rather than split, because reviewing a diff and editing
+               * the same file at once is a thing nobody does.
+               */}
+              <div className="tabbed">
+                <div className="tabs" role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === "editor"}
+                    className={`tab${tab === "editor" ? " is-on" : ""}`}
+                    onClick={() => setTab("editor")}
+                  >
+                    Editor
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === "changes"}
+                    className={`tab${tab === "changes" ? " is-on" : ""}`}
+                    onClick={() => setTab("changes")}
+                  >
+                    Changes
+                    {changeCount > 0 && <span className="tab-count">{changeCount}</span>}
+                  </button>
+                </div>
+                <div className="tab-body">
+                  {/* Both stay mounted: switching tabs must not drop the editor's
+                      undo stack or re-fetch a diff you were halfway through reading. */}
+                  <div className="tab-panel" hidden={tab !== "editor"}>
+                    <EditorPane path={activePath} changes={changes} />
+                  </div>
+                  <div className="tab-panel" hidden={tab !== "changes"}>
+                    <ChangesPane
+                      checkpoint={checkpoint}
+                      revision={reviewRevision}
+                      onCountChange={setChangeCount}
+                    />
+                  </div>
+                </div>
+              </div>
             </Panel>
             <Separator className="separator horizontal" />
             {/* Phase 3 fills this with xterm.js over a PTY. */}

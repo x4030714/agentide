@@ -1,3 +1,5 @@
+import { EDIT_MODES, MODE_HELP, MODE_LABEL } from "../lib/editmode";
+import type { EditMode } from "../lib/editmode";
 import type { EffortLevel, ModelInfo } from "../lib/protocol";
 
 /**
@@ -22,6 +24,8 @@ const PROVISIONAL_MODELS: ModelInfo[] = [
 const ALL_EFFORTS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 interface RunControlsProps {
+  mode: EditMode;
+  onMode: (mode: EditMode) => void;
   models: ModelInfo[];
   model: string | null;
   effort: EffortLevel | null;
@@ -31,6 +35,8 @@ interface RunControlsProps {
 }
 
 export function RunControls({
+  mode,
+  onMode,
   models,
   model,
   effort,
@@ -53,6 +59,28 @@ export function RunControls({
 
   return (
     <div className="run-controls">
+      {/**
+       * A segmented control, not a select: three options that change how much the agent
+       * can do without asking should all be visible at once, and the one in force should
+       * be readable without opening anything.
+       */}
+      <div className="segmented" role="radiogroup" aria-label="Edit mode">
+        {EDIT_MODES.map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={option === mode}
+            className={`segment${option === mode ? " is-on" : ""}`}
+            title={MODE_HELP[option]}
+            disabled={disabled}
+            onClick={() => onMode(option)}
+          >
+            {MODE_LABEL[option]}
+          </button>
+        ))}
+      </div>
+
       <label className="control">
         <span className="legend">Model</span>
         <select

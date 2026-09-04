@@ -2,24 +2,32 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   agentInterrupt,
+  checkpointCreate,
   agentPermissionReply,
   agentPrompt,
   agentStart,
   agentStop,
 } from "../lib/bridge";
 import { errorMessage } from "../lib/protocol";
-import type { AgentEvent, EffortLevel, WirePath } from "../lib/protocol";
+import { isEditMode, modeOptions } from "../lib/editmode";
+import type { EditMode } from "../lib/editmode";
+import type { AgentEvent, Checkpoint, EffortLevel, WirePath } from "../lib/protocol";
 import { formatAddr, formatTokens, initialState, reduce } from "../lib/transcript";
 import { RunControls } from "./RunControls";
 import type { Row } from "../lib/transcript";
 
 interface TranscriptProps {
   root: WirePath | null;
+  /** A checkpoint was taken; the turn that follows can be reverted to it. */
+  onTurnStart: (checkpoint: Checkpoint) => void;
+  /** The turn ended, so the review queue should re-read. */
+  onTurnEnd: () => void;
 }
 
 /** Survives a restart: this is the control, so it is also the setting. */
 const MODEL_KEY = "agentide.model";
 const EFFORT_KEY = "agentide.effort";
+const MODE_KEY = "agentide.editMode";
 
 function stored<T extends string>(key: string): T | null {
   try {
@@ -53,12 +61,18 @@ function newSessionId(): string {
  * `ide_*` call immediately with "not available in this build" rather than stalling a
  * turn on a backend that arrives in phase 3.
  */
-export function TranscriptPane({ root }: TranscriptProps) {
+export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps) {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [sessionId] = useState(newSessionId);
   const [draft, setDraft] = useState("");
   const [model, setModelState] = useState<string | null>(() => stored(MODEL_KEY));
   const [effort, setEffortState] = useState<EffortLevel | null>(() => stored<EffortLevel>(EFFORT_KEY));
+  const [mode, setModeState] = useState<EditMode>(() => {
+    const saved = stored(MODE_KEY);
+    // Review is the default: edits land, nothing waits on you, and everything is
+    // still reversible because the checkpoint is taken regardless of mode.
+    return isEditMode(saved) ? saved : "review";
+  });
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -68,7 +82,9 @@ export function TranscriptPane({ root }: TranscriptProps) {
   useEffect(() => {
     let cancelled = false;
     const onEvent = (event: AgentEvent) => {
-      if (!cancelled) dispatch(event);
+      if (cancelled) return;
+      dispatch(event);
+      if (event.t === "done" || event.t === "exited") onTurnEnd();
     };
     agentStart(onEvent, { hostPermissions: true, hostTools: [] }).catch((err) => {
       if (!cancelled) setStartError(errorMessage(err));
@@ -77,6 +93,9 @@ export function TranscriptPane({ root }: TranscriptProps) {
       cancelled = true;
       void agentStop();
     };
+    // `onTurnEnd` is a stable callback from the parent; re-subscribing on every render
+    // would restart the sidecar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Follow the tail, unless the reader has scrolled away from it.
@@ -99,13 +118,36 @@ export function TranscriptPane({ root }: TranscriptProps) {
     setDraft("");
     pinned.current = true;
     dispatch({ t: "prompt_submitted", text });
-    agentPrompt(sessionId, text, {
-      ...(model ? { model } : {}),
-      ...(effort ? { effort } : {}),
-    }).catch((err) =>
-      dispatch({ t: "exited", code: null, message: errorMessage(err), pending: [] }),
-    );
-  }, [draft, running, state.status, sessionId, model, effort]);
+
+    /**
+     * Checkpoint first, prompt second, and never the other way round: a turn that began
+     * before its checkpoint is a turn with nothing to go back to. If the checkpoint
+     * fails the turn does not run at all — proceeding would quietly drop the guarantee
+     * the whole mode system rests on.
+     */
+    void (async () => {
+      try {
+        onTurnStart(await checkpointCreate(text.slice(0, 72)));
+      } catch (err) {
+        dispatch({
+          t: "exited",
+          code: null,
+          message: `no checkpoint, so the turn did not run: ${errorMessage(err)}`,
+          pending: [],
+        });
+        return;
+      }
+      try {
+        await agentPrompt(sessionId, text, {
+          ...modeOptions(mode),
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+        });
+      } catch (err) {
+        dispatch({ t: "exited", code: null, message: errorMessage(err), pending: [] });
+      }
+    })();
+  }, [draft, running, state.status, sessionId, model, effort, mode, onTurnStart]);
 
   const answer = useCallback((id: string, decision: "allow" | "deny") => {
     agentPermissionReply(id, decision).catch(() => {
@@ -116,6 +158,11 @@ export function TranscriptPane({ root }: TranscriptProps) {
   const setModel = useCallback((next: string | null) => {
     setModelState(next);
     remember(MODEL_KEY, next);
+  }, []);
+
+  const setMode = useCallback((next: EditMode) => {
+    setModeState(next);
+    remember(MODE_KEY, next);
   }, []);
 
   const setEffort = useCallback((next: EffortLevel | null) => {
@@ -179,6 +226,8 @@ export function TranscriptPane({ root }: TranscriptProps) {
       </div>
 
       <RunControls
+        mode={mode}
+        onMode={setMode}
         models={state.models}
         model={model}
         effort={effort}

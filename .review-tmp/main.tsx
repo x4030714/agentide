@@ -89,6 +89,40 @@ async function drive() {
     );
   }
 
+  // `?view=changes` opens the review queue with a file selected, which is the state
+  // worth looking at -- an empty Changes tab shows nothing about the design.
+  if (new URLSearchParams(location.search).get("view") === "changes") {
+    /**
+     * Submit through the real composer rather than reaching into App's state. The
+     * checkpoint that the queue reads against is taken inside `submit()`, so a drive
+     * that skips it produces an empty queue and proves nothing.
+     *
+     * React tracks the last value it set on an input, so assigning `.value` directly is
+     * swallowed; the native setter plus a bubbled `input` event is what actually makes
+     * a controlled component see the change.
+     */
+    const box = document.querySelector<HTMLTextAreaElement>(".composer-input");
+    if (box) {
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      setValue?.call(box, "rename open_workspace and update its callers");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      box.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+      await sleep(400);
+    }
+
+    [...document.querySelectorAll<HTMLElement>(".tab")]
+      .find((el) => el.textContent?.startsWith("Changes"))
+      ?.click();
+    await sleep(300);
+    document.querySelector<HTMLElement>(".change-row")?.click();
+    await sleep(600);
+  }
+
   document.body.setAttribute("data-review-ready", "1");
   console.log("[review] ready");
 }
