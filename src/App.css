@@ -15,6 +15,8 @@
  */
 
 @import "./styles/world.css";
+/* Must follow world.css: a palette overrides its tokens, and later wins at equal weight. */
+@import "./styles/palettes.css";
 
 /**
  * The window itself. Rounded, because the OS frame is gone and this is now the only
@@ -1797,4 +1799,103 @@
   text-decoration: underline;
   text-decoration-color: var(--hairline);
   text-underline-offset: 2px;
+}
+
+/* The palette picker.
+   A list, not a cycling button: four named options cannot be discovered by clicking a
+   swatch four times, and the names are the useful part. */
+.palette-picker {
+  position: relative;
+}
+
+/* The swatch shows the current palette by using its own tokens, so the button is a
+   sample of the thing it changes rather than a label for it. */
+.palette-swatch {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: linear-gradient(
+    135deg,
+    var(--addr) 0 25%,
+    var(--sym) 25% 50%,
+    var(--xref) 50% 75%,
+    var(--imm) 75% 100%
+  );
+}
+
+.palette-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 1px;
+  /* Wide enough that a note is one line: two-line rows make four options look like a
+     settings page rather than a short list. */
+  min-width: 320px;
+  padding: 4px;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-2);
+}
+
+.palette-option {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+}
+
+.palette-option:hover {
+  background: var(--sunken);
+}
+
+.palette-option.is-on {
+  background: var(--tint-accent);
+}
+
+.palette-label {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+/* The note sits under the label, in the second column, so the chips stay in one line. */
+.palette-note {
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.palette-chip {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+}
+
+/* Each chip samples its own palette rather than the active one, which is the only way a
+   picker can show you what you are choosing between. */
+.palette-chip.is-quiet {
+  background: linear-gradient(135deg, #e3ae52 0 25%, #7cbaff 25% 50%, #5fd693 50% 75%, #ff8fa8 75%);
+}
+
+.palette-chip.is-ferrous {
+  background: linear-gradient(135deg, #fe9646 0 25%, #6db5fd 25% 50%, #51c672 50% 75%, #ff8f99 75%);
+}
+
+.palette-chip.is-halide {
+  background: linear-gradient(135deg, #dba719 0 25%, #00bee6 25% 50%, #01c59b 50% 75%, #ed8ce5 75%);
+}
+
+.palette-chip.is-vellum {
+  background: linear-gradient(135deg, #f09c17 0 25%, #88adff 25% 50%, #6fc25c 50% 75%, #fd8ca8 75%);
 }

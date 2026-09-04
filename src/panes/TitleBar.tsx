@@ -5,6 +5,8 @@ import { IconClose, IconMaximize, IconMinimize, IconRestore, IconTheme } from ".
 import { parentOf } from "../lib/protocol";
 import type { Workspace } from "../lib/protocol";
 import type { Appearance } from "../lib/appearance";
+import { PALETTES, applyPalette, storedPalette } from "../lib/palette";
+import type { Palette } from "../lib/palette";
 
 /**
  * The window's own title bar, drawn by us because the OS frame is gone.
@@ -49,6 +51,23 @@ export function TitleBar({
 
   const parent = workspace ? parentOf(workspace.root) : null;
   const dark = appearance === "dark";
+  const [palette, setPalette] = useState<Palette>(storedPalette);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Applied on mount as well as on change, so a remembered palette is on screen before
+  // the first paint rather than flashing the default first.
+  useEffect(() => {
+    applyPalette(palette);
+  }, [palette]);
+
+  // A click anywhere else closes it. Attached only while open, so the app is not
+  // listening to every click in order to support a menu nobody has opened.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const close = () => setPickerOpen(false);
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [pickerOpen]);
 
   return (
     <header className="titlebar" data-tauri-drag-region="deep">
@@ -66,6 +85,41 @@ export function TitleBar({
       </span>
 
       <div className="titlebar-actions">
+        {/* Not a cycling button like appearance: four options with names need a list,
+            and a button that cycles through unnamed palettes is a guessing game. */}
+        <div className="palette-picker" onPointerDown={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            className="win-button"
+            title={`Palette: ${PALETTES.find((p) => p.id === palette)?.label}`}
+            aria-label="Colour palette"
+            aria-expanded={pickerOpen}
+            onClick={() => setPickerOpen((open) => !open)}
+          >
+            <span className="palette-swatch" aria-hidden="true" />
+          </button>
+          {pickerOpen && (
+            <div className="palette-menu" role="menu">
+              {PALETTES.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={option.id === palette}
+                  className={`palette-option${option.id === palette ? " is-on" : ""}`}
+                  onClick={() => {
+                    setPalette(option.id);
+                    setPickerOpen(false);
+                  }}
+                >
+                  <span className={`palette-chip is-${option.id}`} aria-hidden="true" />
+                  <span className="palette-label">{option.label}</span>
+                  <span className="palette-note">{option.note}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           className="win-button"
