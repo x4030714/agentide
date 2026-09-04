@@ -1808,21 +1808,6 @@
   position: relative;
 }
 
-/* The swatch shows the current palette by using its own tokens, so the button is a
-   sample of the thing it changes rather than a label for it. */
-.palette-swatch {
-  display: block;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  background: linear-gradient(
-    135deg,
-    var(--addr) 0 25%,
-    var(--sym) 25% 50%,
-    var(--xref) 50% 75%,
-    var(--imm) 75% 100%
-  );
-}
 
 .palette-menu {
   position: absolute;
@@ -1884,18 +1869,57 @@
 
 /* Each chip samples its own palette rather than the active one, which is the only way a
    picker can show you what you are choosing between. */
+
+
+/* Each chip carries its palette's accent as `currentColor`, so the icon inside is drawn
+   in the colour that palette would actually use. A row therefore shows the name, the
+   character, and a true sample — rather than a swatch you have to decode. */
+.palette-chip {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
 .palette-chip.is-quiet {
-  background: linear-gradient(135deg, #e3ae52 0 25%, #7cbaff 25% 50%, #5fd693 50% 75%, #ff8fa8 75%);
+  color: #0956b1;
 }
-
 .palette-chip.is-ferrous {
-  background: linear-gradient(135deg, #fe9646 0 25%, #6db5fd 25% 50%, #51c672 50% 75%, #ff8f99 75%);
+  color: #a52b1e;
 }
-
 .palette-chip.is-halide {
-  background: linear-gradient(135deg, #dba719 0 25%, #00bee6 25% 50%, #01c59b 50% 75%, #ed8ce5 75%);
+  color: #06626b;
+}
+.palette-chip.is-vellum {
+  color: #5f46af;
 }
 
-.palette-chip.is-vellum {
-  background: linear-gradient(135deg, #f09c17 0 25%, #88adff 25% 50%, #6fc25c 50% 75%, #fd8ca8 75%);
+/* The accents are solved per mode, so the chips follow: the light values above are
+   unreadable on the dark menu, and vice versa. */
+:root[data-theme="dark"] .palette-chip.is-quiet {
+  color: #7cbaff;
+}
+:root[data-theme="dark"] .palette-chip.is-ferrous {
+  color: #ff917f;
+}
+:root[data-theme="dark"] .palette-chip.is-halide {
+  color: #15c1d0;
+}
+:root[data-theme="dark"] .palette-chip.is-vellum {
+  color: #b3a5fd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .palette-chip.is-quiet {
+    color: #7cbaff;
+  }
+  :root:not([data-theme="light"]) .palette-chip.is-ferrous {
+    color: #ff917f;
+  }
+  :root:not([data-theme="light"]) .palette-chip.is-halide {
+    color: #15c1d0;
+  }
+  :root:not([data-theme="light"]) .palette-chip.is-vellum {
+    color: #b3a5fd;
+  }
 }

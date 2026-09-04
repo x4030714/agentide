@@ -26,18 +26,18 @@
   --elevated: rgb(255 253 251 / 97%);
   --ink: #241d18; /* 10.70 */
   --ink-dim: #63554e; /* 4.60 */
-  --addr: #8a4500; /* 4.61 */
-  --sym: #055a9c; /* 4.59 */
-  --xref: #08662e; /* 4.59 */
-  --imm: #a42840; /* 4.58 */
-  --uncommitted: #843795; /* 4.57 */
-  --error: #a52a2b; /* 4.56 */
-  --warn: #854904; /* 4.58 */
-  --hint: #095f7e; /* 4.59 */
-  --sym-fill: #075b9d; /* white on it: 7.02 */
-  --warn-fill: #864a06; /* white on it: 7.01 */
-  --tint-accent: rgb(5 90 156 / 12%);
-  --tint-addr: rgb(138 69 0 / 13%);
+  --addr: #6c5505; /* 4.60 */
+  --sym: #a52b1e; /* 4.56 */
+  --xref: #096549; /* 4.56 */
+  --imm: #6d41a8; /* 4.55 */
+  --uncommitted: #7e399a; /* 4.60 */
+  --error: #a52936; /* 4.55 */
+  --warn: #7d4e03; /* 4.57 */
+  --hint: #025d8b; /* 4.60 */
+  --sym-fill: #a52c1f; /* white on it: 7.05 */
+  --warn-fill: #7d4f03; /* white on it: 7.02 */
+  --tint-accent: rgb(165 43 30 / 12%);
+  --tint-addr: rgb(108 85 5 / 13%);
 }
 
 :root[data-palette="ferrous"][data-theme="dark"] {
@@ -47,18 +47,18 @@
   --elevated: rgb(29 24 21 / 97%);
   --ink: #f2ebe5; /* 8.43 */
   --ink-dim: #bdada4; /* 4.58 */
-  --addr: #fe9646; /* 4.58 */
-  --sym: #6db5fd; /* 4.58 */
-  --xref: #51c672; /* 4.58 */
-  --imm: #ff8f99; /* 4.57 */
-  --uncommitted: #e292f4; /* 4.57 */
-  --error: #fe9189; /* 4.56 */
-  --warn: #fc9735; /* 4.55 */
-  --hint: #07bdf8; /* 4.57 */
-  --sym-fill: #075b9d; /* white on it: 7.02 */
-  --warn-fill: #864a06; /* white on it: 7.01 */
-  --tint-accent: rgb(109 181 253 / 14%);
-  --tint-addr: rgb(254 150 70 / 14%);
+  --addr: #d6ab11; /* 4.59 */
+  --sym: #ff917f; /* 4.55 */
+  --xref: #15c792; /* 4.55 */
+  --imm: #c29eff; /* 4.56 */
+  --uncommitted: #db94fb; /* 4.57 */
+  --error: #fe9091; /* 4.55 */
+  --warn: #f29d1a; /* 4.55 */
+  --hint: #4bb9fe; /* 4.58 */
+  --sym-fill: #ae1e11; /* white on it: 7.02 */
+  --warn-fill: #7d4f03; /* white on it: 7.02 */
+  --tint-accent: rgb(255 145 127 / 14%);
+  --tint-addr: rgb(214 171 17 / 14%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -69,18 +69,18 @@
     --elevated: rgb(29 24 21 / 97%);
     --ink: #f2ebe5; /* 8.43 */
     --ink-dim: #bdada4; /* 4.58 */
-    --addr: #fe9646; /* 4.58 */
-    --sym: #6db5fd; /* 4.58 */
-    --xref: #51c672; /* 4.58 */
-    --imm: #ff8f99; /* 4.57 */
-    --uncommitted: #e292f4; /* 4.57 */
-    --error: #fe9189; /* 4.56 */
-    --warn: #fc9735; /* 4.55 */
-    --hint: #07bdf8; /* 4.57 */
-    --sym-fill: #075b9d; /* white on it: 7.02 */
-    --warn-fill: #864a06; /* white on it: 7.01 */
-    --tint-accent: rgb(109 181 253 / 14%);
-    --tint-addr: rgb(254 150 70 / 14%);
+    --addr: #d6ab11; /* 4.59 */
+    --sym: #ff917f; /* 4.55 */
+    --xref: #15c792; /* 4.55 */
+    --imm: #c29eff; /* 4.56 */
+    --uncommitted: #db94fb; /* 4.57 */
+    --error: #fe9091; /* 4.55 */
+    --warn: #f29d1a; /* 4.55 */
+    --hint: #4bb9fe; /* 4.58 */
+    --sym-fill: #ae1e11; /* white on it: 7.02 */
+    --warn-fill: #7d4f03; /* white on it: 7.02 */
+    --tint-accent: rgb(255 145 127 / 14%);
+    --tint-addr: rgb(214 171 17 / 14%);
   }
 }
 
@@ -96,18 +96,18 @@
   --elevated: rgb(251 254 254 / 97%);
   --ink: #131f22; /* 10.87 */
   --ink-dim: #4a5b5d; /* 4.60 */
-  --addr: #715408; /* 4.56 */
-  --sym: #0a6075; /* 4.61 */
-  --xref: #05654e; /* 4.55 */
-  --imm: #8d3388; /* 4.58 */
-  --uncommitted: #6d41a9; /* 4.55 */
+  --addr: #854904; /* 4.59 */
+  --sym: #06626b; /* 4.57 */
+  --xref: #1b6600; /* 4.60 */
+  --imm: #843795; /* 4.58 */
+  --uncommitted: #5748b1; /* 4.57 */
   --error: #a52936; /* 4.56 */
-  --warn: #785005; /* 4.60 */
-  --hint: #06626b; /* 4.57 */
-  --sym-fill: #0b6176; /* white on it: 7.03 */
-  --warn-fill: #795107; /* white on it: 7.02 */
-  --tint-accent: rgb(10 96 117 / 12%);
-  --tint-addr: rgb(113 84 8 / 13%);
+  --warn: #7d4e03; /* 4.58 */
+  --hint: #066364; /* 4.55 */
+  --sym-fill: #06626b; /* white on it: 7.08 */
+  --warn-fill: #7d4f03; /* white on it: 7.02 */
+  --tint-accent: rgb(6 98 107 / 12%);
+  --tint-addr: rgb(133 73 4 / 13%);
 }
 
 :root[data-palette="halide"][data-theme="dark"] {
@@ -117,18 +117,18 @@
   --elevated: rgb(18 26 29 / 97%);
   --ink: #e6f1f3; /* 8.73 */
   --ink-dim: #9fb2b5; /* 4.55 */
-  --addr: #dca711; /* 4.58 */
-  --sym: #16bee4; /* 4.56 */
-  --xref: #0cc69b; /* 4.58 */
-  --imm: #ed8de5; /* 4.57 */
-  --uncommitted: #c19dfe; /* 4.56 */
+  --addr: #fb9734; /* 4.58 */
+  --sym: #15c1d0; /* 4.58 */
+  --xref: #6fc25c; /* 4.57 */
+  --imm: #e191f4; /* 4.57 */
+  --uncommitted: #a9a5ff; /* 4.55 */
   --error: #ff8e90; /* 4.56 */
-  --warn: #eba002; /* 4.58 */
-  --hint: #15c1d0; /* 4.58 */
-  --sym-fill: #0b6176; /* white on it: 7.03 */
-  --warn-fill: #795107; /* white on it: 7.02 */
-  --tint-accent: rgb(22 190 228 / 14%);
-  --tint-addr: rgb(220 167 17 / 14%);
+  --warn: #f19c18; /* 4.55 */
+  --hint: #10c2c2; /* 4.55 */
+  --sym-fill: #06626b; /* white on it: 7.08 */
+  --warn-fill: #7d4f03; /* white on it: 7.02 */
+  --tint-accent: rgb(21 193 208 / 14%);
+  --tint-addr: rgb(251 151 52 / 14%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -139,18 +139,18 @@
     --elevated: rgb(18 26 29 / 97%);
     --ink: #e6f1f3; /* 8.73 */
     --ink-dim: #9fb2b5; /* 4.55 */
-    --addr: #dca711; /* 4.58 */
-    --sym: #16bee4; /* 4.56 */
-    --xref: #0cc69b; /* 4.58 */
-    --imm: #ed8de5; /* 4.57 */
-    --uncommitted: #c19dfe; /* 4.56 */
+    --addr: #fb9734; /* 4.58 */
+    --sym: #15c1d0; /* 4.58 */
+    --xref: #6fc25c; /* 4.57 */
+    --imm: #e191f4; /* 4.57 */
+    --uncommitted: #a9a5ff; /* 4.55 */
     --error: #ff8e90; /* 4.56 */
-    --warn: #eba002; /* 4.58 */
-    --hint: #15c1d0; /* 4.58 */
-    --sym-fill: #0b6176; /* white on it: 7.03 */
-    --warn-fill: #795107; /* white on it: 7.02 */
-    --tint-accent: rgb(22 190 228 / 14%);
-    --tint-addr: rgb(220 167 17 / 14%);
+    --warn: #f19c18; /* 4.55 */
+    --hint: #10c2c2; /* 4.55 */
+    --sym-fill: #06626b; /* white on it: 7.08 */
+    --warn-fill: #7d4f03; /* white on it: 7.02 */
+    --tint-accent: rgb(21 193 208 / 14%);
+    --tint-addr: rgb(251 151 52 / 14%);
   }
 }
 
@@ -166,18 +166,18 @@
   --elevated: rgb(255 254 248 / 97%);
   --ink: #211f16; /* 10.69 */
   --ink-dim: #5f584b; /* 4.56 */
-  --addr: #7d4e03; /* 4.59 */
-  --sym: #2d52b3; /* 4.58 */
-  --xref: #1b6600; /* 4.61 */
-  --imm: #a22852; /* 4.59 */
-  --uncommitted: #952f7a; /* 4.58 */
-  --error: #a52b24; /* 4.58 */
+  --addr: #854904; /* 4.61 */
+  --sym: #5f46af; /* 4.56 */
+  --xref: #026719; /* 4.60 */
+  --imm: #a52840; /* 4.57 */
+  --uncommitted: #8e3389; /* 4.55 */
+  --error: #a52a2b; /* 4.58 */
   --warn: #824c03; /* 4.56 */
-  --hint: #095c92; /* 4.60 */
-  --sym-fill: #2d52b3; /* white on it: 7.07 */
+  --hint: #454db4; /* 4.57 */
+  --sym-fill: #5f46af; /* white on it: 7.04 */
   --warn-fill: #824c03; /* white on it: 7.04 */
-  --tint-accent: rgb(45 82 179 / 12%);
-  --tint-addr: rgb(125 78 3 / 13%);
+  --tint-accent: rgb(95 70 175 / 12%);
+  --tint-addr: rgb(133 73 4 / 13%);
 }
 
 :root[data-palette="vellum"][data-theme="dark"] {
@@ -187,18 +187,18 @@
   --elevated: rgb(28 26 20 / 97%);
   --ink: #f2efe2; /* 8.57 */
   --ink-dim: #b7b0a1; /* 4.58 */
-  --addr: #f29e1b; /* 4.56 */
-  --sym: #8caffe; /* 4.55 */
-  --xref: #71c45e; /* 4.59 */
-  --imm: #fe8faa; /* 4.57 */
-  --uncommitted: #f98bd7; /* 4.56 */
-  --error: #fe9385; /* 4.58 */
+  --addr: #fc9836; /* 4.56 */
+  --sym: #b3a5fd; /* 4.57 */
+  --xref: #61c568; /* 4.56 */
+  --imm: #fe919a; /* 4.58 */
+  --uncommitted: #ef8ee7; /* 4.56 */
+  --error: #fe928a; /* 4.56 */
   --warn: #f79b29; /* 4.55 */
-  --hint: #5cb7ff; /* 4.55 */
-  --sym-fill: #2850bf; /* white on it: 7.02 */
+  --hint: #9cacfe; /* 4.59 */
+  --sym-fill: #6142ba; /* white on it: 7.01 */
   --warn-fill: #824c03; /* white on it: 7.04 */
-  --tint-accent: rgb(140 175 254 / 14%);
-  --tint-addr: rgb(242 158 27 / 14%);
+  --tint-accent: rgb(179 165 253 / 14%);
+  --tint-addr: rgb(252 152 54 / 14%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -209,18 +209,18 @@
     --elevated: rgb(28 26 20 / 97%);
     --ink: #f2efe2; /* 8.57 */
     --ink-dim: #b7b0a1; /* 4.58 */
-    --addr: #f29e1b; /* 4.56 */
-    --sym: #8caffe; /* 4.55 */
-    --xref: #71c45e; /* 4.59 */
-    --imm: #fe8faa; /* 4.57 */
-    --uncommitted: #f98bd7; /* 4.56 */
-    --error: #fe9385; /* 4.58 */
+    --addr: #fc9836; /* 4.56 */
+    --sym: #b3a5fd; /* 4.57 */
+    --xref: #61c568; /* 4.56 */
+    --imm: #fe919a; /* 4.58 */
+    --uncommitted: #ef8ee7; /* 4.56 */
+    --error: #fe928a; /* 4.56 */
     --warn: #f79b29; /* 4.55 */
-    --hint: #5cb7ff; /* 4.55 */
-    --sym-fill: #2850bf; /* white on it: 7.02 */
+    --hint: #9cacfe; /* 4.59 */
+    --sym-fill: #6142ba; /* white on it: 7.01 */
     --warn-fill: #824c03; /* white on it: 7.04 */
-    --tint-accent: rgb(140 175 254 / 14%);
-    --tint-addr: rgb(242 158 27 / 14%);
+    --tint-accent: rgb(179 165 253 / 14%);
+    --tint-addr: rgb(252 152 54 / 14%);
   }
 }
 

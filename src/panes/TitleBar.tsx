@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 
 import { windowChrome } from "../lib/bridge";
-import { IconClose, IconMaximize, IconMinimize, IconRestore, IconTheme } from "../lib/icons";
+import {
+  IconClose,
+  IconMaximize,
+  IconMinimize,
+  IconPalette,
+  IconRestore,
+  IconTheme,
+} from "../lib/icons";
 import { parentOf } from "../lib/protocol";
 import type { Workspace } from "../lib/protocol";
 import type { Appearance } from "../lib/appearance";
@@ -96,7 +103,7 @@ export function TitleBar({
             aria-expanded={pickerOpen}
             onClick={() => setPickerOpen((open) => !open)}
           >
-            <span className="palette-swatch" aria-hidden="true" />
+            <IconPalette id={palette} size={13} />
           </button>
           {pickerOpen && (
             <div className="palette-menu" role="menu">
@@ -112,7 +119,9 @@ export function TitleBar({
                     setPickerOpen(false);
                   }}
                 >
-                  <span className={`palette-chip is-${option.id}`} aria-hidden="true" />
+                  <span className={`palette-chip is-${option.id}`}>
+                    <IconPalette id={option.id} />
+                  </span>
                   <span className="palette-label">{option.label}</span>
                   <span className="palette-note">{option.note}</span>
                 </button>

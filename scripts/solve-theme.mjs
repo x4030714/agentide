@@ -110,9 +110,15 @@ const tint = (hex, percent) => {
 
 // --- Themes ---------------------------------------------------------------------
 //
-// Four role hues plus the states, and the surface each mode is tinted with. The hues sit
-// far enough apart that the roles stay tellable at a glance, which is the only reason
-// they are colours rather than shapes.
+// Four role hues plus the states, and the surface each mode is tinted with.
+//
+// Two constraints, and the second was learned the hard way. Within a palette the four
+// hues must sit far enough apart to stay tellable at a glance -- that is the only reason
+// they are colours rather than shapes. *Between* palettes, `sym` must differ, because it
+// is not just the symbol colour: it drives `--tint-accent`, which fills the prompt
+// bubble, and `--md-inline-code`, so it is the single most visible colour in the app.
+// The first cut gave three palettes a blue-ish `sym` and they looked identical where it
+// mattered most.
 
 const THEMES = [
   {
@@ -122,8 +128,9 @@ const THEMES = [
     neutralHue: 50,
     light: { ground: "#f7f4f1", surface: "#fffdfb", ink: "#241d18" },
     dark: { ground: "#17130f", surface: "#1d1815", ink: "#f2ebe5" },
-    roles: { addr: 55, sym: 250, xref: 150, imm: 15 },
-    states: { uncommitted: 320, error: 25, warn: 60, hint: 230 },
+    // Copper accent, the whole point of the palette.
+    roles: { addr: 90, sym: 30, xref: 165, imm: 300 },
+    states: { uncommitted: 315, error: 20, warn: 70, hint: 240 },
   },
   {
     name: "halide",
@@ -132,8 +139,9 @@ const THEMES = [
     neutralHue: 205,
     light: { ground: "#f1f5f6", surface: "#fbfefe", ink: "#131f22" },
     dark: { ground: "#0d1416", surface: "#121a1d", ink: "#e6f1f3" },
-    roles: { addr: 85, sym: 220, xref: 170, imm: 330 },
-    states: { uncommitted: 300, error: 20, warn: 75, hint: 205 },
+    // Cyan accent, well away from the default's blue.
+    roles: { addr: 60, sym: 205, xref: 140, imm: 320 },
+    states: { uncommitted: 285, error: 20, warn: 70, hint: 195 },
   },
   {
     name: "vellum",
@@ -142,8 +150,9 @@ const THEMES = [
     neutralHue: 85,
     light: { ground: "#f8f6ef", surface: "#fffef8", ink: "#211f16" },
     dark: { ground: "#16150f", surface: "#1c1a14", ink: "#f2efe2" },
-    roles: { addr: 70, sym: 265, xref: 140, imm: 5 },
-    states: { uncommitted: 340, error: 28, warn: 65, hint: 245 },
+    // Violet accent: ink on paper, and not the default's blue.
+    roles: { addr: 60, sym: 290, xref: 145, imm: 15 },
+    states: { uncommitted: 330, error: 25, warn: 65, hint: 275 },
   },
 ];
 

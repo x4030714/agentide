@@ -149,3 +149,65 @@ export function IconTheme({ dark, size = 13 }: { dark: boolean; size?: number })
     </svg>
   );
 }
+
+/**
+ * A mark per palette, drawn in the same family as everything else here.
+ *
+ * Each one names the palette's character rather than its colours: the colour is supplied
+ * by `currentColor`, which the picker sets to that palette's own accent, so the row shows
+ * both what the palette is called and what it looks like.
+ */
+export function IconPalette({ id, size = 14 }: { id: string; size?: number }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: "0 0 14 14",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.5,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  switch (id) {
+    // A gauge: the measuring instrument the default palette is named for.
+    case "quiet":
+      return (
+        <svg {...common}>
+          <path d="M2 10a5 5 0 0 1 10 0" />
+          <path d="M7 10 9.4 6.6" />
+        </svg>
+      );
+
+    // A nut, seen face on. The workshop.
+    case "ferrous":
+      return (
+        <svg {...common}>
+          <path d="M7 1.8 11.6 4.4v5.2L7 12.2 2.4 9.6V4.4Z" />
+          <circle cx="7" cy="7" r="1.9" />
+        </svg>
+      );
+
+    // An aperture. The darkroom.
+    case "halide":
+      return (
+        <svg {...common}>
+          <circle cx="7" cy="7" r="5.2" />
+          <path d="M7 1.8 4.2 6.6M11.5 4.4 5.9 4.4M11.5 9.6 8.7 4.8M7 12.2 9.8 7.4M2.5 9.6 8.1 9.6M2.5 4.4 5.3 9.2" />
+        </svg>
+      );
+
+    // A sheet with a turned corner. Paper.
+    case "vellum":
+      return (
+        <svg {...common}>
+          <path d="M3.2 1.9h5L11 4.7v7.4H3.2Z" />
+          <path d="M8.1 1.9v2.9H11" />
+        </svg>
+      );
+
+    default:
+      return null;
+  }
+}
