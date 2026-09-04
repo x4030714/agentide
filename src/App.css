@@ -406,8 +406,8 @@
 .t-row:has(> .t-text),
 .t-row:has(> .t-prompt),
 .t-row:has(> .t-thinking) {
-  padding-top: 5px;
-  padding-bottom: 5px;
+  padding-top: 3px;
+  padding-bottom: 3px;
 }
 
 .t-row.opens-turn {
@@ -440,32 +440,38 @@
   line-height: 1.55;
 }
 
-/* Hangs in the gutter so the prompt's own text stays on the same left edge as the
-   agent's, which is what makes the two columns of prose comparable at a glance. */
-.t-said {
-  float: left;
-  margin-left: -1.1em;
-  color: var(--sym);
-  font-family: var(--mono);
-  font-weight: 400;
-  user-select: none;
-}
-
-.t-prompt {
-  max-width: 72ch;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--ink);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
+/**
+ * Messages sit on their own surface.
+ *
+ * Both stay on the same left edge, and the address column still numbers them: this is a
+ * listing whose entries happen to be contained, not a conversation with sides. The
+ * opposed left/right alignment is the part that would make it a chat app, and it is the
+ * part left out -- it costs the address column its meaning and halves the measure.
+ *
+ * The tint carries the speaker, so the `>` that used to mark a prompt is gone rather than
+ * saying the same thing twice.
+ */
+.t-prompt,
 .t-text {
+  display: inline-block;
   max-width: 72ch;
+  padding: 7px 11px;
   font-size: 13px;
   color: var(--ink);
+  border-radius: var(--r-panel);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* What you said: the accent tint, the same one selection uses. */
+.t-prompt {
+  font-weight: 500;
+  background: var(--tint-accent);
+}
+
+/* What it said: the neutral recess, so the reading voice is the quieter of the two. */
+.t-text {
+  background: var(--sunken);
 }
 
 .t-thinking {
