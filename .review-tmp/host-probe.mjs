@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 const CWD = "C:/Users/tung/Desktop/agentide";
 const prompt = process.argv[2] ?? "List the ide_ tools you can call, by exact name.";
 
-const child = spawn("node", ["sidecar/dist/main.js"], {
+const child = spawn("node", ["sidecar/dist/main.mjs"], {
   cwd: CWD,
   stdio: ["pipe", "pipe", "pipe"],
 });

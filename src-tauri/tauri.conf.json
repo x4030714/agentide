@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.tung.agentide",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run build:sidecar && npm run stage && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build:release",
     "frontendDist": "../dist"
   },
   "app": {
@@ -32,6 +32,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": {
+      "../sidecar/dist/main.mjs": "sidecar/main.mjs",
+      "../sidecar/dist/node_modules": "sidecar/node_modules"
+    },
+    "externalBin": [
+      "binaries/node"
     ]
   }
 }

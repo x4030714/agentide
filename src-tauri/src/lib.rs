@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 mod agent;
 mod checkpoints;
 mod fs;
@@ -21,6 +23,11 @@ pub fn run() {
             // The window is frameless and transparent; this is what makes it translucent
             // and what keeps the frontend's title bar in step with the maximized state.
             window::setup(app.handle());
+            // Where the installed app keeps the agent host bundle. Absent in a `cargo
+            // run`, which is why `agent.rs` falls back to the path in the repository.
+            if let Ok(dir) = app.path().resource_dir() {
+                agent::set_resource_dir(dir);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

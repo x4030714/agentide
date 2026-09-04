@@ -30,3 +30,6 @@ dist-ssr
 # Never commit a git repository into a git repository.
 .agentide/checkpoints.git/
 .agentide/git-config
+
+# Staged into the bundle by scripts/stage-sidecar.mjs; a copy of the Node runtime.
+src-tauri/binaries/

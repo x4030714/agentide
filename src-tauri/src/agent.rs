@@ -26,7 +26,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -512,8 +512,7 @@ fn resolve_command() -> Result<Command, IpcError> {
             ),
         ));
     }
-    let node = std::env::var("AGENTIDE_NODE").unwrap_or_else(|_| "node".to_string());
-    let mut command = Command::new(node);
+    let mut command = Command::new(node_runtime());
     command.arg(&script);
     // The child inherits this process's environment deliberately: ANTHROPIC_API_KEY, or
     // the credentials of an existing Claude Code login, is how the SDK authenticates.
@@ -528,12 +527,60 @@ fn resolve_command() -> Result<Command, IpcError> {
     Ok(command)
 }
 
+/// Where the packaged app keeps its resources, learned once at startup.
+///
+/// A `OnceLock` rather than plumbing an `AppHandle` down here: the path is a property of
+/// the installation, fixed before the first command runs, and threading a handle through
+/// every call site to read a constant would be worse than saying so once.
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Called from `lib.rs`'s setup, where the `AppHandle` exists.
+pub fn set_resource_dir(dir: PathBuf) {
+    let _ = RESOURCE_DIR.set(dir);
+}
+
 fn sidecar_script() -> PathBuf {
     if let Some(overridden) = std::env::var_os("AGENTIDE_SIDECAR") {
         return PathBuf::from(overridden);
     }
-    // `CARGO_MANIFEST_DIR` is `src-tauri`; the bundle sits beside it in the repo.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/dist/main.js")
+    // Installed: the bundle ships as a Tauri resource.
+    if let Some(resources) = RESOURCE_DIR.get() {
+        let bundled = resources.join("sidecar/main.mjs");
+        if bundled.is_file() {
+            // Through `WirePath` to strip the `\\?\` verbatim prefix Tauri hands back.
+            // Node cannot resolve a main module through one: it gives up partway and
+            // reports `EISDIR ... lstat 'C:'`, which says nothing about the real cause.
+            // Every other path in this app is normalized for the same reason.
+            return WirePath::from_path(&bundled)
+                .map(|path| path.to_path())
+                .unwrap_or(bundled);
+        }
+    }
+    // Developing: `CARGO_MANIFEST_DIR` is `src-tauri`, and the bundle sits beside it.
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/dist/main.mjs")
+}
+
+/// The Node that runs the sidecar.
+///
+/// The packaged app ships its own next to the executable, so it does not depend on the
+/// machine having Node installed, or on the version it happens to have. Falling back to
+/// `node` on PATH is the development path -- and the honest failure when a bundle is
+/// somehow incomplete, since the error it produces names a missing program rather than
+/// something subtler.
+fn node_runtime() -> PathBuf {
+    if let Some(overridden) = std::env::var_os("AGENTIDE_NODE") {
+        return PathBuf::from(overridden);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let name = if cfg!(windows) { "node.exe" } else { "node" };
+            let shipped = dir.join(name);
+            if shipped.is_file() {
+                return shipped;
+            }
+        }
+    }
+    PathBuf::from("node")
 }
 
 /// Start the sidecar and stream its events to `on_event`.
