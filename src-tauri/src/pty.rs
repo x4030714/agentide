@@ -223,9 +223,10 @@ fn spawn(
     channel: Channel<InvokeResponseBody>,
 ) -> Result<PtyInfo, IpcError> {
     let cwd = working_directory(options.cwd, root)?;
-    let argv = match options.command {
+    let argv = match (options.shell_command, options.command) {
+        (Some(line), _) if !line.trim().is_empty() => shell_running(&line),
         // An empty `command` is a frontend bug, not a request to run `""`.
-        Some(command) if !command.is_empty() => command,
+        (_, Some(command)) if !command.is_empty() => command,
         _ => resolve_shell(),
     };
     let size = size_of(options.rows, options.cols);
@@ -424,6 +425,36 @@ fn resolve_shell() -> Vec<String> {
     {
         vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())]
     }
+}
+
+/// The same shell as [`resolve_shell`], told to run one command line and then exit.
+///
+/// The flag differs by shell and getting it wrong is not a compile error -- PowerShell
+/// takes `-Command`, `cmd.exe` takes `/C`, and a POSIX shell takes `-c` -- so the choice
+/// is made here, once, from the argv that function already resolved rather than from a
+/// second guess about which shell is in use.
+///
+/// `-NoLogo` is dropped and `-NoProfile` added for PowerShell: a profile can print a
+/// banner, change the prompt, or take a second to load, and every byte of that would
+/// arrive as if it were the command's own output.
+fn shell_running(line: &str) -> Vec<String> {
+    let shell = resolve_shell();
+    let program = shell.first().cloned().unwrap_or_default();
+    let lower = program.to_lowercase();
+
+    if lower.ends_with("pwsh.exe") || lower.ends_with("powershell.exe") || lower.ends_with("pwsh") {
+        return vec![
+            program,
+            "-NoLogo".to_string(),
+            "-NoProfile".to_string(),
+            "-Command".to_string(),
+            line.to_string(),
+        ];
+    }
+    if lower.ends_with("cmd.exe") {
+        return vec![program, "/C".to_string(), line.to_string()];
+    }
+    vec![program, "-c".to_string(), line.to_string()]
 }
 
 /// First match for `name` in `PATH`. Only ever asked for `pwsh.exe`, which is why it
@@ -643,6 +674,7 @@ mod tests {
             // The scratch directory always exists, and no test writes into it.
             cwd: Some(WirePath::from_path(&std::env::temp_dir()).expect("temp dir")),
             command,
+            shell_command: None,
             rows: Some(24),
             cols: Some(80),
         }

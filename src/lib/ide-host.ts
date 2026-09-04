@@ -1,3 +1,4 @@
+import { runInAgentTerminal } from "./agent-shell";
 import { readFile, writeFile } from "./bridge";
 import { HOST_TOOL_NAMES } from "./ide-tool-names";
 import type { Json } from "./lsp-client";
@@ -84,6 +85,8 @@ export async function answerIdeTool(
         return await ideWorkspaceSymbols(args, deps);
       case "ide_rename_symbol":
         return await ideRenameSymbol(args, deps);
+      case "ide_run":
+        return await ideRun(args, deps);
       default:
         return toolError(`${name} is not a tool this build answers.`);
     }
@@ -485,6 +488,46 @@ function lineOf(diagnostic: Json): number {
 
 function byPath(a: [WirePath, unknown], b: [WirePath, unknown]): number {
   return a[0].localeCompare(b[0]);
+}
+
+// --- Running commands ------------------------------------------------------------
+
+/**
+ * Run a command in the terminal the user can see.
+ *
+ * This replaces the SDK's own `Bash`, which runs somewhere nobody can watch. PRODUCT.md's
+ * third principle is that every command the agent runs has a visible home in the UI, and
+ * a tool that reports its output only after the fact does not satisfy it: the difference
+ * between a build compiling and a build hung is exactly the part you can only see live.
+ */
+async function ideRun(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
+  const command = typeof args.command === "string" ? args.command.trim() : "";
+  if (!command) return toolError("`command` is required.");
+  const timeoutMs = Math.min(
+    Math.max(numberOr(args.timeoutMs, 120_000), 1_000),
+    600_000,
+  );
+
+  const result = await runInAgentTerminal(command, deps.root, timeoutMs);
+  const took = `${(result.ms / 1000).toFixed(1)}s`;
+
+  if (result.timedOut) {
+    // An error, not a success with a note: a command that was killed did not do its job,
+    // and a model told otherwise will build on output that stops mid-way.
+    return toolError(
+      [
+        `Killed after ${took}: the command did not finish within its timeout.`,
+        "Output up to that point:",
+        result.output || "(nothing)",
+      ].join("\n"),
+    );
+  }
+
+  const head = `exit ${result.exitCode ?? "?"} in ${took}`;
+  const body = result.output || "(no output)";
+  return result.exitCode === 0
+    ? toolOk(`${head}\n${body}`)
+    : toolError(`${head}\n${body}`);
 }
 
 // --- Rename ---------------------------------------------------------------------

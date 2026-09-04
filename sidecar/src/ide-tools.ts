@@ -322,6 +322,40 @@ export function createIdeServer(link: HostLink, sessionId: string) {
     },
   );
 
+  const ideRun = tool(
+    "ide_run",
+    [
+      "Run a shell command in the user's IDE, in a terminal they can watch while it runs.",
+      "This is the shell for this environment: use it for builds, tests, git, package",
+      "managers and anything else you would run at a prompt. The built-in Bash tool is not",
+      "available here, because it runs where the user cannot see it.",
+      "Each call runs in a fresh shell rooted at the workspace, so state does not carry",
+      "between calls: chain with && or ; inside one command rather than expecting a",
+      "previous cd or export to still apply.",
+      "Returns the exit code and the output with terminal control codes removed. A",
+      "non-zero exit comes back as an error with the output attached.",
+      "Commands that do not exit on their own -- dev servers, watchers, REPLs -- will hit",
+      "the timeout and be killed, so do not start one expecting it to keep running.",
+    ].join(" "),
+    {
+      command: z
+        .string()
+        .describe("The command line, exactly as it would be typed at the user's prompt."),
+      timeoutMs: z
+        .number()
+        .int()
+        .min(1000)
+        .max(600_000)
+        .optional()
+        .describe("How long to allow before killing it. Defaults to 120000 (two minutes)."),
+    },
+    async (args) => proxy("ide_run", args as JsonObject),
+    {
+      annotations: { title: "Run a command", readOnlyHint: false, openWorldHint: true },
+      searchHint: "Run a shell command where the user can watch it",
+    },
+  );
+
   return createSdkMcpServer({
     name: IDE_SERVER_NAME,
     version: "0.1.0",
@@ -351,6 +385,7 @@ export function createIdeServer(link: HostLink, sessionId: string) {
       ideDocumentSymbols,
       ideWorkspaceSymbols,
       ideRenameSymbol,
+      ideRun,
     ],
   });
 }
@@ -379,4 +414,5 @@ export const IDE_TOOL_NAMES = [
   "ide_document_symbols",
   "ide_workspace_symbols",
   "ide_rename_symbol",
+  "ide_run",
 ] as const;

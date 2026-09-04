@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useResolvedAppearance } from "../lib/appearance";
+import { AGENT_PTY_ID, attachAgentTerminal } from "../lib/agent-shell";
 import { ptyKill, ptyResize, ptySpawn, ptyWrite } from "../lib/bridge";
 import { IconClose } from "../lib/icons";
 import { errorMessage } from "../lib/protocol";
@@ -61,6 +62,23 @@ export function TerminalPane({ root }: TerminalProps) {
   return (
     <div className="pane terminal">
       <div className="pane-header term-tabs" role="tablist">
+        {/**
+         * The agent's terminal, first and not closable. It is where every command the
+         * agent runs appears; closing it would mean the agent could run something with
+         * nowhere to show it, which is the state this tab exists to make impossible.
+         */}
+        <span className={`term-tab${active === AGENT_PTY_ID ? " is-on" : ""}`}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={active === AGENT_PTY_ID}
+            className="term-tab-name is-agent"
+            onClick={() => setActive(AGENT_PTY_ID)}
+            title="Commands the agent runs. Read-only."
+          >
+            Agent
+          </button>
+        </span>
         {sessions.map((session) => (
           <span key={session.id} className={`term-tab${session.id === active ? " is-on" : ""}`}>
             <button
@@ -97,6 +115,14 @@ export function TerminalPane({ root }: TerminalProps) {
       </div>
 
       <div className="term-body">
+        <div className="term-panel" hidden={active !== AGENT_PTY_ID}>
+          <TerminalView
+            id={AGENT_PTY_ID}
+            root={root}
+            active={active === AGENT_PTY_ID}
+            attach={attachAgentTerminal}
+          />
+        </div>
         {sessions.map((session) => (
           <div key={session.id} className="term-panel" hidden={session.id !== active}>
             <TerminalView id={session.id} root={root} active={session.id === active} />
@@ -112,10 +138,19 @@ function TerminalView({
   id,
   root,
   active,
+  attach,
 }: {
   id: string;
   root: WirePath | null;
   active: boolean;
+  /**
+   * Render an existing stream instead of spawning a shell.
+   *
+   * The agent's terminal is driven by whatever it is running, not by this component, and
+   * it must survive the tab being closed or never opened. When this is given, the view is
+   * a window onto that session: it spawns nothing, kills nothing, and takes no input.
+   */
+  attach?: (write: (chunk: Uint8Array) => void) => () => void;
 }) {
   const appearance = useResolvedAppearance();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -162,7 +197,13 @@ function TerminalView({
 
     let disposed = false;
     let ready = false;
+    let detach: (() => void) | null = null;
 
+    if (attach) {
+      detach = attach((chunk) => {
+        if (!disposed) term.write(chunk);
+      });
+    } else
     void ptySpawn(
       {
         id,
@@ -187,8 +228,10 @@ function TerminalView({
         if (!disposed) setError(errorMessage(err));
       });
 
+    // Read-only when attached: the agent owns that session, and a keystroke landing in
+    // the middle of its command is the exact problem a separate terminal exists to avoid.
     const onData = term.onData((data) => {
-      if (ready) void ptyWrite(id, data);
+      if (!attach && ready) void ptyWrite(id, data);
     });
 
     // The pane is resizable, so the pty must be told or the shell wraps at the wrong
@@ -196,7 +239,7 @@ function TerminalView({
     const observer = new ResizeObserver(() => {
       if (disposed || host.clientWidth === 0) return;
       fit.fit();
-      if (ready) void ptyResize(id, term.rows, term.cols);
+      if (!attach && ready) void ptyResize(id, term.rows, term.cols);
     });
     observer.observe(host);
 
@@ -204,8 +247,10 @@ function TerminalView({
       disposed = true;
       observer.disconnect();
       onData.dispose();
+      detach?.();
       term.dispose();
-      void ptyKill(id);
+      // Only a shell this view started is a shell this view may end.
+      if (!attach) void ptyKill(id);
     };
     // Spawned once per session id. `root` at mount is the workspace the shell opens in;
     // changing folders does not move a running shell, the same as any terminal.
@@ -224,8 +269,8 @@ function TerminalView({
     const frame = requestAnimationFrame(() => {
       fitRef.current?.fit();
       const term = termRef.current;
-      if (term) void ptyResize(id, term.rows, term.cols);
-      term?.focus();
+      if (term && !attach) void ptyResize(id, term.rows, term.cols);
+      if (!attach) term?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [active, id]);

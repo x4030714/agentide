@@ -771,6 +771,13 @@ pub struct PtySpawnOptions {
     pub cwd: Option<WirePath>,
     /// argv, where `command[0]` is the program. Omitted means an interactive shell.
     pub command: Option<Vec<String>>,
+    /// One command line for the user's own shell to run and then exit, instead of an
+    /// interactive session. Takes precedence over `command`.
+    ///
+    /// Exists so the agent runs what a person here would run, in the shell a person here
+    /// uses, without the frontend having to know which shell that is. Which shell it is
+    /// stays decided in one place, next to the interactive one.
+    pub shell_command: Option<String>,
     pub rows: Option<u16>,
     pub cols: Option<u16>,
 }

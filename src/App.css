@@ -1679,3 +1679,16 @@
   font-size: 11px;
   color: var(--sym);
 }
+
+/* The agent's terminal tab. Marked, not decorated: the dot says whose output this is,
+   which matters because the tab beside it takes your keystrokes and this one does not. */
+.term-tab-name.is-agent::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--sym);
+}

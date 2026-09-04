@@ -141,7 +141,20 @@ export class Session {
       // `allowedTools` is an auto-approve list, not a restriction, so this widens nothing
       // else. See `ideToolNames` for why these do not need a prompt.
       allowedTools: [...(options?.allowedTools ?? []), ...ideToolNames()],
-      disallowedTools: options?.disallowedTools,
+      /**
+       * `Bash` is taken away, and `ide_run` replaces it.
+       *
+       * The SDK's own `Bash` runs the command in a process nobody can see and hands back
+       * the output once it is over. PRODUCT.md's third principle is that every command
+       * the agent runs has a visible home in the UI, and "you can read the log
+       * afterwards" is not that: whether a build is compiling or hung is exactly the part
+       * only visible while it runs.
+       *
+       * Removed rather than left as a second option, because a model offered both will
+       * sometimes pick the invisible one, and a rule that holds most of the time is not
+       * one the user can rely on when deciding whether to watch.
+       */
+      disallowedTools: [...(options?.disallowedTools ?? []), "Bash"],
       maxTurns: options?.maxTurns,
       includePartialMessages: options?.includePartialMessages,
       canUseTool: createPermissionHandler(this.#link, this.#sessionId),

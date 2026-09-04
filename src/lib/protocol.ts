@@ -488,6 +488,14 @@ export interface PtySpawnOptions {
    * `$SHELL` elsewhere. `AGENTIDE_SHELL` in the environment overrides all of it.
    */
   command?: string[];
+  /**
+   * One command line for the user's own shell to run and then exit, instead of an
+   * interactive session. Takes precedence over `command`.
+   *
+   * Which shell that is stays decided in Rust, next to the interactive one, so the
+   * frontend never has to guess between PowerShell, cmd and a POSIX shell.
+   */
+  shellCommand?: string;
   /** Defaults to 24x80. Send the real size with `ptyResize` once the pane is measured. */
   rows?: number;
   cols?: number;
