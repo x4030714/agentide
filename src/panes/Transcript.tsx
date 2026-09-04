@@ -192,24 +192,73 @@ function TranscriptRow({
         <>
           <div className={cls}>
             {addr}
-            <button
-              type="button"
-              className={`t-tool is-${row.cls} is-${row.status}`}
-              onClick={() => row.detail && onToggle(row.addr)}
+            {/**
+             * A div, not a button: the approval controls nest inside this row, and a
+             * button inside a button is invalid markup. Expansion is wired by hand so
+             * the row still answers to the keyboard when there is detail to show.
+             */}
+            <div
+              className={[
+                "t-tool",
+                `is-${row.cls}`,
+                `is-${row.status}`,
+                row.permission?.status === "pending" ? "is-awaiting" : "",
+                row.detail ? "is-expandable" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               title={row.operand}
+              role={row.detail ? "button" : undefined}
+              tabIndex={row.detail ? 0 : undefined}
+              aria-expanded={row.detail ? expanded : undefined}
+              onClick={() => row.detail && onToggle(row.addr)}
+              onKeyDown={(event) => {
+                if (!row.detail) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onToggle(row.addr);
+                }
+              }}
             >
               <span className="t-op">{row.name}</span>
               <span className="t-operand">{row.operand}</span>
-              <span className="measure">
-                {row.status === "running"
-                  ? row.elapsed !== undefined
-                    ? `${Math.round(row.elapsed)}s`
-                    : "…"
-                  : row.status === "abandoned"
-                    ? "—"
-                    : (row.measure ?? "")}
-              </span>
-            </button>
+              {row.permission?.status === "pending" ? (
+                <span className="t-actions">
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAnswer(row.permission!.id, "allow");
+                    }}
+                  >
+                    Allow
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button is-warn"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAnswer(row.permission!.id, "deny");
+                    }}
+                  >
+                    Deny
+                  </button>
+                </span>
+              ) : (
+                <span className="measure">
+                  {row.status === "denied"
+                    ? `denied${row.permission?.source === "host" ? " (auto)" : ""}`
+                    : row.status === "running"
+                      ? row.elapsed !== undefined
+                        ? `${Math.round(row.elapsed)}s`
+                        : "…"
+                      : row.status === "abandoned"
+                        ? "—"
+                        : (row.measure ?? "")}
+                </span>
+              )}
+            </div>
           </div>
           {expanded && row.detail && (
             <div className="t-row is-detail">

@@ -144,7 +144,9 @@ export function FileTree({
         {!root && <p className="note">no module loaded — open a folder to list it</p>}
         {error && <p className="note is-error">{error}</p>}
         {root && rows.length === 0 && !error && (
-          <p className="note">no entries — every file here is gitignored</p>
+          // `list_dir` returns what survived the ignore filter, so an empty result
+          // cannot tell the two apart. Naming both beats asserting the wrong one.
+          <p className="note">no entries — the folder is empty, or all of it is ignored</p>
         )}
         {rows.map(({ entry, depth }) => {
           const isActive = entry.path === activePath;

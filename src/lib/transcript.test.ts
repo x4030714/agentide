@@ -240,6 +240,79 @@ describe("progress and permissions", () => {
   });
 });
 
+describe("an approval belongs to the call it gates", () => {
+  const write = assistant({
+    type: "tool_use",
+    id: "t1",
+    name: "Write",
+    input: { file_path: "README.md" },
+  });
+  const ask = {
+    t: "permission_request" as const,
+    id: "p1",
+    sessionId: "s1",
+    tool: "Write",
+    input: { file_path: "README.md" },
+  };
+
+  it("attaches to the tool row instead of drawing a second one", () => {
+    // The bug this replaced: one Write appeared twice, at two addresses.
+    const s = run(write, ask);
+    expect(kinds(s)).toEqual(["tool"]);
+    expect(tools(s)[0].permission).toMatchObject({ id: "p1", status: "pending" });
+  });
+
+  it("marks the call denied, since a denial means it never ran", () => {
+    const s = run(write, ask, {
+      t: "permission_decided",
+      id: "p1",
+      sessionId: "s1",
+      decision: "deny",
+      source: "ui",
+    });
+    expect(tools(s)[0]).toMatchObject({ status: "denied" });
+    expect(tools(s)[0].permission).toMatchObject({ status: "deny", source: "ui" });
+  });
+
+  it("leaves an allowed call running until its result arrives", () => {
+    const s = run(write, ask, {
+      t: "permission_decided",
+      id: "p1",
+      sessionId: "s1",
+      decision: "allow",
+      source: "ui",
+    });
+    expect(tools(s)[0].status).toBe("running");
+  });
+
+  it("picks the right call when two of the same tool are in flight", () => {
+    const s = run(
+      write,
+      assistant({ type: "tool_use", id: "t2", name: "Write", input: { file_path: "b.md" } }),
+      ask,
+    );
+    expect(tools(s)[0].permission).toBeUndefined();
+    expect(tools(s)[1].permission).toMatchObject({ id: "p1" });
+  });
+
+  it("still draws a standalone row when there is no call to attach to", () => {
+    // Better a row with no home than a prompt the person never sees.
+    const s = run(ask);
+    expect(kinds(s)).toEqual(["permission"]);
+  });
+
+  it("clears an attached prompt on shutdown rather than leaving it live", () => {
+    const s = run(write, ask, {
+      t: "exited",
+      code: 1,
+      message: "sidecar died",
+      pending: ["p1"],
+    });
+    expect(tools(s)[0]).toMatchObject({ status: "abandoned" });
+    expect(tools(s)[0].permission).toMatchObject({ status: "deny", source: "host" });
+  });
+});
+
 describe("shutdown", () => {
   it("fails exactly what will never be answered", () => {
     const s = run(

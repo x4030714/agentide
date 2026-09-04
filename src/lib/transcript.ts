@@ -59,6 +59,12 @@ export type Row =
       detail?: string;
       /** Seconds elapsed, while still running. */
       elapsed?: number;
+      /**
+       * The approval this call is waiting on, when it needed one. It lives on the row
+       * rather than beside it: a `tool_use` block and its `permission_request` are one
+       * action, and drawing both gives it two addresses.
+       */
+      permission?: { id: string; status: "pending" | "allow" | "deny"; source?: "ui" | "host" };
     })
   | (BaseRow & {
       kind: "permission";
@@ -298,19 +304,50 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
     case "event":
       return reduceSdk({ ...state, sessionId: action.sessionId }, action.msg);
 
-    case "permission_request":
+    case "permission_request": {
+      // The call it belongs to is the most recent unapproved one still running under
+      // that name. The SDK emits the `tool_use` block first, so it is already drawn.
+      const name = shortToolName(action.tool);
+      const index = findLastIndex(
+        state.rows,
+        (row) => row.kind === "tool" && row.status === "running" && row.name === name && !row.permission,
+      );
+      if (index >= 0) {
+        return replace(state, index, (row) =>
+          row.kind === "tool" ? { ...row, permission: { id: action.id, status: "pending" } } : row,
+        );
+      }
+      // No call to attach to (an approval that arrived before its block, or for a tool
+      // this surface never drew). A standalone row beats silently dropping the prompt.
       return push({ ...state }, (addr, turn) => ({
         kind: "permission",
         addr,
         turn,
         id: action.id,
-        tool: shortToolName(action.tool),
+        tool: name,
         operand: operandOf(action.tool, action.input, state.meta.cwd),
         input: action.input,
         status: "pending",
       }));
+    }
 
     case "permission_decided": {
+      const attached = findLastIndex(
+        state.rows,
+        (row) => row.kind === "tool" && row.permission?.id === action.id,
+      );
+      if (attached >= 0) {
+        return replace(state, attached, (row) =>
+          row.kind === "tool" && row.permission
+            ? {
+                ...row,
+                permission: { ...row.permission, status: action.decision, source: action.source },
+                // A denial ends the call; the SDK sends no tool_result for it.
+                status: action.decision === "deny" ? "denied" : row.status,
+              }
+            : row,
+        );
+      }
       const index = state.permIndex[action.id];
       if (index === undefined) return state;
       return replace(state, index, (row) =>
@@ -344,7 +381,13 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
       // Fail exactly the rows that will never be answered, rather than spinning.
       const rows = state.rows.map((row) =>
         row.kind === "tool" && row.status === "running"
-          ? { ...row, status: "abandoned" as const }
+          ? {
+              ...row,
+              status: "abandoned" as const,
+              permission: row.permission?.status === "pending"
+                ? { ...row.permission, status: "deny" as const, source: "host" as const }
+                : row.permission,
+            }
           : row.kind === "permission" && row.status === "pending"
             ? { ...row, status: "deny" as const, source: "host" as const }
             : row,
@@ -538,6 +581,12 @@ function replace(
   const rows = state.rows.slice();
   rows[index] = update(rows[index]);
   return { ...state, rows };
+}
+
+/** `Array.prototype.findLastIndex` needs a newer lib target than this project sets. */
+function findLastIndex(rows: Row[], match: (row: Row) => boolean): number {
+  for (let i = rows.length - 1; i >= 0; i -= 1) if (match(rows[i])) return i;
+  return -1;
 }
 
 function num(value: unknown): number | undefined {

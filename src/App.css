@@ -355,6 +355,8 @@
 
 /* What you asked for, in the listing's own voice. */
 .t-prompt {
+  /* Tool rows are tabular and span; prose is read, so it keeps a measure. */
+  max-width: 74ch;
   color: var(--ink);
   font-size: 12px;
   white-space: pre-wrap;
@@ -367,6 +369,7 @@
 }
 
 .t-text {
+  max-width: 74ch;
   color: var(--ink);
   font-size: 12px;
   white-space: pre-wrap;
@@ -375,6 +378,7 @@
 
 /* Collapsed or not, this is text a person reads -- never --ink-faint. */
 .t-thinking {
+  max-width: 74ch;
   padding: 0;
   font: inherit;
   font-size: 12px;
@@ -410,8 +414,13 @@
   cursor: default;
 }
 
-.t-tool[title]:not(.is-running) {
+.t-tool.is-expandable {
   cursor: pointer;
+}
+
+.t-tool.is-expandable:focus-visible {
+  outline: 1px solid var(--addr);
+  outline-offset: -1px;
 }
 
 .t-op {
@@ -475,12 +484,24 @@
 
 /* --- Permission --- */
 
-.t-permission.is-pending {
+.t-permission.is-pending,
+.t-tool.is-awaiting {
   background: var(--tint-addr);
 }
 
-.t-permission.is-pending .t-op {
+.t-permission.is-pending .t-op,
+.t-tool.is-awaiting .t-op {
   color: var(--addr);
+}
+
+/* A denied call is finished, not merely quiet: it never ran. */
+.t-tool.is-denied .t-op,
+.t-tool.is-denied .t-operand {
+  color: var(--ink-faint);
+}
+
+.t-tool.is-denied .measure {
+  color: var(--warn);
 }
 
 .t-actions {
