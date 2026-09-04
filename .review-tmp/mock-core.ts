@@ -10,6 +10,7 @@
  * never sees it. Each later phase gets reviewed through it, so it stays.
  */
 
+import { benchTurn } from "./bench";
 import { scriptShell } from "./pty-script";
 
 const ROOT = "C:/Users/tung/Desktop/agentide";
@@ -214,7 +215,9 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       return undefined as T;
     case "agent_start": {
       const ch = args?.onEvent as { onmessage?: (m: unknown) => void } | undefined;
-      scriptTurn((e) => ch?.onmessage?.(e));
+      const calls = Number(new URLSearchParams(location.search).get("bench") ?? 0);
+      if (calls > 0) benchTurn((e) => ch?.onmessage?.(e), calls);
+      else scriptTurn((e) => ch?.onmessage?.(e));
       return undefined as T;
     }
     case "window_minimize":

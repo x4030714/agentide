@@ -10,6 +10,7 @@
  * never sees it. Each later phase gets reviewed through it, so it stays.
  */
 import ReactDOM from "react-dom/client";
+import { report } from "./bench";
 import App from "../src/App";
 
 const ROOT = "C:/Users/tung/Desktop/agentide";
@@ -47,6 +48,14 @@ async function click(path: string) {
 }
 
 async function drive() {
+  // Benchmarking measures the transcript, so skip the tree drive entirely -- its sleeps
+  // would otherwise be counted as transcript cost, which is what the first probe did.
+  if (new URLSearchParams(location.search).get("bench")) {
+    document.body.dataset.bench = JSON.stringify(await report());
+    document.body.setAttribute("data-review-ready", "1");
+    return;
+  }
+
   await sleep(300);
   await click(`${ROOT}/src`);
   await click(`${ROOT}/src/lib`);

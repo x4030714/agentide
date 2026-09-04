@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   agentInterrupt,
@@ -247,7 +247,16 @@ export function TranscriptPane({ root, onTurnStart, onTurnEnd }: TranscriptProps
   );
 }
 
-function TranscriptRow({
+/**
+ * Memoised, and not as a micro-optimisation.
+ *
+ * The reducer returns a new `rows` array on every agent event, so an unmemoised row
+ * re-renders every row in the transcript for each of the hundreds of events in a turn --
+ * quadratic in the length of the run, which is exactly the case this pane exists for.
+ * `replace()` only ever swaps the one row it changes, so identity comparison prunes all
+ * but that row, and the callbacks below are `useCallback`-stable for the same reason.
+ */
+const TranscriptRow = memo(function TranscriptRow({
   row,
   opensTurn,
   expanded,
@@ -429,7 +438,7 @@ function TranscriptRow({
         </div>
       );
   }
-}
+});
 
 function Composer({
   value,

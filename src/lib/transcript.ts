@@ -102,10 +102,17 @@ export interface TranscriptState {
   status: TranscriptStatus;
   sessionId: string | null;
   meta: TranscriptMeta;
-  /** Row index by SDK `tool_use` id, so a result can find its call. */
-  toolIndex: Record<string, number>;
-  /** Row index by host permission-request id. */
-  permIndex: Record<string, number>;
+  /**
+   * Row index by SDK `tool_use` id, so a result can find its call.
+   *
+   * A `Map`, mutated in place, and deliberately not part of the immutable state: these
+   * are derived lookup tables that nothing renders, so copying them per event bought no
+   * safety and cost a second quadratic on top of the `rows` copy. `rows` itself stays
+   * immutable, because React's identity check is what makes a memoised row cheap.
+   */
+  toolIndex: Map<string, number>;
+  /** Row index by host permission-request id. Same reasoning as `toolIndex`. */
+  permIndex: Map<string, number>;
   nextAddr: number;
   turn: number;
   /**
@@ -139,8 +146,8 @@ export function initialState(): TranscriptState {
     status: "idle",
     sessionId: null,
     meta: {},
-    toolIndex: {},
-    permIndex: {},
+    toolIndex: new Map(),
+    permIndex: new Map(),
     nextAddr: 1,
     turn: 0,
     turnClosed: false,
@@ -367,7 +374,7 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
             : row,
         );
       }
-      const index = state.permIndex[action.id];
+      const index = state.permIndex.get(action.id);
       if (index === undefined) return state;
       return replace(state, index, (row) =>
         row.kind === "permission"
@@ -530,7 +537,7 @@ function reduceAssistant(state: TranscriptState, msg: JsonObject): TranscriptSta
         operand: operandOf(name, input, next.meta.cwd),
         status: "running",
       }));
-      next = { ...next, toolIndex: { ...next.toolIndex, [id]: next.rows.length - 1 } };
+      next.toolIndex.set(id, next.rows.length - 1);
     }
   }
   return next;
@@ -544,7 +551,7 @@ function reduceUser(state: TranscriptState, msg: JsonObject): TranscriptState {
   let next = state;
   for (const block of blocksOf(msg)) {
     if (block.type !== "tool_result" || !block.tool_use_id) continue;
-    const index = next.toolIndex[block.tool_use_id];
+    const index = next.toolIndex.get(block.tool_use_id);
     if (index === undefined) continue;
     const text = resultText(block.content);
     const failed = block.is_error === true;
@@ -580,7 +587,7 @@ function reduceResult(state: TranscriptState, msg: JsonObject): TranscriptState 
 function reduceProgress(state: TranscriptState, msg: JsonObject): TranscriptState {
   const id = typeof msg.tool_use_id === "string" ? msg.tool_use_id : undefined;
   if (!id) return state;
-  const index = state.toolIndex[id];
+  const index = state.toolIndex.get(id);
   if (index === undefined) return state;
   const elapsed = num(msg.elapsed_time_seconds);
   return replace(state, index, (row) =>
@@ -598,7 +605,7 @@ function push(state: TranscriptState, make: (addr: number, turn: number) => Row)
     nextAddr: state.nextAddr + 1,
   };
   if (row.kind === "permission") {
-    next.permIndex = { ...next.permIndex, [row.id]: next.rows.length - 1 };
+    next.permIndex.set(row.id, next.rows.length - 1);
   }
   return next;
 }
