@@ -326,6 +326,20 @@ pub enum PermissionMode {
     Auto,
 }
 
+/// How much reasoning the model spends on a turn. Mirrors the SDK's `EffortLevel`.
+///
+/// Not every model accepts every level; [`ModelInfo::supported_effort_levels`] carries
+/// the ones a given model takes, which is what a picker should offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EffortLevel {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
 /// Per-turn agent configuration. Travels with each prompt rather than at startup so a
 /// mode change takes effect on the next turn without restarting the sidecar.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -333,6 +347,9 @@ pub enum PermissionMode {
 pub struct PromptOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Left unset means the SDK's own default, which is not a value this wire invents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<EffortLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<PermissionMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -360,6 +377,28 @@ pub enum DoneReason {
     Interrupted,
     MaxTurns,
     Error,
+}
+
+/// One model the installation can run.
+///
+/// The subset of the SDK's `ModelInfo` a picker needs. Deserialized rather than carried
+/// as opaque JSON because the frontend chooses effort levels from these fields, so a
+/// rename in the SDK should fail a fixture here rather than empty a menu at runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelInfo {
+    /// The id to send back as [`PromptOptions::model`].
+    pub value: String,
+    /// The canonical id `value` resolves to, when `value` is an alias such as `sonnet`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_model: Option<String>,
+    pub display_name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_effort: Option<bool>,
+    /// The levels this model accepts. `None` means the SDK did not say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supported_effort_levels: Option<Vec<EffortLevel>>,
 }
 
 /// The answer to an `ide_*` tool call.
@@ -401,7 +440,7 @@ pub enum ReplySource {
 
 /// What the frontend receives over the agent `Channel`.
 ///
-/// The first six variants forward a sidecar message unchanged. `PermissionDecided`,
+/// Most variants forward a sidecar message unchanged. `PermissionDecided`,
 /// `ToolResult` and `Exited` are added by `agent.rs`: the first two report an answer
 /// going back down to the sidecar whoever produced it, and the last reports that there
 /// is no sidecar any more.
@@ -423,6 +462,10 @@ pub enum AgentEvent {
         session_id: String,
         msg: serde_json::Value,
     },
+    /// The models this installation can run. Arrives once per sidecar, during the first
+    /// turn: the list only exists on a live query, so there is none before one starts.
+    #[serde(rename_all = "camelCase")]
+    Models { models: Vec<ModelInfo> },
     /// A tool call awaiting approval. Answer with `agent_permission_reply`.
     #[serde(rename_all = "camelCase")]
     PermissionRequest {

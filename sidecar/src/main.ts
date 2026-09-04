@@ -14,11 +14,14 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
 import { HostLink } from "./host.ts";
+import { ModelCatalogue } from "./models.ts";
 import { LineDecoder, parseHostMessage, type HostMessage } from "./protocol.ts";
 import { Session } from "./session.ts";
 
 const sessions = new Map<string, Session>();
 const link = new HostLink((line) => process.stdout.write(line));
+/** One per process: the first turn of any session publishes the list for all of them. */
+const models = new ModelCatalogue(link);
 
 function log(text: string): void {
   process.stderr.write(`[agent-host] ${text}\n`);
@@ -40,7 +43,7 @@ function sdkVersion(): string {
 function sessionFor(sessionId: string): Session {
   let session = sessions.get(sessionId);
   if (!session) {
-    session = new Session(link, sessionId);
+    session = new Session(link, sessionId, models);
     sessions.set(sessionId, session);
   }
   return session;

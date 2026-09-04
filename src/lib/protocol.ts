@@ -150,12 +150,23 @@ export type PermissionMode =
   | "auto";
 
 /**
+ * How much reasoning the model spends on a turn.
+ *
+ * Not every model accepts every level: offer the ones in the selected model's
+ * `ModelInfo.supportedEffortLevels`, and no picker at all when `supportsEffort` is not
+ * true. A level a model does not take is quietly downgraded rather than refused.
+ */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
  * Per-turn agent configuration. Sent with each prompt rather than at startup, so a mode
  * change takes effect on the next turn without restarting the sidecar.
  */
 export interface PromptOptions {
   /** Defaults to `claude-opus-5` in the sidecar. */
   model?: string;
+  /** Omitted means the agent SDK's own default, not one this protocol invents. */
+  effort?: EffortLevel;
   permissionMode?: PermissionMode;
   /** Tools auto-approved without producing a `permission_request`. */
   allowedTools?: string[];
@@ -171,6 +182,22 @@ export interface PromptOptions {
 }
 
 export type PermissionDecision = "allow" | "deny";
+
+/**
+ * One model this installation can run, as the agent SDK reports it. Arrives in a
+ * `models` event; the list is not hardcoded anywhere.
+ */
+export interface ModelInfo {
+  /** The id to send back as `PromptOptions.model`. */
+  value: string;
+  /** The canonical id `value` resolves to, when `value` is an alias such as `sonnet`. */
+  resolvedModel?: string;
+  displayName: string;
+  description: string;
+  supportsEffort?: boolean;
+  /** The levels this model accepts. Absent means the SDK did not say. */
+  supportedEffortLevels?: EffortLevel[];
+}
 
 /** Why a turn ended. `interrupted` means the host asked, not that the model stopped. */
 export type DoneReason = "success" | "interrupted" | "max_turns" | "error";
@@ -217,6 +244,12 @@ export type AgentEvent =
    * `msg.type`: `assistant`, `user`, `result`, `system`, `stream_event`.
    */
   | { t: "event"; sessionId: string; msg: JsonObject }
+  /**
+   * The models this installation can run. Arrives once per sidecar, during the first
+   * turn -- the SDK will only report the list through a live query, so there is nothing
+   * to show before the first prompt has been sent. Not tied to a session.
+   */
+  | { t: "models"; models: ModelInfo[] }
   /** A tool call awaiting approval. Answer with `agentPermissionReply`. */
   | {
       t: "permission_request";

@@ -395,6 +395,32 @@
   color: var(--ink);
 }
 
+/**
+ * The live slot in the header. Amber because it is the addr role's job: where the run
+ * currently is. It pulses rather than spins -- a listing has no spinner, and the number
+ * beside it is already doing the work of saying that something is happening.
+ */
+.measure.is-thinking {
+  color: var(--addr);
+  animation: thinking-pulse 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes thinking-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .measure.is-thinking {
+    animation: none;
+  }
+}
+
 /* --- Tool rows --- */
 
 .t-tool,
@@ -520,6 +546,73 @@
   color: var(--error);
 }
 
+/* --- Run controls ---------------------------------------------------------
+   What the next turn runs on, directly above the prompt it applies to. */
+
+.run-controls {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex: 0 0 auto;
+  padding: 4px 10px 3px;
+  border-top: 1px solid var(--rule);
+}
+
+.control {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/**
+ * A native select, stripped to the listing's grammar: no chrome at rest, the value in
+ * the listing's own face, and the addr role on hover because changing it changes where
+ * the next turn goes. Native because it is keyboard-operable and screen-reader-correct
+ * for free, which a hand-rolled popup would have to earn back.
+ */
+.control-select {
+  appearance: none;
+  padding: 0 14px 0 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink);
+  background: transparent;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%),
+    linear-gradient(135deg, var(--ink-dim) 50%, transparent 50%);
+  background-position: right 5px top 55%, right 1px top 55%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  transition: color 90ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.control-select:hover {
+  color: var(--addr);
+}
+
+.control-select:focus-visible {
+  outline: 1px solid var(--addr);
+  outline-offset: 2px;
+}
+
+.control-select:disabled {
+  color: var(--ink-faint);
+  cursor: default;
+}
+
+/* The webview draws the open list itself, so the options need their own ground. */
+.control-select option {
+  color: var(--ink);
+  background: var(--raised);
+}
+
+.control-note {
+  margin-left: auto;
+  font-size: 11px;
+}
+
 /* --- Composer --- */
 
 .composer {
@@ -528,7 +621,6 @@
   gap: 8px;
   flex: 0 0 auto;
   padding: 5px 10px;
-  border-top: 1px solid var(--rule);
 }
 
 .composer-mark {

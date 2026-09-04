@@ -19,7 +19,7 @@
  * renumbers, so a row can be referred to after the fact.
  */
 
-import type { AgentEvent, JsonObject } from "./protocol";
+import type { AgentEvent, JsonObject, ModelInfo } from "./protocol";
 
 /** What drives a tool row's colour: what kind of thing the agent reached for. */
 export type ToolClass =
@@ -114,6 +114,20 @@ export interface TranscriptState {
    * wins because it is the one carrying duration, cost and turn count.
    */
   turnClosed: boolean;
+  /**
+   * Live reasoning estimate while the model thinks, or null when it is not.
+   *
+   * This is a real measurement, not a spinner: the SDK streams
+   * `system/thinking_tokens` with a running estimate. It is deliberately not a row --
+   * addresses never renumber, so a transient state must not consume one.
+   */
+  thinking: number | null;
+  /**
+   * The SDK's own model catalogue, empty until the first turn publishes it. Empty means
+   * "not known yet", never "none available" -- the UI must say so rather than showing an
+   * empty picker, and must not gate sending on it.
+   */
+  models: ModelInfo[];
 }
 
 /** A prompt the person submitted. Not on the wire — the UI raises it locally. */
@@ -130,6 +144,8 @@ export function initialState(): TranscriptState {
     nextAddr: 1,
     turn: 0,
     turnClosed: false,
+    thinking: null,
+    models: [],
   };
 }
 
@@ -290,9 +306,12 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
   switch (action.t) {
     case "prompt_submitted":
       return push(
-        { ...state, status: "running", turn: state.turn + 1, turnClosed: false },
+        { ...state, status: "running", turn: state.turn + 1, turnClosed: false, thinking: null },
         (addr, turn) => ({ kind: "prompt", addr, turn, text: action.text }),
       );
+
+    case "models":
+      return { ...state, models: action.models };
 
     case "ready":
       return {
@@ -365,9 +384,11 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
 
     case "done":
       // `result` already drew this turn's close, with more detail than `done` carries.
-      if (state.turnClosed && !action.error) return { ...state, status: "ready" };
+      if (state.turnClosed && !action.error) {
+        return { ...state, status: "ready", thinking: null };
+      }
       return push(
-        { ...state, status: "ready", turnClosed: true },
+        { ...state, status: "ready", turnClosed: true, thinking: null },
         (addr, turn) => ({
           kind: "turn",
           addr,
@@ -392,7 +413,7 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
             ? { ...row, status: "deny" as const, source: "host" as const }
             : row,
       );
-      return push({ ...state, rows, status: "exited" }, (addr, turn) => ({
+      return push({ ...state, rows, status: "exited", thinking: null }, (addr, turn) => ({
         kind: "notice",
         addr,
         turn,
@@ -447,13 +468,21 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
         text: `api retry ${attempt ?? "?"}/${max ?? "?"}${status} — ${String(msg.error ?? "")}`,
       }));
     }
+    case "thinking_tokens": {
+      // A live estimate while the model reasons. Never a row.
+      const tokens = num(msg.estimated_tokens);
+      return tokens === undefined ? state : { ...state, thinking: tokens };
+    }
     case "compact_boundary": {
       const meta = msg.compact_metadata as
         | { trigger?: string; pre_tokens?: number; post_tokens?: number }
         | undefined;
       const pre = meta?.pre_tokens;
       const post = meta?.post_tokens;
-      const span = pre !== undefined && post !== undefined ? ` ${tokens(pre)} → ${tokens(post)}` : "";
+      const span =
+        pre !== undefined && post !== undefined
+          ? ` ${formatTokens(pre)} → ${formatTokens(post)}`
+          : "";
       return push(state, (addr, turn) => ({
         kind: "notice",
         addr,
@@ -469,7 +498,8 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
 }
 
 function reduceAssistant(state: TranscriptState, msg: JsonObject): TranscriptState {
-  let next = state;
+  // Content means the reasoning for this step produced something; stop counting.
+  let next: TranscriptState = { ...state, thinking: null };
 
   if (typeof msg.error === "string") {
     next = push(next, (addr, turn) => ({
@@ -534,7 +564,7 @@ function reduceUser(state: TranscriptState, msg: JsonObject): TranscriptState {
 }
 
 function reduceResult(state: TranscriptState, msg: JsonObject): TranscriptState {
-  return push({ ...state, turnClosed: true }, (addr, turn) => ({
+  return push({ ...state, turnClosed: true, thinking: null }, (addr, turn) => ({
     kind: "turn",
     addr,
     turn,
@@ -593,8 +623,11 @@ function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function tokens(value: number): string {
-  return value >= 1000 ? `${Math.round(value / 1000)}k` : String(value);
+/** Token counts, in the compact shape the rest of the listing measures in. */
+export function formatTokens(value: number): string {
+  if (value < 1000) return String(value);
+  const k = value / 1000;
+  return k < 10 ? `${k.toFixed(1)}k` : `${Math.round(k)}k`;
 }
 
 /** Four digits, so the address column never changes width. */

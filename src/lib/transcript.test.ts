@@ -381,6 +381,47 @@ describe("a turn closes exactly once", () => {
   });
 });
 
+describe("thinking is a live measurement, not a row", () => {
+  const thinking = (estimated_tokens: number) => ({
+    t: "event" as const,
+    sessionId: "s1",
+    msg: { type: "system", subtype: "thinking_tokens", estimated_tokens, estimated_tokens_delta: 40 },
+  });
+
+  it("tracks the running estimate without consuming an address", () => {
+    const s = run({ t: "prompt_submitted", text: "go" }, thinking(120), thinking(1240));
+    expect(s.thinking).toBe(1240);
+    // The whole point: a transient state must not take an address, which never renumbers.
+    expect(kinds(s)).toEqual(["prompt"]);
+  });
+
+  it("stops once the reasoning produces content", () => {
+    const s = run(thinking(1240), assistant({ type: "text", text: "done reasoning" }));
+    expect(s.thinking).toBeNull();
+  });
+
+  it("stops when the turn ends, by either path", () => {
+    expect(run(thinking(900), { t: "done", sessionId: "s1", reason: "success" }).thinking).toBeNull();
+    expect(
+      run(thinking(900), {
+        t: "event",
+        sessionId: "s1",
+        msg: { type: "result", subtype: "success", duration_ms: 10 },
+      }).thinking,
+    ).toBeNull();
+  });
+
+  it("stops when the sidecar dies, rather than counting forever", () => {
+    const s = run(thinking(900), { t: "exited", code: 1, message: "died", pending: [] });
+    expect(s.thinking).toBeNull();
+  });
+
+  it("resets between turns", () => {
+    const s = run(thinking(900), { t: "prompt_submitted", text: "next" });
+    expect(s.thinking).toBeNull();
+  });
+});
+
 describe("addresses", () => {
   it("never renumber, so a row stays referable", () => {
     const s = run(

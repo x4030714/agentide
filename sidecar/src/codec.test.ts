@@ -65,17 +65,30 @@ test("every fixture survives an encode/decode round trip unchanged", () => {
   }
 });
 
+/**
+ * The tags a schema actually declares, read off the discriminator.
+ *
+ * Derived rather than written out: a list kept by hand is updated in the same edit that
+ * adds the variant, which makes the coverage test agree with whatever was just written
+ * instead of demanding a fixture for it.
+ */
+function declaredTags(schema: { options: readonly { shape: { t: { value: string } } }[] }): string[] {
+  return schema.options.map((option) => option.shape.t.value).sort();
+}
+
+function fixtureTags(cases: Fixture[]): string[] {
+  return [...new Set(cases.map((f) => String(f.message.t)))].sort();
+}
+
 test("the fixtures cover every message variant", () => {
-  const hostTags = new Set(fixtures.hostToSidecar.map((f) => f.message.t));
-  const sidecarTags = new Set(fixtures.sidecarToHost.map((f) => f.message.t));
   assert.deepEqual(
-    [...hostTags].sort(),
-    ["interrupt", "permission_reply", "ping", "prompt", "tool_reply"],
+    fixtureTags(fixtures.hostToSidecar),
+    declaredTags(HostMessageSchema),
     "a HostMessage variant has no fixture",
   );
   assert.deepEqual(
-    [...sidecarTags].sort(),
-    ["done", "event", "permission_request", "pong", "ready", "tool_call"],
+    fixtureTags(fixtures.sidecarToHost),
+    declaredTags(SidecarMessageSchema),
     "a SidecarMessage variant has no fixture",
   );
 });

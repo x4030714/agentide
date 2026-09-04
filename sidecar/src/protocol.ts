@@ -43,11 +43,22 @@ export const PermissionModeSchema = z.enum([
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 
 /**
+ * How much reasoning the model spends on a turn. Mirrors the SDK's `EffortLevel`.
+ *
+ * Not every model accepts every level; `ModelInfoSchema` carries the ones each model
+ * takes, which is what the picker should offer.
+ */
+export const EffortLevelSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type EffortLevel = z.infer<typeof EffortLevelSchema>;
+
+/**
  * Per-turn agent configuration. Sent with each prompt rather than at startup so the
  * Phase 2 mode toggle takes effect on the next turn without restarting the sidecar.
  */
 export const PromptOptionsSchema = z.strictObject({
   model: z.string().optional(),
+  /** Omitted means the SDK's own default, which is not a value this protocol invents. */
+  effort: EffortLevelSchema.optional(),
   permissionMode: PermissionModeSchema.optional(),
   /** Tools auto-approved without reaching `canUseTool`. */
   allowedTools: z.array(z.string()).optional(),
@@ -76,6 +87,24 @@ export type DoneReason = z.infer<typeof DoneReasonSchema>;
 
 export const PermissionDecisionSchema = z.enum(["allow", "deny"]);
 export type PermissionDecision = z.infer<typeof PermissionDecisionSchema>;
+
+/**
+ * One model the installation can run. The subset of the SDK's `ModelInfo` a picker
+ * needs; the fields describing modes this protocol does not plumb are dropped here
+ * rather than forwarded and ignored.
+ */
+export const ModelInfoSchema = z.strictObject({
+  /** The id to send back as `PromptOptions.model`. */
+  value: z.string(),
+  /** The canonical id `value` resolves to, when `value` is an alias such as `sonnet`. */
+  resolvedModel: z.string().optional(),
+  displayName: z.string(),
+  description: z.string(),
+  supportsEffort: z.boolean().optional(),
+  /** The levels this model accepts. Absent means the SDK did not say. */
+  supportedEffortLevels: z.array(EffortLevelSchema).optional(),
+});
+export type ModelInfo = z.infer<typeof ModelInfoSchema>;
 
 // ---------------------------------------------------------------------------
 // host -> sidecar
@@ -126,6 +155,12 @@ export const SidecarMessageSchema = z.discriminatedUnion("t", [
    * message union is large and moves, so only the transcript UI destructures it.
    */
   z.strictObject({ t: z.literal("event"), sessionId: z.string(), msg: jsonObject }),
+  /**
+   * The models this installation can run. Sent once per sidecar lifetime, during the
+   * first turn: the list only exists on a live query, so there is nothing to report
+   * before one has started. Not tied to a session -- it describes the installation.
+   */
+  z.strictObject({ t: z.literal("models"), models: z.array(ModelInfoSchema) }),
   /** A tool call that fell through to a prompt. Await a `permission_reply` with this id. */
   z.strictObject({
     t: z.literal("permission_request"),

@@ -35,8 +35,8 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::fs::WorkspaceState;
 use crate::ipc::{
-    AgentEvent, DoneReason, ErrorCode, IpcError, JsonMap, PermissionDecision, PromptOptions,
-    ReplySource, ToolResult, WirePath,
+    AgentEvent, DoneReason, ErrorCode, IpcError, JsonMap, ModelInfo, PermissionDecision,
+    PromptOptions, ReplySource, ToolResult, WirePath,
 };
 
 // ---------------------------------------------------------------------------
@@ -86,6 +86,9 @@ enum SidecarMessage {
         session_id: String,
         msg: serde_json::Value,
     },
+    /// Sent once per sidecar, during its first turn. Not tied to a session.
+    #[serde(rename_all = "camelCase")]
+    Models { models: Vec<ModelInfo> },
     #[serde(rename_all = "camelCase")]
     PermissionRequest {
         id: String,
@@ -345,6 +348,9 @@ impl Router {
             }
             SidecarMessage::Event { session_id, msg } => {
                 self.emit(AgentEvent::Event { session_id, msg });
+            }
+            SidecarMessage::Models { models } => {
+                self.emit(AgentEvent::Models { models });
             }
             SidecarMessage::PermissionRequest {
                 id,
@@ -850,6 +856,31 @@ mod tests {
         round_trip::<SidecarMessage>(&fixtures().sidecar_to_host);
     }
 
+    /// The tags a mirror declares, read out of serde's own complaint about one it does
+    /// not know.
+    ///
+    /// Derived rather than written out here: a list kept by hand gets updated in the
+    /// same edit that adds the variant, which leaves the coverage check agreeing with
+    /// whatever was just written instead of demanding a fixture for it.
+    fn declared_tags<T: std::fmt::Debug + serde::de::DeserializeOwned>() -> Vec<String> {
+        let unknown = serde_json::json!({ "t": "no_such_variant" });
+        let complaint = serde_json::from_value::<T>(unknown)
+            .expect_err("an unknown tag must not parse")
+            .to_string();
+        let listed = complaint
+            .split_once("expected one of ")
+            .unwrap_or_else(|| panic!("serde no longer names the variants: {complaint}"))
+            .1;
+        let mut tags: Vec<String> = listed
+            .split(',')
+            .filter_map(|tag| tag.trim().strip_prefix('`')?.split('`').next())
+            .map(str::to_string)
+            .collect();
+        tags.sort();
+        assert!(!tags.is_empty(), "no variants found in: {complaint}");
+        tags
+    }
+
     #[test]
     fn fixtures_cover_every_variant() {
         let file = fixtures();
@@ -864,12 +895,12 @@ mod tests {
         };
         assert_eq!(
             tag(&file.host_to_sidecar),
-            ["interrupt", "permission_reply", "ping", "prompt", "tool_reply"],
+            declared_tags::<HostMessage>(),
             "a HostMessage variant has no fixture"
         );
         assert_eq!(
             tag(&file.sidecar_to_host),
-            ["done", "event", "permission_request", "pong", "ready", "tool_call"],
+            declared_tags::<SidecarMessage>(),
             "a SidecarMessage variant has no fixture"
         );
     }

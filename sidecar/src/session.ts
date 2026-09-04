@@ -10,6 +10,7 @@ import { query, type Options, type Query, type SDKMessage } from "@anthropic-ai/
 
 import { HostLink } from "./host.ts";
 import { createIdeServer } from "./ide-tools.ts";
+import { ModelCatalogue } from "./models.ts";
 import { createPermissionHandler } from "./permissions.ts";
 import type { DoneReason, JsonObject, PromptOptions } from "./protocol.ts";
 
@@ -19,6 +20,8 @@ export const DEFAULT_MODEL = "claude-opus-5";
 export class Session {
   readonly #link: HostLink;
   readonly #sessionId: string;
+  /** Shared with every session: the catalogue belongs to the process, not the turn. */
+  readonly #models: ModelCatalogue;
   /** Turns run one at a time; a prompt arriving mid-turn queues behind this. */
   #chain: Promise<void> = Promise.resolve();
   /** The SDK's session id, learned from its messages and replayed as `resume`. */
@@ -29,9 +32,10 @@ export class Session {
   /** Set by `interrupt` and `dispose`; makes queued prompts finish without running. */
   #cancelled = false;
 
-  constructor(link: HostLink, sessionId: string) {
+  constructor(link: HostLink, sessionId: string, models: ModelCatalogue) {
     this.#link = link;
     this.#sessionId = sessionId;
+    this.#models = models;
   }
 
   /** Queue a turn. Resolves when it has finished and its `done` has been sent. */
@@ -83,6 +87,9 @@ export class Session {
     let error: string | undefined;
     const running = query({ prompt: text, options: this.#options(cwd, options) });
     this.#active = running;
+    // The only handle the model list can be asked through. Fire and forget: it resolves
+    // out of band, and this turn neither waits for it nor fails with it.
+    this.#models.publish(running);
 
     try {
       for await (const message of running) {
@@ -119,6 +126,9 @@ export class Session {
     return {
       cwd,
       model: options?.model ?? DEFAULT_MODEL,
+      // No default: an unset effort is the SDK's own, which is not ours to guess, and a
+      // model that does not support the one asked for silently gets the nearest it does.
+      effort: options?.effort,
       resume: this.#resumeId,
       permissionMode: options?.permissionMode,
       allowedTools: options?.allowedTools,

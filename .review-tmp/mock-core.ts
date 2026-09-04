@@ -110,6 +110,16 @@ function scriptTurn(emit: (e: unknown) => void) {
   const sdk = (ms: number, msg: unknown) => at(ms, { t: "event", sessionId: S, msg });
 
   at(0, { t: "ready", pid: 24180, sdkVersion: "0.3.259" });
+  at(10, { t: "models", models: [
+    { value: "claude-opus-5", displayName: "Opus 5", description: "Most capable",
+      supportsEffort: true, supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"] },
+    { value: "claude-sonnet-5", displayName: "Sonnet 5", description: "Balanced",
+      supportsEffort: true, supportedEffortLevels: ["low", "medium", "high"] },
+    { value: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5", description: "Fastest",
+      supportsEffort: false },
+  ] });
+  // A live reasoning estimate, so the header indicator can be seen counting.
+  sdk(60, { type: "system", subtype: "thinking_tokens", estimated_tokens: 1240, estimated_tokens_delta: 40 });
   sdk(30, {
     type: "system", subtype: "init", model: "claude-opus-5",
     cwd: ROOT, tools: ["Read", "Edit", "Bash", "Grep", "Glob"], permissionMode: "default",

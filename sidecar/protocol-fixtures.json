@@ -27,6 +27,7 @@
         "text": "line one\nline two\ttabbed \"quoted\" \\ backslash \u00e9",
         "options": {
           "model": "claude-opus-5",
+          "effort": "xhigh",
           "permissionMode": "acceptEdits",
           "allowedTools": ["Read", "Glob"],
           "disallowedTools": ["Bash(rm *)"],
@@ -98,6 +99,31 @@
           }
         }
       }
+    },
+    {
+      "name": "models, one row with every optional field and one with none",
+      "message": {
+        "t": "models",
+        "models": [
+          {
+            "value": "sonnet",
+            "resolvedModel": "claude-sonnet-5",
+            "displayName": "Sonnet 5",
+            "description": "Fast, for everyday coding",
+            "supportsEffort": true,
+            "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]
+          },
+          {
+            "value": "claude-3-5-haiku-20241022",
+            "displayName": "Haiku 3.5",
+            "description": "Fastest, for simple edits"
+          }
+        ]
+      }
+    },
+    {
+      "name": "models, none reported",
+      "message": { "t": "models", "models": [] }
     },
     {
       "name": "permission request",

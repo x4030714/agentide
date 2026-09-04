@@ -8,12 +8,34 @@ import {
   agentStop,
 } from "../lib/bridge";
 import { errorMessage } from "../lib/protocol";
-import type { AgentEvent, WirePath } from "../lib/protocol";
-import { formatAddr, initialState, reduce } from "../lib/transcript";
+import type { AgentEvent, EffortLevel, WirePath } from "../lib/protocol";
+import { formatAddr, formatTokens, initialState, reduce } from "../lib/transcript";
+import { RunControls } from "./RunControls";
 import type { Row } from "../lib/transcript";
 
 interface TranscriptProps {
   root: WirePath | null;
+}
+
+/** Survives a restart: this is the control, so it is also the setting. */
+const MODEL_KEY = "agentide.model";
+const EFFORT_KEY = "agentide.effort";
+
+function stored<T extends string>(key: string): T | null {
+  try {
+    return (localStorage.getItem(key) as T | null) || null;
+  } catch {
+    return null;
+  }
+}
+
+function remember(key: string, value: string | null) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    /* A private context can refuse storage; the choice still applies to this session. */
+  }
 }
 
 /** A conversation handle. `crypto.randomUUID` needs a secure context; not all are. */
@@ -35,6 +57,8 @@ export function TranscriptPane({ root }: TranscriptProps) {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [sessionId] = useState(newSessionId);
   const [draft, setDraft] = useState("");
+  const [model, setModelState] = useState<string | null>(() => stored(MODEL_KEY));
+  const [effort, setEffortState] = useState<EffortLevel | null>(() => stored<EffortLevel>(EFFORT_KEY));
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -75,15 +99,28 @@ export function TranscriptPane({ root }: TranscriptProps) {
     setDraft("");
     pinned.current = true;
     dispatch({ t: "prompt_submitted", text });
-    agentPrompt(sessionId, text).catch((err) =>
+    agentPrompt(sessionId, text, {
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+    }).catch((err) =>
       dispatch({ t: "exited", code: null, message: errorMessage(err), pending: [] }),
     );
-  }, [draft, running, state.status, sessionId]);
+  }, [draft, running, state.status, sessionId, model, effort]);
 
   const answer = useCallback((id: string, decision: "allow" | "deny") => {
     agentPermissionReply(id, decision).catch(() => {
       /* Already answered -- the `permission_decided` event tells the row what happened. */
     });
+  }, []);
+
+  const setModel = useCallback((next: string | null) => {
+    setModelState(next);
+    remember(MODEL_KEY, next);
+  }, []);
+
+  const setEffort = useCallback((next: EffortLevel | null) => {
+    setEffortState(next);
+    remember(EFFORT_KEY, next);
   }, []);
 
   const toggle = useCallback((addr: number) => {
@@ -99,7 +136,17 @@ export function TranscriptPane({ root }: TranscriptProps) {
     <div className="pane transcript">
       <div className="pane-header">
         <span className="legend">Transcript</span>
-        {state.meta.model && <span className="measure">{state.meta.model}</span>}
+        {/**
+         * One live slot. Thinking outranks the model name because it is the thing that
+         * changes; when nothing is happening the header says what it will run on.
+         */}
+        {state.thinking !== null ? (
+          <span className="measure is-thinking">thinking · {formatTokens(state.thinking)}</span>
+        ) : running ? (
+          <span className="measure is-thinking">working</span>
+        ) : (
+          state.meta.model && <span className="measure">{state.meta.model}</span>
+        )}
         {running && (
           <button
             type="button"
@@ -130,6 +177,15 @@ export function TranscriptPane({ root }: TranscriptProps) {
           />
         ))}
       </div>
+
+      <RunControls
+        models={state.models}
+        model={model}
+        effort={effort}
+        onModel={setModel}
+        onEffort={setEffort}
+        disabled={state.status === "exited"}
+      />
 
       <Composer
         value={draft}
