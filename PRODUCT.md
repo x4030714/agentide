@@ -15,8 +15,8 @@ Decided by the user before init, recorded here as product truth:
 - **Editor:** Monaco.
 - **Agent:** `@anthropic-ai/claude-agent-sdk` running in a bundled Node **sidecar** process, spoken to over newline-delimited JSON on stdio. The SDK is a Node library and cannot run inside the Rust core; the sidecar is the resolution.
 - **Terminal:** `portable-pty` (ConPTY) + xterm.js.
-- **Git:** `git2` for reads; the git CLI against a separate `.agentide/checkpoints.git` for agent checkpoints.
-- **Model:** `claude-opus-5`.
+- **Git:** the git CLI against a separate `.agentide/checkpoints.git` for agent checkpoints; `git2` for panel reads.
+- **Model and effort:** selectable per turn; unset means the SDK default. The model list comes from the SDK's own `supportedModels()`.
 
 Full architecture and phasing: `C:\Users\tung\.claude\plans\virtual-brewing-hoare.md`.
 
@@ -54,12 +54,20 @@ the mechanism a text-first competitor cannot casually copy.
 
 Two supporting positions, subordinate to the above:
 
-- Nothing the agent does is irreversible (pre-images, per-turn checkpoints in a shadow git repo).
+- Nothing the agent does is irreversible (per-turn checkpoints in a shadow git repo, which is
+  also the pre-image store — a separate one was specified in the plan and dropped as redundant).
 - Nothing the agent does is hidden (its terminal is the user's terminal, its edits are visible diffs).
 
 ## Operating Context
 
-- Windows 10, single machine, local projects. Not a cloud or team tool.
+- Windows 10 (build 19045), single machine, local projects. Not a cloud or team tool.
+- **Appearance follows the OS, with a manual override.** Superseded the earlier "dark-first"
+  record: the 2am low-light scene is still the primary one and still drives the dark palette,
+  but it is no longer the only target, so both themes are real and both are held to the
+  contrast floor. Recorded because a stale "dark only" would mislead the next design decision.
+- The window is translucent over the desktop, which makes the *effective* background of every
+  surface depend on the user's wallpaper. Contrast is therefore verified against the worst-case
+  composite rather than the nominal colour — this is a durable constraint, not a one-off check.
 - **Primary languages: Rust and C/C++.** Confirmed. This sets the LSP priority:
   - `rust-analyzer` — slow initial index, rich semantic data, heavy diagnostics. The best case
     for agent-facing LSP tools and the primary target.
@@ -87,6 +95,9 @@ Confirmed functionality (see plan for phasing):
 Constraints:
 
 - Rust installed via standalone MSI — **no `rustup`**, host target `x86_64-pc-windows-msvc` only.
+- Translucency uses `apply_blur`, not acrylic: `window-vibrancy` documents acrylic as having
+  poor drag/resize performance on Windows 10 v1903+, and this machine is well past that. Mica
+  is Windows 11 only. The OS blur radius is not adjustable — only how much shows through.
 - `bun` not installed; sidecar bundling uses Node SEA unless that changes.
 - Bundling a Node runtime puts the app at roughly 70–120 MB. Accepted.
 - `monaco-languageclient` requires `@codingame/monaco-vscode-api` shims and is version-sensitive;
@@ -101,8 +112,13 @@ not a decided product name.
 ## Evidence on Hand
 
 Nothing to fabricate around — this is a greenfield tool with no users, no testimonials, no
-benchmarks, no pricing, and no public presence. The scaffold currently in the repo is
-`create-tauri-app` boilerplate and carries **no** design authority; treat it as anti-reference.
+benchmarks, no pricing, and no public presence.
+
+The repo now carries a real, deliberate visual system ("Quiet Instrument", recorded in the
+direction contract at the top of `index.html`'s body) built on a token set in
+`src/styles/world.css`. That system **is** design authority and should be extended rather than
+replaced. It succeeded "The Disassembly Listing" (seed f56d4c96) at the user's request; the
+`create-tauri-app` boilerplate it started from is long gone.
 
 ## Product Principles
 

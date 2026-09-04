@@ -8,10 +8,10 @@
  *
  * Two rules govern everything here.
  *
- * 1. **Surfaces are translucent; content is not.** Chrome (title bar, rails, headers)
- *    lets the blurred desktop through. Anything you read — code, transcript, tree — sits
- *    on a near-opaque surface, because text over a moving backdrop is unreadable and
- *    every app that ships it is prettier in screenshots than in use.
+ * 1. **Three translucent steps, by how much text each carries.** `--ground` is the
+ *    window base. `--chrome` (86% effective) backs the title bar and pane headers.
+ *    `--surface` (82%) backs everything you read, the tree rail included — file names
+ *    are content, and the rail was the one place that assumption broke.
  *
  * 2. **The four semantic roles survive the redesign.** addr / sym / xref / imm are not
  *    styling: they carry diagnostic severity, diff add-remove, and cross-references, and
@@ -55,28 +55,42 @@
   --elevated: rgb(255 255 255 / 97%);
   --sunken: rgb(0 0 0 / 4%);
 
+  /**
+   * Chrome that carries text — the title bar and pane headers. 86% effective over the
+   * ground, which is what `--ink-dim` needs to clear 4.5:1 against a hostile wallpaper.
+   * The tree rail is deliberately NOT on this: it carries file names, which makes it
+   * content, and it sits on `--surface` with everything else you read.
+   */
+  --chrome: rgb(255 255 255 / 70%);
+
   /** Hairlines separate; borders identify a control. Only the second must be findable. */
   --hairline: rgb(0 0 0 / 9%);
   --border: rgb(0 0 0 / 16%);
 
   --ink: #1b1f27;
   --ink-dim: #515a65;
-  --ink-faint: #8a939f;
 
   /**
    * The four semantic roles.
    *
-   * These were solved against a translucent surface's worst-case composite (#e0e0e0,
-   * an 88% white pane over a black desktop). The surface is opaque now, so each has
-   * more headroom than its comment claims — the number quoted is the floor, not the
-   * measurement. Kept as-is rather than re-brightened: they read well, and a role that
-   * clears its floor by a margin is not a defect.
+   * Solved against the worst-case composite: a light pane at 82% effective over a black
+   * wallpaper renders as #d1d1d1, a dark one over white as #3f4246. Each clears 4.5:1
+   * there by roughly 0.1 — a floor, not headroom. Do not dim any of them.
    */
   --addr: #78510a; /* 4.62:1 worst case */
   --sym: #0956b1; /* 4.62 */
   --xref: #0f663a; /* 4.62 */
   --imm: #ac1654; /* 4.59 */
   --uncommitted: #9c1489; /* 4.79 */
+
+  /**
+   * Fills, for the few places a role becomes a field with white text on it: the tree
+   * selection pill and the primary/warn buttons. Separate from the ink roles because
+   * `--sym` at syntax brightness gives 2.03:1 under white — legible as ink, unreadable
+   * as a field. Splitting them also stops `--sym` doing six unrelated jobs.
+   */
+  --sym-fill: #0956b1; /* white on it: 7.05:1 */
+  --warn-fill: #765200; /* 7.05:1 */
 
   --error: #ab221b; /* 4.63 */
   --warn: #765200; /* 4.62 */
@@ -85,7 +99,6 @@
   /* Fields, for states that colour a whole row rather than its text. */
   --tint-accent: rgb(9 86 177 / 12%);
   --tint-addr: rgb(120 81 10 / 13%);
-  --tint-error: rgb(171 34 27 / 11%);
 
   --shadow-1:
     0 1px 2px rgb(15 20 30 / 8%),
@@ -103,12 +116,12 @@
     --elevated: rgb(33 37 44 / 97%);
     --sunken: rgb(0 0 0 / 22%);
 
+    --chrome: rgb(17 19 23 / 70%);
     --hairline: rgb(255 255 255 / 9%);
     --border: rgb(255 255 255 / 17%);
 
     --ink: #e9edf3;
     --ink-dim: #a7afbc;
-    --ink-faint: #6e7885;
 
     --addr: #e3ae52;
     --sym: #7cbaff;
@@ -116,14 +129,15 @@
     --imm: #ff8fa8;
     --uncommitted: #ee8fda;
 
-    /* Dark-theme roles, same check: 88% of #151819 over white composites to #313438. */
-    --error: #ff8f88; /* 4.61:1 worst case */
-    --warn: #f2c14a; /* 7.47 */
-    --hint: #6ad0ff; /* 7.21 */
+    --error: #ff8f88;
+    --warn: #f2c14a;
+    --hint: #6ad0ff;
+
+    --sym-fill: #0071ef; /* white on it: 4.56:1 */
+    --warn-fill: #986f0b; /* 4.55:1 */
 
     --tint-accent: rgb(124 186 255 / 14%);
     --tint-addr: rgb(227 174 82 / 14%);
-    --tint-error: rgb(255 143 136 / 13%);
 
     --shadow-1:
       0 1px 2px rgb(0 0 0 / 32%),
@@ -141,12 +155,12 @@
   --elevated: rgb(33 37 44 / 97%);
   --sunken: rgb(0 0 0 / 22%);
 
+  --chrome: rgb(17 19 23 / 70%);
   --hairline: rgb(255 255 255 / 9%);
   --border: rgb(255 255 255 / 17%);
 
   --ink: #e9edf3;
   --ink-dim: #a7afbc;
-  --ink-faint: #6e7885;
 
   --addr: #e3ae52;
   --sym: #7cbaff;
@@ -156,11 +170,15 @@
 
   --error: #ff8f88;
   --warn: #f2c14a;
+  /* Reserved: the diagnostics info level. Consumed today only by the Monaco theme's
+     TS mirror; the phase 4 gutter is what will use the CSS var. */
   --hint: #6ad0ff;
+
+  --sym-fill: #0071ef;
+  --warn-fill: #986f0b;
 
   --tint-accent: rgb(124 186 255 / 14%);
   --tint-addr: rgb(227 174 82 / 14%);
-  --tint-error: rgb(255 143 136 / 13%);
 
   --shadow-1:
     0 1px 2px rgb(0 0 0 / 32%),
@@ -271,7 +289,7 @@ body {
 
 /* An overlay scrollbar: present when needed, never a groove down the side. */
 ::-webkit-scrollbar-thumb {
-  background: var(--ink-faint);
+  background: var(--ink-dim);
   border: 3px solid transparent;
   border-radius: 8px;
   background-clip: content-box;

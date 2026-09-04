@@ -1,12 +1,13 @@
 /**
  * Component grammar for Quiet Instrument. Tokens live in styles/world.css.
  *
- * The surface rule, and everything else follows from it: **chrome is translucent,
- * content is opaque.** The title bar, the tree rail and the pane headers let the
- * blurred desktop through — that is the whole reason the window is see-through. The
- * transcript, editor and terminal sit on `--surface`, because text over a moving
- * backdrop is unreadable, and an app that ships it looks better in a screenshot than
- * it does at 2am.
+ * The surface rule: **everything is translucent, in three steps.** `--ground` is the
+ * window base; `--chrome` (86% effective) backs the title bar and pane headers;
+ * `--surface` (82% effective) backs everything you read.
+ *
+ * The tree rail is on `--surface`, not `--chrome`, and that is the whole point of the
+ * split: it carries file names, so it is content. Putting it on the translucent chrome
+ * left its text at 3.8:1 on a benign wallpaper and 1.2:1 on a hostile one.
  *
  * Nothing floats. Panes are separated by hairlines inside one rounded window, not
  * scattered as cards on a background — a card grid is the lazy container, and a pro
@@ -66,7 +67,9 @@
 }
 
 .titlebar-workspace {
-  font-weight: 550;
+  /* 500, not 550: only static 400/500/600 faces are loaded, and 550 silently
+     resolves to 600 — a half-step the build cannot render. */
+  font-weight: 500;
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -75,7 +78,7 @@
 
 .titlebar-parent {
   min-width: 0;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -170,11 +173,27 @@
   min-width: 0;
 }
 
-/** Content panes are opaque; the tree rail stays on the translucent ground. */
+/**
+ * Everything you read shares one surface — the tree rail included, because file names
+ * are content.
+ *
+ * No `backdrop-filter` here, and not from timidity: the OS blur is composited behind the
+ * *window*, not behind an element in the page, so a backdrop filter never sees the
+ * desktop — it would only saturate `.app`'s own ground. Measured, too: adding one pushed
+ * the content layer from its designed 82% to 92% (209 -> 234 sampled alpha), because
+ * Chromium gives a filtered element its own backdrop root. Do not add it back.
+ */
+.pane.tree,
 .pane.transcript,
 .pane.editor,
 .pane.terminal {
   background: var(--surface);
+}
+
+/* Chrome that carries text sits a step more opaque than the window base. */
+.titlebar,
+.pane-header {
+  background: var(--chrome);
 }
 
 .pane-header {
@@ -260,7 +279,7 @@
 }
 
 .ghost-button:disabled {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   background: transparent;
   cursor: default;
 }
@@ -271,13 +290,13 @@
 
 .ghost-button.is-warn:hover:not(:disabled) {
   color: #ffffff;
-  background: var(--warn);
+  background: var(--warn-fill);
   border-color: transparent;
 }
 
 .ghost-button.is-primary {
   color: #ffffff;
-  background: var(--sym);
+  background: var(--sym-fill);
 }
 
 .ghost-button.is-primary:hover:not(:disabled) {
@@ -319,7 +338,8 @@
  * needed. A tint cannot carry a state on its own; a filled field can.
  */
 .tree-row.is-active {
-  background: var(--sym);
+  background: var(--sym-fill);
+  box-shadow: var(--shadow-1);
 }
 
 .tree-row.is-active .tree-name,
@@ -337,7 +357,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   transition: color var(--t-fast) var(--ease);
 }
 
@@ -390,7 +410,7 @@
 
 /** The address column survives the redesign: the anchor is function, not decoration. */
 .t-addr {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   font-family: var(--mono);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
@@ -498,7 +518,7 @@
 }
 
 .t-tool.is-running .t-operand {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
 }
 
 .t-tool.is-error .measure {
@@ -507,12 +527,12 @@
 
 .t-tool.is-abandoned .t-op,
 .t-tool.is-abandoned .t-operand {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
 }
 
 .t-tool.is-denied .t-op,
 .t-tool.is-denied .t-operand {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
 }
 
 .t-tool.is-denied .measure {
@@ -537,7 +557,9 @@
 .t-permission.is-pending,
 .t-tool.is-awaiting {
   background: var(--tint-addr);
-  box-shadow: inset 0 0 0 1px var(--addr);
+  box-shadow:
+    inset 0 0 0 1px var(--addr),
+    var(--shadow-1);
 }
 
 .t-permission.is-pending .t-op,
@@ -551,7 +573,7 @@
 }
 
 .t-turn {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   font-size: 11px;
 }
 
@@ -599,10 +621,10 @@
   font-size: 11.5px;
   color: var(--ink);
   background-color: var(--sunken);
-  background-image: linear-gradient(45deg, transparent 50%, currentcolor 50%),
-    linear-gradient(135deg, currentcolor 50%, transparent 50%);
-  background-position: right 9px center, right 5px center;
-  background-size: 4px 4px, 4px 4px;
+  /* The icon family's chevron, inlined: a select cannot hold a child element. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23808a97' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+  background-position: right 5px center;
+  background-size: 12px 12px;
   background-repeat: no-repeat;
   border: 1px solid transparent;
   border-radius: var(--r-control);
@@ -617,7 +639,7 @@
 }
 
 .control-select:disabled {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
 }
 
 .control-select option {
@@ -647,11 +669,12 @@
 
 .composer:focus-within {
   border-color: var(--sym);
+  box-shadow: var(--shadow-1);
 }
 
 .composer-mark {
   flex: 0 0 auto;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   font-family: var(--mono);
   font-size: 12px;
   line-height: 20px;
@@ -672,11 +695,11 @@
 }
 
 .composer-input::placeholder {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
 }
 
 .composer-input:disabled {
-  color: var(--ink-faint);
+  color: var(--ink-dim);
 }
 
 /* --- Editor ----------------------------------------------------------------- */
@@ -747,7 +770,7 @@
   height: 24px;
   padding: 0 12px;
   font-size: 11px;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   border-top: 1px solid var(--hairline);
 }
 
