@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:release": "npm run build && npm run build:sidecar && npm run stage",
-    "stage": "node scripts/stage-sidecar.mjs"
+    "stage": "node scripts/stage-sidecar.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:quick": "node scripts/smoke.mjs --no-turn"
   },
   "dependencies": {
     "@fontsource/archivo-narrow": "^5.3.0",
