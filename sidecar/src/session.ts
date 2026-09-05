@@ -102,7 +102,11 @@ export class Session {
     // started at all, which saves its spawn and keeps a row of failures out of the
     // prompt. The checks run in parallel and are a localhost connect each.
     const external = await loadMcpServers(cwd);
-    const running = query({ prompt: text, options: this.#options(cwd, external, options) });
+    // Sent every turn, held-back list empty or not: the empty list is what clears the
+    // chips the last turn left in the strip. A server the loader skipped never reaches
+    // the SDK's init message, so this is the only report that it was configured at all.
+    this.#link.send({ t: "mcp_gated", sessionId: this.#sessionId, servers: external.gated });
+    const running = query({ prompt: text, options: this.#options(cwd, external.servers, options) });
     this.#active = running;
     // The only handle the model list can be asked through. Fire and forget: it resolves
     // out of band, and this turn neither waits for it nor fails with it.

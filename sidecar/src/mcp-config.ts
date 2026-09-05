@@ -40,6 +40,7 @@ import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
 import { IDE_SERVER_NAME } from "./ide-tools.ts";
+import type { GatedServer } from "./protocol.ts";
 
 /** Same relative location in both places, so there is one path to remember. */
 const CONFIG_PATH = join(".agentide", "mcp.json");
@@ -137,6 +138,20 @@ const FileSchema = z.object({
 });
 
 /**
+ * What one turn's configuration came to: the servers to start, and the ones a closed
+ * gate held back.
+ *
+ * The held-back list is returned rather than only warned about, because a server that
+ * is never started is absent from the SDK's own init message -- so from the UI's side
+ * its tools look like tools that never existed. `session.ts` puts it on the wire and
+ * the MCP strip draws a chip for each one.
+ */
+export interface LoadedMcpServers {
+  servers: Record<string, McpServerConfig>;
+  gated: GatedServer[];
+}
+
+/**
  * Load and merge both files. `cwd` is the workspace root the turn runs in.
  *
  * `home` is a parameter only so the tests can point at a temporary tree; production
@@ -145,7 +160,7 @@ const FileSchema = z.object({
 export async function loadMcpServers(
   cwd: string,
   home: string = homedir(),
-): Promise<Record<string, McpServerConfig>> {
+): Promise<LoadedMcpServers> {
   // Project last: a repository that names a server the user also names is describing the
   // one this codebase needs, and that is the more specific claim.
   const merged = {
@@ -165,24 +180,27 @@ export async function loadMcpServers(
   // Every gate at once. They are independent, and a sequence of them would put each
   // server's timeout on the path to the first token one after another.
   const open = await Promise.all(
-    live.map(([, gated]) =>
-      gated.requires ? listening(gated.requires.port, gated.requires.host) : true,
+    live.map(([, entry]) =>
+      entry.requires ? listening(entry.requires.port, entry.requires.host) : true,
     ),
   );
 
   const servers: Record<string, McpServerConfig> = {};
-  live.forEach(([name, gated], index) => {
+  const gated: GatedServer[] = [];
+  live.forEach(([name, entry], index) => {
     if (open[index]) {
-      servers[name] = gated.config;
+      servers[name] = entry.config;
       return;
     }
-    // Said out loud, because the alternative is a person asking the model to decompile
-    // something and being told the tool does not exist. This names the thing to go and
-    // open.
-    const { host, port } = gated.requires!;
+    // Said out loud twice over. The warning is for whoever is reading stderr; the
+    // returned entry is for the strip above the composer, because the alternative is a
+    // person asking the model to decompile something and being told the tool does not
+    // exist. Both name the thing to go and open.
+    const { host, port } = entry.requires!;
+    gated.push({ name, host, port });
     warn(`MCP server "${name}" was not started: nothing is listening on ${host}:${port}`);
   });
-  return servers;
+  return { servers, gated };
 }
 
 /** A server that parsed, with the gate it has to pass before it is worth starting. */

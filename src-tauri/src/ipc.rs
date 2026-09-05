@@ -422,6 +422,19 @@ pub struct SlashCommand {
     pub aliases: Option<Vec<String>>,
 }
 
+/// One external MCP server the sidecar held back, and where its application would be.
+///
+/// `host` and `port` travel with the name because the chip drawn for this has to say
+/// what to open: a name on its own reads as a broken server rather than a closed
+/// program.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatedServer {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
@@ -508,6 +521,15 @@ pub enum AgentEvent {
     /// same reason: both describe the installation, and both need a live query to read.
     #[serde(rename_all = "camelCase")]
     Commands { commands: Vec<SlashCommand> },
+    /// The external MCP servers this turn was built without, because the application
+    /// each one drives is not open. Arrives at the start of every turn, empty list
+    /// included -- the empty list is what clears the previous turn's chips. Held back
+    /// means never started, so none of these appear in the SDK's own init message.
+    #[serde(rename_all = "camelCase")]
+    McpGated {
+        session_id: String,
+        servers: Vec<GatedServer>,
+    },
     /// A tool call awaiting approval. Answer with `agent_permission_reply`.
     #[serde(rename_all = "camelCase")]
     PermissionRequest {

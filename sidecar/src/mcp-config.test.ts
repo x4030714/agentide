@@ -77,7 +77,7 @@ test("a server the workspace also names is the workspace's, not the user's", asy
     config({ ida: { command: "python", args: ["project.py"] } }),
   );
 
-  assert.deepEqual(await loadMcpServers(cwd, home), {
+  assert.deepEqual((await loadMcpServers(cwd, home)).servers, {
     ida: { command: "python", args: ["project.py"] },
     blender: { command: "uvx" },
   });
@@ -86,7 +86,7 @@ test("a server the workspace also names is the workspace's, not the user's", asy
 test("a user-level server applies in a workspace that has no config at all", async () => {
   const { home, cwd } = tree(config({ blender: { command: "uvx", args: ["blender-mcp"] } }), null);
 
-  assert.deepEqual(await loadMcpServers(cwd, home), {
+  assert.deepEqual((await loadMcpServers(cwd, home)).servers, {
     blender: { command: "uvx", args: ["blender-mcp"] },
   });
 });
@@ -95,7 +95,7 @@ test("no config files anywhere is silent, not an error", async () => {
   const { home, cwd } = tree(null, null);
   const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
 
-  assert.deepEqual(value, {});
+  assert.deepEqual(value.servers, {});
   assert.equal(stderr, "");
 });
 
@@ -108,7 +108,7 @@ test("a disabled entry is dropped rather than passed with a flag", async () => {
     null,
   );
 
-  assert.deepEqual(await loadMcpServers(cwd, home), {
+  assert.deepEqual((await loadMcpServers(cwd, home)).servers, {
     playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest"] },
   });
 });
@@ -125,7 +125,7 @@ test("a disabled entry in the workspace overrides an enabled one from the user f
   );
 
   const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
-  assert.deepEqual(value, {});
+  assert.deepEqual(value.servers, {});
   assert.equal(stderr, "", "turning a server off is not a mistake worth warning about");
 });
 
@@ -137,14 +137,14 @@ test("a disabled entry that repeats its transport is still just off", async () =
     null,
   );
 
-  assert.deepEqual(await loadMcpServers(cwd, home), {});
+  assert.deepEqual((await loadMcpServers(cwd, home)).servers, {});
 });
 
 test("an entry that is only a disabled flag is off, not a broken config", async () => {
   const { home, cwd } = tree(config({ ghidra: { disabled: true } }), null);
 
   const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
-  assert.deepEqual(value, {});
+  assert.deepEqual(value.servers, {});
   assert.equal(stderr, "");
 });
 
@@ -166,7 +166,7 @@ test("note and disabled never reach the SDK", async () => {
 
   // Field for field, not `toMatchObject`: a leaked `note` is exactly the kind of extra
   // key a partial comparison would let through.
-  assert.deepEqual(await loadMcpServers(cwd, home), {
+  assert.deepEqual((await loadMcpServers(cwd, home)).servers, {
     ida: {
       command: "python",
       args: ["ida_mcp_server.py"],
@@ -181,7 +181,7 @@ test("an entry keyed agentide is refused, so the IDE's own tools cannot be shado
   const { home, cwd } = tree(null, config({ agentide: { command: "impostor" } }));
   const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
 
-  assert.deepEqual(value, {});
+  assert.deepEqual(value.servers, {});
   assert.match(stderr, /reserved/);
 });
 
@@ -190,7 +190,7 @@ test("a file that is not valid JSON costs its servers and not the turn", async (
   const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
 
   // The other file still loads: one broken config must not take the working one with it.
-  assert.deepEqual(value, { blender: { command: "uvx" } });
+  assert.deepEqual(value.servers, { blender: { command: "uvx" } });
   assert.match(stderr, /not valid JSON/);
 });
 
@@ -205,7 +205,7 @@ test("a malformed entry is skipped by name and the rest of the file still loads"
   );
   const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
 
-  assert.deepEqual(value, { good: { command: "npx" } });
+  assert.deepEqual(value.servers, { good: { command: "npx" } });
   assert.match(stderr, /"broken"/);
   assert.match(stderr, /"typo"/);
 });
@@ -227,7 +227,7 @@ test("sse and http entries keep their url and headers", async () => {
     null,
   );
 
-  assert.deepEqual(await loadMcpServers(cwd, home), {
+  assert.deepEqual((await loadMcpServers(cwd, home)).servers, {
     github: {
       type: "http",
       url: "https://api.githubcopilot.com/mcp/",
@@ -240,7 +240,7 @@ test("sse and http entries keep their url and headers", async () => {
 test("an edit to the config is picked up without restarting the process", async () => {
   const { home, cwd } = tree(config({ blender: { command: "uvx" } }), null);
 
-  assert.deepEqual(await loadMcpServers(cwd, home), { blender: { command: "uvx" } });
+  assert.deepEqual((await loadMcpServers(cwd, home)).servers, { blender: { command: "uvx" } });
   writeFileSync(
     join(home, ".agentide", "mcp.json"),
     config({ blender: { command: "uvx", disabled: true } }),
@@ -248,7 +248,7 @@ test("an edit to the config is picked up without restarting the process", async 
   );
   // Nothing is cached per cwd on purpose; this is the behaviour that makes that choice
   // worth its two file reads a turn.
-  assert.deepEqual(await loadMcpServers(cwd, home), {});
+  assert.deepEqual((await loadMcpServers(cwd, home)).servers, {});
 });
 
 test("a ${VAR} in a header is replaced from the environment", async () => {
@@ -265,7 +265,7 @@ test("a ${VAR} in a header is replaced from the environment", async () => {
 
   process.env.AGENTIDE_TEST_TOKEN = "sentinel";
   try {
-    assert.deepEqual(await loadMcpServers(cwd, home), {
+    assert.deepEqual((await loadMcpServers(cwd, home)).servers, {
       github: {
         type: "http",
         url: "https://api.githubcopilot.com/mcp/",
@@ -292,7 +292,7 @@ test("a ${VAR} that is not set drops the server instead of sending the literal",
   );
 
   const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
-  assert.deepEqual(value, {});
+  assert.deepEqual(value.servers, {});
   assert.match(stderr, /AGENTIDE_ABSENT_TOKEN/);
 });
 
@@ -334,9 +334,36 @@ test("a server that requires a port is not started when nothing is listening", a
 
   const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
   // The ungated one is unaffected: a closed gate is about its own server and nothing else.
-  assert.deepEqual(value, { chrome: { command: "npx", args: ["chrome-devtools-mcp"] } });
+  assert.deepEqual(value.servers, { chrome: { command: "npx", args: ["chrome-devtools-mcp"] } });
   assert.match(stderr, /"blender"/);
   assert.match(stderr, new RegExp(String(port)));
+});
+
+test("a server held back is reported by name and address, not only to stderr", async () => {
+  // Stderr is where the warning goes and nobody is reading it. This list is what the
+  // strip above the composer draws, and without it a configured server is simply absent
+  // from the UI -- indistinguishable from a tool that was never set up.
+  const port = await deadPort();
+  const { home, cwd } = tree(
+    config({ blender: { command: "uvx", requires: { port } }, chrome: { command: "npx" } }),
+    null,
+  );
+
+  const { value } = await capture(() => loadMcpServers(cwd, home));
+  assert.deepEqual(value.gated, [{ name: "blender", host: "127.0.0.1", port }]);
+});
+
+test("a gate pointed at another host reports that host, not the default", async () => {
+  const port = await deadPort();
+  const { home, cwd } = tree(
+    config({
+      figma: { type: "http", url: "http://box.test/mcp", requires: { port, host: "box.test" } },
+    }),
+    null,
+  );
+
+  const { value } = await capture(() => loadMcpServers(cwd, home));
+  assert.deepEqual(value.gated, [{ name: "figma", host: "box.test", port }]);
 });
 
 test("a server that requires a port is started when something is listening", async () => {
@@ -351,7 +378,9 @@ test("a server that requires a port is started when something is listening", asy
 
     const { value, stderr } = await capture(() => loadMcpServers(cwd, home));
     // `requires` is ours; the SDK must not see it.
-    assert.deepEqual(value, { ida: { command: "python", args: ["ida.py"] } });
+    assert.deepEqual(value.servers, { ida: { command: "python", args: ["ida.py"] } });
+    // An open gate holds nothing back, and the empty list is what clears the strip.
+    assert.deepEqual(value.gated, []);
     assert.equal(stderr, "");
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));

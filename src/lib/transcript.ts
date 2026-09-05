@@ -86,13 +86,29 @@ export type Row =
       error?: string;
     });
 
+/**
+ * The status of a server the loader never started, because the application it drives is
+ * not open.
+ *
+ * Not one of the SDK's words -- the SDK never saw this server. `closed` describes the
+ * program rather than the server: nothing failed, the thing it talks to is shut. It is
+ * a constant because `RunControls` tones and titles chips by it, and a second spelling
+ * would dim nothing and say nothing.
+ */
+export const MCP_CLOSED = "closed";
+
 /** One MCP server the turn started with, as the init message described it. */
 export interface McpServerRow {
   name: string;
-  /** The SDK's own word: `connected`, `failed`, `pending`, `needs-auth`, `disabled`. */
+  /**
+   * The SDK's own word: `connected`, `failed`, `pending`, `needs-auth`, `disabled` --
+   * or `MCP_CLOSED` for a server the sidecar held back before the SDK could see it.
+   */
   status: string;
   /** How many of the turn's tools came from this server. Derived; see `readMcpServers`. */
   tools: number;
+  /** `host:port` the gate found closed. Only ever set on a `MCP_CLOSED` row. */
+  at?: string;
 }
 
 export interface TranscriptMeta {
@@ -102,7 +118,11 @@ export interface TranscriptMeta {
   cwd?: string;
   toolCount?: number;
   permissionMode?: string;
-  /** Undefined until an init message arrives; empty means the turn had none. */
+  /**
+   * Every external MCP server this turn has, started or held back -- the rendered list,
+   * rebuilt from both halves by `mergeMcp`. Undefined until one of them arrives; empty
+   * means the turn had none.
+   */
   mcpServers?: McpServerRow[];
 }
 
@@ -148,6 +168,13 @@ export interface TranscriptState {
    * empty picker, and must not gate sending on it.
    */
   models: ModelInfo[];
+  /**
+   * The two halves the MCP strip is built from, kept unmerged. See `mergeMcp`.
+   *
+   * `started` is undefined until an init message arrives, which is what keeps
+   * `meta.mcpServers` undefined when nothing has reported yet.
+   */
+  mcp: { started?: McpServerRow[]; gated: McpServerRow[] };
 }
 
 /** A prompt the person submitted. Not on the wire — the UI raises it locally. */
@@ -178,6 +205,7 @@ export function initialState(): TranscriptState {
     thinking: null,
     models: [],
     commands: [],
+    mcp: { gated: [] },
   };
 }
 
@@ -359,6 +387,19 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
     case "commands":
       return { ...state, commands: action.commands };
 
+    case "mcp_gated":
+      return mergeMcp(state, {
+        ...state.mcp,
+        gated: action.servers.map((server) => ({
+          name: server.name,
+          status: MCP_CLOSED,
+          // Nothing was started, so nothing was contributed. Stated rather than left
+          // out: a chip with no count is the shape of a server whose tools vanished.
+          tools: 0,
+          at: `${server.host}:${server.port}`,
+        })),
+      });
+
     case "ready":
       return {
         ...state,
@@ -492,16 +533,21 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
       const tools = Array.isArray(msg.tools)
         ? msg.tools.filter((tool): tool is string => typeof tool === "string")
         : [];
+      // Through `mergeMcp` rather than straight into `meta`: this message owns the
+      // started half of the strip and nothing else.
+      const merged = mergeMcp(state, {
+        ...state.mcp,
+        started: readMcpServers(msg.mcp_servers, tools),
+      });
       return {
-        ...state,
+        ...merged,
         meta: {
-          ...state.meta,
+          ...merged.meta,
           model: typeof msg.model === "string" ? msg.model : undefined,
           cwd: typeof msg.cwd === "string" ? msg.cwd : undefined,
           toolCount: Array.isArray(msg.tools) ? msg.tools.length : undefined,
           permissionMode:
             typeof msg.permissionMode === "string" ? msg.permissionMode : undefined,
-          mcpServers: readMcpServers(msg.mcp_servers, tools),
         },
       };
     }
@@ -544,6 +590,27 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
       // `status` and friends are chatter, not events worth an address.
       return state;
   }
+}
+
+/**
+ * Rebuild `meta.mcpServers` from both halves, replacing whichever one `mcp` carries.
+ *
+ * Two messages describe this strip and both arrive at the start of the same turn: the
+ * SDK's `init`, listing the servers that were started, and the sidecar's `mcp_gated`,
+ * listing the ones it held back. Nothing orders them against each other, so each is
+ * stored as it lands and the rendered list is derived. Writing the merged list directly
+ * would make whichever arrived second overwrite the first -- and `readMcpServers`
+ * returns undefined for an init with no `mcp_servers` at all, which through a `...meta`
+ * spread would erase the gated chips rather than leave them alone.
+ *
+ * Started first, held back after: the servers the turn can actually use lead.
+ */
+function mergeMcp(state: TranscriptState, mcp: TranscriptState["mcp"]): TranscriptState {
+  const merged =
+    mcp.started === undefined && mcp.gated.length === 0
+      ? undefined
+      : [...(mcp.started ?? []), ...mcp.gated];
+  return { ...state, mcp, meta: { ...state.meta, mcpServers: merged } };
 }
 
 /**

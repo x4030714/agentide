@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatMeasure,
   initialState,
+  MCP_CLOSED,
   operandOf,
   reduce,
   shortToolName,
@@ -194,6 +195,60 @@ describe("system subtypes are not one variant", () => {
       // A server that never came up contributes nothing, and is still listed.
       { name: "blender", status: "failed", tools: 0 },
     ]);
+  });
+
+  it("keeps the held-back servers whichever message lands second", () => {
+    // The two halves of the strip arrive at the start of the same turn and nothing
+    // orders them. Both directions, because the bug only shows in one of them: an init
+    // carrying no `mcp_servers` at all used to erase the gated chips on its way past.
+    const gated = {
+      t: "mcp_gated" as const,
+      sessionId: "s1",
+      servers: [{ name: "blender", host: "127.0.0.1", port: 9876 }],
+    };
+    const init = {
+      t: "event" as const,
+      sessionId: "s1",
+      msg: {
+        type: "system",
+        subtype: "init",
+        tools: ["mcp__ida__decompile"],
+        mcp_servers: [{ name: "ida", status: "connected" }],
+      },
+    };
+    const expected = [
+      { name: "ida", status: "connected", tools: 1 },
+      { name: "blender", status: MCP_CLOSED, tools: 0, at: "127.0.0.1:9876" },
+    ];
+
+    expect(run(gated, init).meta.mcpServers).toEqual(expected);
+    expect(run(init, gated).meta.mcpServers).toEqual(expected);
+    // An init with no MCP servers at all is the case that used to wipe the chips.
+    expect(run(gated, INIT).meta.mcpServers).toEqual([expected[1]]);
+  });
+
+  it("clears last turn's held-back chips when the next turn holds nothing back", () => {
+    // The empty list is the whole reason the message is sent unconditionally: the person
+    // opened Blender between turns, and the chip saying it was shut has to go.
+    const s = run(
+      {
+        t: "mcp_gated",
+        sessionId: "s1",
+        servers: [{ name: "blender", host: "127.0.0.1", port: 9876 }],
+      },
+      {
+        t: "event",
+        sessionId: "s1",
+        msg: {
+          type: "system",
+          subtype: "init",
+          tools: ["mcp__ida__decompile"],
+          mcp_servers: [{ name: "ida", status: "connected" }],
+        },
+      },
+      { t: "mcp_gated", sessionId: "s1", servers: [] },
+    );
+    expect(s.meta.mcpServers).toEqual([{ name: "ida", status: "connected", tools: 1 }]);
   });
 
   it("draws api_retry as a warning", () => {

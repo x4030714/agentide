@@ -763,8 +763,9 @@
   opacity: 1;
 }
 
-/* Off is a choice, not a problem: dimmer than normal, not coloured. Nothing else gets
-   this treatment -- `pending` warns, because at init it means the tools were missing. */
+/* Off is a choice, not a problem: dimmer than normal, not coloured. `closed` -- the
+   application a server drives is not open -- reads the same way. Nothing else gets this
+   treatment; `pending` warns, because at init it means the tools were missing. */
 .mcp-server.is-off {
   opacity: 0.6;
 }

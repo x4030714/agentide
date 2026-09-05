@@ -128,6 +128,20 @@ export const SlashCommandSchema = z.strictObject({
 
 export type SlashCommand = z.infer<typeof SlashCommandSchema>;
 
+/**
+ * One MCP server the loader held back, and where its application would have been.
+ *
+ * `host` and `port` travel with the name because the chip has to say what to open. A
+ * name alone reads as a broken server rather than as a closed program.
+ */
+export const GatedServerSchema = z.strictObject({
+  name: z.string(),
+  host: z.string(),
+  /** Bounded like the `requires` gate it comes from, so the Rust mirror can hold a u16. */
+  port: z.number().int().min(1).max(65_535),
+});
+export type GatedServer = z.infer<typeof GatedServerSchema>;
+
 export const ModelInfoSchema = z.strictObject({
   /** The id to send back as `PromptOptions.model`. */
   value: z.string(),
@@ -197,6 +211,20 @@ export const SidecarMessageSchema = z.discriminatedUnion("t", [
    */
   z.strictObject({ t: z.literal("models"), models: z.array(ModelInfoSchema) }),
   z.strictObject({ t: z.literal("commands"), commands: z.array(SlashCommandSchema) }),
+  /**
+   * The external MCP servers this turn was built without, because the application each
+   * one drives is not open. Sent at the start of every turn, empty list included: an
+   * empty list is what clears the chips the previous turn left standing.
+   *
+   * Reported rather than left to stderr, because a server that is not started is
+   * invisible in the SDK's own `init` -- the failure this reports looks exactly like a
+   * tool that never existed.
+   */
+  z.strictObject({
+    t: z.literal("mcp_gated"),
+    sessionId: z.string(),
+    servers: z.array(GatedServerSchema),
+  }),
   /** A tool call that fell through to a prompt. Await a `permission_reply` with this id. */
   z.strictObject({
     t: z.literal("permission_request"),

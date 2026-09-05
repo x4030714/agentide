@@ -35,9 +35,8 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::fs::WorkspaceState;
 use crate::ipc::{
-    AgentEvent, DoneReason, ErrorCode, IpcError, JsonMap, ModelInfo, PermissionDecision,
-    SlashCommand,
-    PromptOptions, ReplySource, ToolResult, WirePath,
+    AgentEvent, DoneReason, ErrorCode, GatedServer, IpcError, JsonMap, ModelInfo,
+    PermissionDecision, PromptOptions, ReplySource, SlashCommand, ToolResult, WirePath,
 };
 
 // ---------------------------------------------------------------------------
@@ -93,6 +92,13 @@ enum SidecarMessage {
     /// Sent with the models, for the same reason: both describe the installation.
     #[serde(rename_all = "camelCase")]
     Commands { commands: Vec<SlashCommand> },
+    /// The external MCP servers the sidecar held back this turn, because the application
+    /// each one drives is not open. Sent every turn, empty list included.
+    #[serde(rename_all = "camelCase")]
+    McpGated {
+        session_id: String,
+        servers: Vec<GatedServer>,
+    },
     #[serde(rename_all = "camelCase")]
     PermissionRequest {
         id: String,
@@ -358,6 +364,15 @@ impl Router {
             }
             SidecarMessage::Commands { commands } => {
                 self.emit(AgentEvent::Commands { commands });
+            }
+            SidecarMessage::McpGated {
+                session_id,
+                servers,
+            } => {
+                self.emit(AgentEvent::McpGated {
+                    session_id,
+                    servers,
+                });
             }
             SidecarMessage::PermissionRequest {
                 id,

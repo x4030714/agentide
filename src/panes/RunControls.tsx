@@ -3,6 +3,7 @@ import type { EditMode } from "../lib/editmode";
 import { PROMPT_HELP, PROMPT_LABEL, PROMPT_MODES } from "../lib/promptmode";
 import type { PromptMode } from "../lib/promptmode";
 import type { EffortLevel, ModelInfo } from "../lib/protocol";
+import { MCP_CLOSED } from "../lib/transcript";
 import type { McpServerRow } from "../lib/transcript";
 
 /**
@@ -36,11 +37,14 @@ const ALL_EFFORTS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
  * still pending then contributed no tools to the turn the person is watching, which is
  * the state this strip was added to reveal. Dimming it would hide it.
  *
- * Only `disabled` is dimmed, because that one is a choice rather than an outcome.
+ * `disabled` and `closed` are dimmed, because neither is an outcome: one is the person
+ * switching a server off, the other is the application it drives not being open. A
+ * closed gate is a fact about the desktop, not a fault to go and fix -- but it is still
+ * drawn, because a server nobody can see is the failure this strip exists to prevent.
  */
 function mcpTone(status: string): string {
   if (status === "connected") return "ok";
-  if (status === "disabled") return "off";
+  if (status === "disabled" || status === MCP_CLOSED) return "off";
   if (status === "failed") return "error";
   return "warn";
 }
@@ -193,17 +197,26 @@ export function RunControls({
        * A connected server contributing zero tools is drawn as a warning. It is the
        * shape of the bug that hid the IDE's own tools for three phases, and "connected"
        * on its own says nothing about whether the model can see anything.
+       *
+       * A server whose gate was closed is here too, dimmed. It was never started, so it
+       * is in no init message and would otherwise be missing from this strip entirely --
+       * which is exactly what "the tool does not exist" looks like from the chair.
        */}
       {mcpServers.length > 0 && (
         <div className="mcp-strip">
           <span className="legend">MCP</span>
           {mcpServers.map((server) => {
             const empty = server.status === "connected" && server.tools === 0;
+            // The gated title names the address instead of the tool count: zero tools is
+            // the consequence, and the port is the part that says what to open.
+            const title = server.at
+              ? `${server.name}: not started — nothing is listening on ${server.at}`
+              : `${server.name}: ${server.status}, ${server.tools} tool${server.tools === 1 ? "" : "s"}`;
             return (
               <span
                 key={server.name}
                 className={`mcp-server is-${empty ? "warn" : mcpTone(server.status)}`}
-                title={`${server.name}: ${server.status}, ${server.tools} tool${server.tools === 1 ? "" : "s"}`}
+                title={title}
               >
                 {server.name}
                 <span className="mcp-count">

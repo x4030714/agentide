@@ -241,6 +241,19 @@ export interface SlashCommand {
   aliases?: string[];
 }
 
+/**
+ * One external MCP server the sidecar held back, because the application it drives is
+ * not open. Arrives in an `mcp_gated` event.
+ *
+ * `host` and `port` come with the name because the chip has to say what to open — a
+ * name alone reads as a broken server rather than as a closed program.
+ */
+export interface GatedServer {
+  name: string;
+  host: string;
+  port: number;
+}
+
 export interface ModelInfo {
   /** The id to send back as `PromptOptions.model`. */
   value: string;
@@ -305,6 +318,13 @@ export type AgentEvent =
    */
   | { t: "models"; models: ModelInfo[] }
   | { t: "commands"; commands: SlashCommand[] }
+  /**
+   * The external MCP servers this turn was built without: their gate was closed, so
+   * they were never started and the SDK's init message does not mention them. Arrives
+   * at the start of every turn, empty list included — the empty list is what clears the
+   * chips the previous turn left in the strip.
+   */
+  | { t: "mcp_gated"; sessionId: string; servers: GatedServer[] }
   /** A tool call awaiting approval. Answer with `agentPermissionReply`. */
   | {
       t: "permission_request";

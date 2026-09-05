@@ -204,6 +204,33 @@
       }
     },
     {
+      "name": "mcp servers held back, one per closed application",
+      "message": {
+        "t": "mcp_gated",
+        "sessionId": "s-1",
+        "servers": [
+          {
+            "name": "blender",
+            "host": "127.0.0.1",
+            "port": 9876
+          },
+          {
+            "name": "ida",
+            "host": "127.0.0.1",
+            "port": 13337
+          }
+        ]
+      }
+    },
+    {
+      "name": "mcp servers, none held back",
+      "message": {
+        "t": "mcp_gated",
+        "sessionId": "s-1",
+        "servers": []
+      }
+    },
+    {
       "name": "permission request",
       "message": {
         "t": "permission_request",
