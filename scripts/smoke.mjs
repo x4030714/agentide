@@ -360,9 +360,28 @@ async function main() {
   );
 
   if (RUN_TURN) {
+    // Where the turn's latency actually goes. Armed before the prompt is sent, because
+    // the interval that matters starts at Enter: everything up to the first token is
+    // harness -- spawning the CLI, spawning and connecting each MCP server, building
+    // the prompt -- and none of it is the model thinking.
+    await page.eval(`(() => {
+      const marks = { sent: 0, init: 0, first: 0 };
+      window.__ttft = marks;
+      const root = document.querySelector('.transcript-body');
+      const observer = new MutationObserver(() => {
+        const now = performance.now();
+        // The MCP strip is written from the init message, so its arrival is the moment
+        // the prompt was built and the harness handed over.
+        if (!marks.init && document.querySelector('.mcp-strip')) marks.init = now;
+        if (!marks.first && document.querySelector('.t-text, .t-thinking')) marks.first = now;
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      void root;
+      return 'armed';
+    })()`);
     await page.type("textarea.composer-input", "Call ide_open_editors and report exactly what it returned.");
     await page.eval(
-      `document.querySelector("textarea.composer-input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })), "sent"`,
+      `document.querySelector("textarea.composer-input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })), (window.__ttft.sent = performance.now()), "sent"`,
     );
 
     const rows = await until(
@@ -389,6 +408,20 @@ async function main() {
       `reply mentions ${openedFile || "(nothing was opened)"}`,
     );
     record("the turn completes", rows.includes("success"));
+
+    const timing = await page.eval(`(() => {
+      const t = window.__ttft || {};
+      const ms = (a, b) => (a && b ? Math.round(b - a) : -1);
+      return [ms(t.sent, t.init), ms(t.sent, t.first)].join(',');
+    })()`);
+    const [toInit, toFirst] = String(timing).split(",").map(Number);
+    record(
+      "time to first token, and how much of it was harness",
+      toFirst > 0,
+      toInit > 0
+        ? `${toFirst}ms total, ${toInit}ms of it before the model (${Math.round((toInit / toFirst) * 100)}%)`
+        : `${toFirst}ms total, init not observed`,
+    );
 
     // The MCP strip is written from the init message, which is the moment the turn's
     // prompt was built. That is the only place the answer to "could the model see
