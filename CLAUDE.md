@@ -96,7 +96,7 @@ Errors say what happened and what to do about it. When a language server is stil
 say so in the answer — a model told "no references" reads it as proof rather than as
 "not yet".
 
-## Speed, and what may not be traded for it
+## Speed and tokens, and what may not be traded for either
 
 This is meant to be fast. Not fast for a demo -- fast on the sixth turn of a long
 session on a native codebase, which is the only measurement that counts here.
@@ -125,6 +125,26 @@ Not fair game -- each of these buys speed by making the model worse:
 - Defaulting to a smaller model or a lower effort than the person chose.
 - Capping `maxTurns` to make a turn end sooner.
 - Summarising history the SDK would otherwise carry intact.
+
+Tokens obey the same rule, and the same list. Spend fewer of them by asking better
+questions, never by giving the model less to think with.
+
+- **The prefix is cached; keep it identical.** Our own prose is ~3.1k tokens in every
+  prompt (13 tool descriptions ~1636, the server instructions ~222, `system.md`
+  ~1245), and after the first turn it costs almost nothing -- as long as it does not
+  change. Anything that varies the tool list between turns reprices the whole prefix.
+  A server that connects on one turn and misses the 5s cap on the next does exactly
+  that, silently: `uvx blender-mcp` measured 4854ms. Prefer a server that is reliably
+  fast or reliably off to one that flaps.
+- **Deleting tool descriptions is the wrong lever.** They are cached, and they are what
+  makes the model reach for the right tool instead of Grep. A shorter description that
+  loses a turn to a worse choice costs far more than it saved.
+- **The real savings are in what a tool returns**, which is never cached: an outline
+  instead of a file, a symbol's uses instead of a text search, the server's own fix
+  instead of a read-guess-verify loop. Every one of those is fewer tokens *and* a
+  better answer, which is the only kind of saving this section is asking for.
+- Shaping output densely is fair game; truncating it is not. Deduplicating identical
+  diagnostics is shaping. Capping the list at twenty is truncation.
 
 When a change could go either way, measure it. `npm run smoke` runs a real turn and
 the MCP strip reports what the prompt was actually built with -- that is how the
