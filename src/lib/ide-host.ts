@@ -1,4 +1,10 @@
-import { runInAgentTerminal } from "./agent-shell";
+import {
+  listBackground,
+  readBackground,
+  runInAgentTerminal,
+  startBackground,
+  stopBackground,
+} from "./agent-shell";
 import { readFile, writeFile } from "./bridge";
 import { HOST_TOOL_NAMES } from "./ide-tool-names";
 import type { Json } from "./lsp-client";
@@ -87,6 +93,10 @@ export async function answerIdeTool(
         return await ideRenameSymbol(args, deps);
       case "ide_run":
         return await ideRun(args, deps);
+      case "ide_terminal_read":
+        return ideTerminalRead(args);
+      case "ide_terminal_stop":
+        return await ideTerminalStop(args);
       case "ide_hover":
         return await ideHover(args, deps);
       case "ide_implementations":
@@ -509,6 +519,18 @@ function byPath(a: [WirePath, unknown], b: [WirePath, unknown]): number {
 async function ideRun(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   const command = typeof args.command === "string" ? args.command.trim() : "";
   if (!command) return toolError("`command` is required.");
+
+  if (args.background === true) {
+    const started = await startBackground(command, deps.root);
+    return toolOk(
+      [
+        `Started ${started.id} in its own terminal tab: ${command}`,
+        "It is still running. Read what it has printed with ide_terminal_read, and stop",
+        "it with ide_terminal_stop when you are done with it.",
+      ].join("\n"),
+    );
+  }
+
   const timeoutMs = Math.min(
     Math.max(numberOr(args.timeoutMs, 120_000), 1_000),
     600_000,
@@ -534,6 +556,64 @@ async function ideRun(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   return result.exitCode === 0
     ? toolOk(`${head}\n${body}`)
     : toolError(`${head}\n${body}`);
+}
+
+/**
+ * What a background process has printed since the last read, and whether it is still up.
+ *
+ * With no `id`, the running processes instead. That overload is deliberate: a model that
+ * has lost track of a handle -- after a compaction, or several turns later -- would
+ * otherwise have no way back to a dev server it started, and would start a second one on
+ * the same port.
+ *
+ * Each read returns only what is new. Re-reading a watcher that has been up for an hour
+ * would otherwise be the most expensive call in the tool set, and "what happened since I
+ * looked" is the question worth asking anyway.
+ */
+function ideTerminalRead(args: Json): ToolResult {
+  const id = typeof args.id === "string" ? args.id.trim() : "";
+  if (!id) {
+    const all = listBackground();
+    if (all.length === 0) {
+      return toolOk("No background processes. Start one with ide_run and `background: true`.");
+    }
+    return toolOk(
+      [
+        `${all.length} background process${all.length === 1 ? "" : "es"}:`,
+        ...all.map(
+          (process) =>
+            `${process.id}  ${process.running ? "running" : `exited ${process.exitCode ?? "?"}`}` +
+            `  ${flatten(process.command)}`,
+        ),
+      ].join("\n"),
+    );
+  }
+
+  const read = readBackground(id);
+  if (!read) {
+    return toolError(`No background process ${id}. Call ide_terminal_read with no id to list them.`);
+  }
+  const { output, process } = read;
+  const state = process.running
+    ? "still running"
+    : `exited ${process.exitCode ?? "killed"}`;
+  return toolOk(
+    [
+      `${id} (${state}): ${flatten(process.command)}`,
+      output ? `\n${output}` : "\n(nothing new since the last read)",
+    ].join(""),
+  );
+}
+
+/** Kill a background process. */
+async function ideTerminalStop(args: Json): Promise<ToolResult> {
+  const id = typeof args.id === "string" ? args.id.trim() : "";
+  if (!id) return toolError("`id` is required.");
+  const stopped = await stopBackground(id);
+  if (!stopped) {
+    return toolError(`No background process ${id}. Call ide_terminal_read with no id to list them.`);
+  }
+  return toolOk(`Stopped ${id}.`);
 }
 
 // --- Reading what the server knows -------------------------------------------------

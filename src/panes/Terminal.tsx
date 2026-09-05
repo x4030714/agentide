@@ -7,7 +7,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useResolvedAppearance } from "../lib/appearance";
-import { AGENT_PTY_ID, attachAgentTerminal } from "../lib/agent-shell";
+import {
+  AGENT_PTY_ID,
+  attachAgentTerminal,
+  attachBackground,
+  forgetBackground,
+  listBackground,
+  watchBackground,
+} from "../lib/agent-shell";
+import type { BackgroundProcess } from "../lib/agent-shell";
 import { ptyKill, ptyResize, ptySpawn, ptyWrite } from "../lib/bridge";
 import { IconClose } from "../lib/icons";
 import { errorMessage } from "../lib/protocol";
@@ -29,8 +37,14 @@ const nextSession = (): Session => {
   return { id: `t${counter}-${Date.now().toString(36)}`, label: `Shell ${counter}` };
 };
 
+/** A command as a tab name: the program, not the whole line. */
+function label(command: string): string {
+  const first = command.trim().split(/\s+/).slice(0, 2).join(" ");
+  return first.length > 18 ? `${first.slice(0, 17)}…` : first;
+}
+
 /**
- * Real shells, in tabs.
+ * Real shells, in tabs, plus a read-only tab for each thing the agent is running.
  *
  * Every session stays mounted while the pane lives: xterm owns the scrollback, so
  * unmounting an inactive tab would throw away exactly the output you switched away to
@@ -39,6 +53,11 @@ const nextSession = (): Session => {
 export function TerminalPane({ root }: TerminalProps) {
   const [sessions, setSessions] = useState<Session[]>(() => [nextSession()]);
   const [active, setActive] = useState(() => sessions[0].id);
+  const [background, setBackground] = useState<BackgroundProcess[]>(() => listBackground());
+
+  // The registry lives outside React because a process has to outlive this pane; this
+  // just mirrors it. `watchBackground` fires on start, exit and stop.
+  useEffect(() => watchBackground(() => setBackground(listBackground())), []);
 
   /**
    * Hand focus to the terminal that is showing.
@@ -102,6 +121,38 @@ export function TerminalPane({ root }: TerminalProps) {
             Agent
           </button>
         </span>
+        {/**
+         * One tab per process the agent left running. Same reasoning as the Agent tab:
+         * a dev server the agent started is exactly the thing worth watching while it
+         * runs, and a log you can only read by asking the agent to read it to you is not
+         * a visible home for it.
+         */}
+        {background.map((process) => (
+          <span key={process.id} className={`term-tab${process.id === active ? " is-on" : ""}`}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={process.id === active}
+              className="term-tab-name is-agent"
+              onClick={() => setActive(process.id)}
+              title={`${process.command}${process.running ? "" : ` — exited ${process.exitCode ?? "?"}`}`}
+            >
+              {label(process.command)}
+              {process.running ? "" : " ·"}
+            </button>
+            <button
+              type="button"
+              className="term-tab-close"
+              aria-label={`Stop and close ${process.command}`}
+              onClick={() => {
+                if (active === process.id) setActive(AGENT_PTY_ID);
+                void forgetBackground(process.id);
+              }}
+            >
+              <IconClose />
+            </button>
+          </span>
+        ))}
         {sessions.map((session) => (
           <span key={session.id} className={`term-tab${session.id === active ? " is-on" : ""}`}>
             <button
@@ -146,6 +197,16 @@ export function TerminalPane({ root }: TerminalProps) {
             attach={attachAgentTerminal}
           />
         </div>
+        {background.map((process) => (
+          <div key={process.id} className="term-panel" hidden={process.id !== active}>
+            <TerminalView
+              id={process.id}
+              root={root}
+              active={process.id === active}
+              attach={(listener) => attachBackground(process.id, listener)}
+            />
+          </div>
+        ))}
         {sessions.map((session) => (
           <div key={session.id} className="term-panel" hidden={session.id !== active}>
             <TerminalView id={session.id} root={root} active={session.id === active} />

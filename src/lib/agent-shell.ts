@@ -156,6 +156,174 @@ export async function runInAgentTerminal(
   return result;
 }
 
+// --- Processes that outlive the call that started them ----------------------------
+
+/**
+ * A command the agent started and did not wait for.
+ *
+ * `runInAgentTerminal` kills anything still alive at its timeout, which is right for a
+ * build and wrong for everything that is supposed to keep running: a dev server, a
+ * watcher, a REPL. Those are not slow commands, they are commands with no end, and
+ * reporting one as "did not finish within its timeout" is reporting the wrong thing.
+ *
+ * Each gets its own pty and its own tab, so it stays visible in the sense PRODUCT.md
+ * means -- a person can watch a dev server's log while it runs, which is exactly when it
+ * is worth watching.
+ */
+export interface BackgroundProcess {
+  id: string;
+  command: string;
+  /** False once it has exited on its own or been stopped. */
+  running: boolean;
+  /** `null` while running, and when it was killed rather than exiting. */
+  exitCode: number | null;
+  startedAt: number;
+}
+
+interface Entry extends BackgroundProcess {
+  /** Everything written, so opening the tab late still shows the log. */
+  scrollback: Uint8Array[];
+  bytes: number;
+  /**
+   * Written but not yet handed to the model.
+   *
+   * The cursor lives here rather than being passed in by the caller, because the useful
+   * question is always "what is new since I last looked". A model that had to track an
+   * offset would re-read the whole log whenever it lost track, which on a watcher that
+   * has been up for an hour is the single most expensive mistake it could make.
+   */
+  pending: Uint8Array[];
+  listener: OutputListener | null;
+}
+
+const processes = new Map<string, Entry>();
+const watchers = new Set<() => void>();
+let backgroundCounter = 0;
+
+/** Told whenever a process starts, exits or is stopped, so the pane can redraw its tabs. */
+export function watchBackground(notify: () => void): () => void {
+  watchers.add(notify);
+  return () => watchers.delete(notify);
+}
+
+function changed() {
+  for (const notify of watchers) notify();
+}
+
+/** The processes the agent has started, running or recently finished. */
+export function listBackground(): BackgroundProcess[] {
+  return [...processes.values()].map(({ id, command, running, exitCode, startedAt }) => ({
+    id,
+    command,
+    running,
+    exitCode,
+    startedAt,
+  }));
+}
+
+/** Start a command and return at once. The pty id doubles as the handle. */
+export async function startBackground(
+  command: string,
+  cwd: WirePath | null,
+): Promise<BackgroundProcess> {
+  backgroundCounter += 1;
+  const id = `agent-bg-${backgroundCounter}`;
+  const entry: Entry = {
+    id,
+    command,
+    running: true,
+    exitCode: null,
+    startedAt: Date.now(),
+    scrollback: [],
+    bytes: 0,
+    pending: [],
+    listener: null,
+  };
+  processes.set(id, entry);
+
+  const write = (chunk: Uint8Array) => {
+    entry.scrollback.push(chunk);
+    entry.bytes += chunk.byteLength;
+    while (entry.bytes > SCROLLBACK_LIMIT && entry.scrollback.length > 1) {
+      entry.bytes -= entry.scrollback.shift()!.byteLength;
+    }
+    entry.pending.push(chunk);
+    entry.listener?.(chunk);
+  };
+
+  write(banner(`\r\n\x1b[38;5;244m$ ${command}\x1b[0m\r\n`));
+
+  try {
+    await ptySpawn({ id, cwd: cwd ?? undefined, shellCommand: command }, write, (event) => {
+      if (event.t !== "exited") return;
+      entry.running = false;
+      entry.exitCode = event.code;
+      write(banner(`\x1b[38;5;244m— exit ${event.code ?? "?"} —\x1b[0m\r\n`));
+      changed();
+    });
+  } catch (err) {
+    processes.delete(id);
+    throw err;
+  }
+
+  changed();
+  return { id, command, running: true, exitCode: null, startedAt: entry.startedAt };
+}
+
+/** What a background process has written since the last time this was called. */
+export function readBackground(
+  id: string,
+): { output: string; process: BackgroundProcess } | null {
+  const entry = processes.get(id);
+  if (!entry) return null;
+  const output = decode(entry.pending);
+  entry.pending = [];
+  const { command, running, exitCode, startedAt } = entry;
+  return { output, process: { id, command, running, exitCode, startedAt } };
+}
+
+/**
+ * Kill a background process.
+ *
+ * The entry stays in the map with `running: false`. A handle that vanished the moment it
+ * was stopped would turn a second call, or a read racing the stop, into "no such
+ * process", which reads as the handle having been wrong all along.
+ */
+export async function stopBackground(id: string): Promise<boolean> {
+  const entry = processes.get(id);
+  if (!entry) return false;
+  if (entry.running) {
+    await ptyKill(id).catch(() => {});
+    entry.running = false;
+  }
+  changed();
+  return true;
+}
+
+/**
+ * Stop a background process and drop it entirely.
+ *
+ * What closing its tab does. Separate from `stopBackground` because the model stopping a
+ * dev server and the person closing the tab are different intents: the first should leave
+ * a handle that still answers, the second is saying they are done looking at it.
+ */
+export async function forgetBackground(id: string): Promise<void> {
+  await stopBackground(id);
+  processes.delete(id);
+  changed();
+}
+
+/** Render a background process's tab, replaying what it has already written. */
+export function attachBackground(id: string, next: OutputListener): () => void {
+  const entry = processes.get(id);
+  if (!entry) return () => {};
+  entry.listener = next;
+  for (const chunk of entry.scrollback) next(chunk);
+  return () => {
+    if (entry.listener === next) entry.listener = null;
+  };
+}
+
 /**
  * Bytes to text the model can read.
  *

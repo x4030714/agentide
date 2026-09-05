@@ -337,8 +337,12 @@ export function createIdeServer(link: HostLink, sessionId: string) {
       "previous cd or export to still apply.",
       "Returns the exit code and the output with terminal control codes removed. A",
       "non-zero exit comes back as an error with the output attached.",
-      "Commands that do not exit on their own -- dev servers, watchers, REPLs -- will hit",
-      "the timeout and be killed, so do not start one expecting it to keep running.",
+      "A command that is not supposed to finish -- a dev server, a watcher, a REPL -- must",
+      "be started with background: true instead. It then returns a handle immediately,",
+      "keeps running in its own terminal tab, and is read with ide_terminal_read and shut",
+      "down with ide_terminal_stop. Started without it, such a command runs until the",
+      "timeout and is killed, which wastes the wait and reports a failure that is really",
+      "just the command doing its job.",
     ].join(" "),
     {
       command: z
@@ -350,7 +354,17 @@ export function createIdeServer(link: HostLink, sessionId: string) {
         .min(1000)
         .max(600_000)
         .optional()
-        .describe("How long to allow before killing it. Defaults to 120000 (two minutes)."),
+        .describe(
+          "How long to allow before killing it. Defaults to 120000 (two minutes). Ignored " +
+            "when background is true, which has no timeout.",
+        ),
+      background: z
+        .boolean()
+        .optional()
+        .describe(
+          "Return as soon as it starts instead of waiting. Use for anything that is meant " +
+            "to keep running.",
+        ),
     },
     async (args) => proxy("ide_run", args as JsonObject),
     {
@@ -467,6 +481,47 @@ export function createIdeServer(link: HostLink, sessionId: string) {
     },
   );
 
+  const ideTerminalRead = tool(
+    "ide_terminal_read",
+    [
+      "Read what a background process has printed since you last read it, and whether it",
+      "is still running.",
+      "Call it with no id to list the background processes you have started -- do that if",
+      "you have lost track of a handle, rather than starting a second copy of something",
+      "that is already running.",
+      "Each call returns only what is new, so polling a dev server's log is cheap and",
+      "re-reading it does not hand you the last hour again.",
+    ].join(" "),
+    {
+      id: z
+        .string()
+        .optional()
+        .describe("The handle ide_run returned. Omit to list every background process."),
+    },
+    async (args) => proxy("ide_terminal_read", args as JsonObject),
+    {
+      annotations: { title: "Read a background process", readOnlyHint: true, openWorldHint: false },
+      searchHint: "What has the dev server printed since last time",
+    },
+  );
+
+  const ideTerminalStop = tool(
+    "ide_terminal_stop",
+    [
+      "Stop a background process you started with ide_run.",
+      "Do this when you are finished with one. A dev server left running holds its port,",
+      "and the next attempt to start one fails for a reason that looks unrelated.",
+    ].join(" "),
+    {
+      id: z.string().describe("The handle ide_run returned."),
+    },
+    async (args) => proxy("ide_terminal_stop", args as JsonObject),
+    {
+      annotations: { title: "Stop a background process", readOnlyHint: false, idempotentHint: true },
+      searchHint: "Shut down something you started",
+    },
+  );
+
   return createSdkMcpServer({
     name: IDE_SERVER_NAME,
     version: "0.1.0",
@@ -500,6 +555,8 @@ export function createIdeServer(link: HostLink, sessionId: string) {
       ideHover,
       ideImplementations,
       ideCodeActions,
+      ideTerminalRead,
+      ideTerminalStop,
     ],
   });
 }
@@ -533,4 +590,6 @@ export const IDE_TOOL_NAMES = [
   "ide_hover",
   "ide_implementations",
   "ide_code_actions",
+  "ide_terminal_read",
+  "ide_terminal_stop",
 ] as const;

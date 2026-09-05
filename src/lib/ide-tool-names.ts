@@ -23,4 +23,6 @@ export const HOST_TOOL_NAMES = [
   "ide_hover",
   "ide_implementations",
   "ide_code_actions",
+  "ide_terminal_read",
+  "ide_terminal_stop",
 ] as const;
