@@ -6,7 +6,13 @@
  * is a stable handle for the UI while the SDK keeps the real transcript on disk.
  */
 
-import { query, type Options, type Query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type McpServerConfig,
+  type Options,
+  type Query,
+  type SDKMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 
 import { HostLink } from "./host.ts";
 import { createIdeServer, IDE_SERVER_NAME, ideToolNames } from "./ide-tools.ts";
@@ -92,7 +98,11 @@ export class Session {
 
     let reason: DoneReason = "success";
     let error: string | undefined;
-    const running = query({ prompt: text, options: this.#options(cwd, options) });
+    // Before the query, not inside it: a server whose application is closed is not
+    // started at all, which saves its spawn and keeps a row of failures out of the
+    // prompt. The checks run in parallel and are a localhost connect each.
+    const external = await loadMcpServers(cwd);
+    const running = query({ prompt: text, options: this.#options(cwd, external, options) });
     this.#active = running;
     // The only handle the model list can be asked through. Fire and forget: it resolves
     // out of band, and this turn neither waits for it nor fails with it.
@@ -129,7 +139,16 @@ export class Session {
     this.#link.send({ t: "done", sessionId: this.#sessionId, reason, error });
   }
 
-  #options(cwd: string, options?: PromptOptions): Options {
+  /**
+   * `external` is passed in rather than read here, because the gate on a server that
+   * requires an open application is a network check, and this has to stay synchronous
+   * for the shape of the SDK call.
+   */
+  #options(
+    cwd: string,
+    external: Record<string, McpServerConfig>,
+    options?: PromptOptions,
+  ): Options {
     return {
       cwd,
       model: options?.model ?? DEFAULT_MODEL,
@@ -174,7 +193,7 @@ export class Session {
       // workspace `.mcp.json`, user settings and plugins on its own, so a server can
       // appear here that neither file below mentions.
       mcpServers: {
-        ...loadMcpServers(cwd),
+        ...external,
         [IDE_SERVER_NAME]: createIdeServer(this.#link, this.#sessionId),
       },
       // The editing agent's own prompt, not a bare model. Without this the built-in

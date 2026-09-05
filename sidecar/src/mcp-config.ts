@@ -32,6 +32,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -52,6 +53,22 @@ const CONFIG_PATH = join(".agentide", "mcp.json");
 const ANNOTATIONS = {
   disabled: z.boolean().optional(),
   note: z.string().optional(),
+  /**
+   * Start this server only when something is already listening here.
+   *
+   * For the servers that are a client of an application -- IDA, Blender, Figma -- the
+   * server is useless without the application, and starting it anyway costs the spawn on
+   * every turn and puts a row of failures where the working servers should be. The port
+   * is a better question than "is the process running", because it is the condition under
+   * which the tools actually work: Blender open with the addon's server not started
+   * listens on nothing, and every tool would fail against it.
+   */
+  requires: z
+    .strictObject({
+      port: z.number().int().min(1).max(65_535),
+      host: z.string().min(1).optional(),
+    })
+    .optional(),
 };
 
 /**
@@ -125,10 +142,10 @@ const FileSchema = z.object({
  * `home` is a parameter only so the tests can point at a temporary tree; production
  * never passes it.
  */
-export function loadMcpServers(
+export async function loadMcpServers(
   cwd: string,
   home: string = homedir(),
-): Record<string, McpServerConfig> {
+): Promise<Record<string, McpServerConfig>> {
   // Project last: a repository that names a server the user also names is describing the
   // one this codebase needs, and that is the more specific claim.
   const merged = {
@@ -141,11 +158,37 @@ export function loadMcpServers(
   // would make `disabled: true` in the project file do nothing at all -- the user's
   // entry would still be standing, and the off switch would look broken for the one
   // case it is most wanted in.
+  const live = Object.entries(merged).filter(
+    (entry): entry is [string, Gated] => entry[1] !== null,
+  );
+
+  // Every gate at once. They are independent, and a sequence of them would put each
+  // server's timeout on the path to the first token one after another.
+  const open = await Promise.all(
+    live.map(([, gated]) =>
+      gated.requires ? listening(gated.requires.port, gated.requires.host) : true,
+    ),
+  );
+
   const servers: Record<string, McpServerConfig> = {};
-  for (const [name, config] of Object.entries(merged)) {
-    if (config) servers[name] = config;
-  }
+  live.forEach(([name, gated], index) => {
+    if (open[index]) {
+      servers[name] = gated.config;
+      return;
+    }
+    // Said out loud, because the alternative is a person asking the model to decompile
+    // something and being told the tool does not exist. This names the thing to go and
+    // open.
+    const { host, port } = gated.requires!;
+    warn(`MCP server "${name}" was not started: nothing is listening on ${host}:${port}`);
+  });
   return servers;
+}
+
+/** A server that parsed, with the gate it has to pass before it is worth starting. */
+interface Gated {
+  config: McpServerConfig;
+  requires?: { port: number; host: string };
 }
 
 /**
@@ -153,7 +196,7 @@ export function loadMcpServers(
  *
  * `null` is a disabled entry: present, and deliberately off. See `loadMcpServers`.
  */
-function readConfig(path: string): Record<string, McpServerConfig | null> {
+function readConfig(path: string): Record<string, Gated | null> {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -178,7 +221,7 @@ function readConfig(path: string): Record<string, McpServerConfig | null> {
     return {};
   }
 
-  const servers: Record<string, McpServerConfig | null> = {};
+  const servers: Record<string, Gated | null> = {};
   for (const [name, value] of Object.entries(file.data.mcpServers ?? {})) {
     // Refused entries are left out of the map entirely rather than tombstoned: an entry
     // this file could not understand says nothing about the one the other file has.
@@ -201,6 +244,7 @@ function readConfig(path: string): Record<string, McpServerConfig | null> {
       continue;
     }
 
+    const gate = entry.data.requires;
     const config = strip(entry.data);
     const resolved = expand(config);
     if ("missing" in resolved) {
@@ -213,7 +257,16 @@ function readConfig(path: string): Record<string, McpServerConfig | null> {
       );
       continue;
     }
-    servers[name] = resolved.config;
+    servers[name] =
+      resolved.config === null
+        ? null
+        : {
+            config: resolved.config,
+            // Localhost by default: every one of these is a bridge inside an application
+            // on this machine, and a `requires` pointing somewhere else would be asking a
+            // different question than "is the app open".
+            ...(gate ? { requires: { port: gate.port, host: gate.host ?? "127.0.0.1" } } : {}),
+          };
   }
   return servers;
 }
@@ -290,8 +343,36 @@ function accept(path: string, name: string): boolean {
  */
 function strip(entry: ServerEntry): McpServerConfig | null {
   if (entry.disabled) return null;
-  const { disabled: _disabled, note: _note, ...config } = entry;
+  const { disabled: _disabled, note: _note, requires: _requires, ...config } = entry;
   return config;
+}
+
+/**
+ * Whether a `requires` gate is open: is anything accepting connections there.
+ *
+ * A TCP connect rather than a process lookup. Asking Windows for the process list means
+ * spawning a program and reading its output, which is a good fraction of a second on the
+ * path to the first token, on every turn, to answer a question a refused connection
+ * answers in under a millisecond. The refusal is also the more accurate answer -- see the
+ * note on `requires`.
+ *
+ * The timeout is short and counts as closed. A port that neither accepts nor refuses is
+ * being dropped by a firewall, and a server that would hang on connect is not one to hand
+ * to the turn.
+ */
+function listening(port: number, host: string, timeoutMs = 250): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new Socket();
+    const settle = (open: boolean) => {
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => settle(true));
+    socket.once("timeout", () => settle(false));
+    socket.once("error", () => settle(false));
+    socket.connect(port, host);
+  });
 }
 
 /**

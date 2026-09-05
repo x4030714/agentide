@@ -136,6 +136,14 @@ questions, never by giving the model less to think with.
   A server that connects on one turn and misses the 5s cap on the next does exactly
   that, silently: `uvx blender-mcp` measured 4854ms. Prefer a server that is reliably
   fast or reliably off to one that flaps.
+- **A server whose application is closed is not started.** An entry can carry
+  `requires: { port }`, and the loader opens the server only when something is already
+  listening there. The port beats asking whether the process is running, on both
+  counts: it is the condition under which the tools actually work -- Blender open with
+  its addon server off listens on nothing -- and a localhost connect is microseconds
+  where a process list is a subprocess spawn. Two closed gates measured 15ms against
+  the 5.6s of spawning they replace.
+
 - **Deleting tool descriptions is the wrong lever.** They are cached, and they are what
   makes the model reach for the right tool instead of Grep. A shorter description that
   loses a turn to a worse choice costs far more than it saved.
