@@ -372,7 +372,10 @@ async function main() {
         const now = performance.now();
         // The MCP strip is written from the init message, so its arrival is the moment
         // the prompt was built and the harness handed over.
-        if (!marks.init && document.querySelector('.mcp-strip')) marks.init = now;
+        // A connected chip, not the strip itself: gated servers are reported before the
+        // turn starts and paint the strip early, so the strip's arrival stopped meaning
+        // 'the prompt was built'. Only init can produce a connected server.
+        if (!marks.init && document.querySelector('.mcp-server.is-ok')) marks.init = now;
         if (!marks.first && document.querySelector('.t-text, .t-thinking')) marks.first = now;
       });
       observer.observe(document.body, { childList: true, subtree: true });
