@@ -8,7 +8,7 @@ import type {
   languages,
 } from "monaco-editor";
 
-import { readFile } from "./bridge";
+import { listFiles, readFile } from "./bridge";
 import type { Json } from "./lsp-client";
 import { LspSession, SERVERS, serverFor, uriToPath } from "./lsp-session";
 import type { ServerSpec, SessionState } from "./lsp-session";
@@ -82,6 +82,53 @@ export class LspWorkspace {
     );
     // Models that existed before we attached — the editor mounts before this does.
     for (const model of monaco.editor.getModels()) this.#adopt(model);
+
+    void this.#startForMarkers();
+  }
+
+  /**
+   * Start the servers this project's root says it needs, without waiting for a file.
+   *
+   * Lazy start is right for the editor -- a workspace with no Rust in it should never pay
+   * for rust-analyzer -- and wrong for the agent. `ide_workspace_symbols` asks about the
+   * project, and before this it answered "no symbols" for a project full of them simply
+   * because nobody had opened a `.rs` file yet. That is a wrong answer wearing the shape
+   * of a right one, which is the kind this codebase tries hardest not to give.
+   *
+   * Markers are looked for a few levels down, not only at the root, because the root is
+   * often not where they live: this project keeps its `Cargo.toml` under `src-tauri`, and
+   * a workspace of crates keeps one per crate directory. A root-only check would have
+   * missed agentide itself, which is a good sign it was the wrong check.
+   *
+   * One `listFiles` call rather than a walk per directory: the list is already capped in
+   * Rust and already respects the same ignore rules, so this costs one round trip.
+   */
+  async #startForMarkers(): Promise<void> {
+    /** Deep enough for `src-tauri/Cargo.toml` and `crates/thing/Cargo.toml`. */
+    const MAX_DEPTH = 3;
+    const prefix = `${this.#root.replace(/\/$/, "")}/`;
+
+    let found: Set<string>;
+    try {
+      const files = await listFiles();
+      found = new Set(
+        files
+          .filter((path) => path.startsWith(prefix))
+          .map((path) => path.slice(prefix.length))
+          .filter((relative) => relative.split("/").length <= MAX_DEPTH)
+          .map((relative) => relative.slice(relative.lastIndexOf("/") + 1)),
+      );
+    } catch {
+      // An unreadable workspace is not this function's problem to report; lazy start
+      // still covers every file that actually gets opened.
+      return;
+    }
+    if (this.#disposed) return;
+
+    for (const spec of SERVERS) {
+      if (!spec.markers.some((marker) => found.has(marker))) continue;
+      void this.#ensureSession(spec);
+    }
   }
 
   async dispose(): Promise<void> {

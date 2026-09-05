@@ -21,6 +21,16 @@ export interface ServerSpec {
   languages: string[];
   /** Shown when the server cannot start, so the reason names the fix. */
   missingHint: string;
+  /**
+   * Files at the workspace root that mean this server is worth starting before any file
+   * of its language is opened.
+   *
+   * Servers start lazily from an open file, which is right for the editor and wrong for
+   * the agent: `ide_workspace_symbols` asks about a project, and until something of that
+   * language had been opened it answered "no symbols" for a project full of them. A
+   * marker at the root is the cheap, honest signal that this is that kind of project.
+   */
+  markers: string[];
 }
 
 /**
@@ -34,12 +44,16 @@ export const SERVERS: ServerSpec[] = [
     command: ["rust-analyzer"],
     languages: ["rust"],
     missingHint: "rust-analyzer is not on PATH. It ships with the Rust toolchain.",
+    markers: ["Cargo.toml"],
   },
   {
     id: "clangd",
     command: ["clangd", "--background-index", "--clang-tidy"],
     languages: ["c", "cpp", "objective-c", "objective-cpp"],
     missingHint: "clangd is not on PATH. Install LLVM, or add it to PATH.",
+    // `compile_commands.json` is what clangd actually needs; the build files are what a
+    // project has before someone generates one, and starting anyway lets clangd say so.
+    markers: ["compile_commands.json", "CMakeLists.txt", "Makefile"],
   },
 ];
 
