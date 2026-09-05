@@ -21,7 +21,7 @@ a Node sidecar. `PRODUCT.md` is the product truth; the plan lives in
 npm test                 # frontend unit tests
 npm --prefix sidecar test
 cargo test --lib         # from src-tauri/
-npm run smoke:quick      # end to end, no agent turn, free
+npm run smoke:quick      # end to end, no agent turn, free (needs rust-analyzer)
 npm run smoke            # end to end including one turn (costs money)
 npm run tauri dev        # the app
 npm run tauri build      # installers into src-tauri/target/release/bundle/
@@ -29,7 +29,8 @@ node scripts/solve-theme.mjs --check
 ```
 
 Run `npm run smoke:quick` before claiming a change works. Every serious bug in this project
-lived in a seam that unit tests do not cross.
+lived in a seam that unit tests do not cross. It drives the `ide_*` tools against a real
+rust-analyzer through `window.__ideTool`, which is why that hook exists in `App.tsx`.
 
 ## Things that are easy to get wrong here
 
@@ -54,6 +55,16 @@ fail a test until they agree.
 **The MCP server is named `agentide`, never `ide`.** Claude Code ships its own server under
 that name; ours was shadowed by it for three phases — connected, zero tools exposed, no
 error on either side. There is a test that fails if anyone renames it back.
+
+**External MCP servers come from three places, and only one of them is ours.**
+`sidecar/src/mcp-config.ts` reads `~/.agentide/mcp.json` and `<workspace>/.agentide/mcp.json`,
+project winning on a name collision, re-read every turn so an edit lands on the next
+prompt. `disabled` and `note` are agentide's own fields and are stripped before the SDK
+sees an entry; a `disabled: true` entry survives the merge as a tombstone, so a workspace
+can switch off a server the user turned on. `agentide` is a reserved key and an entry
+using it is dropped with a warning. The third place is the SDK's: `strictMcpConfig` is
+unset, so it also loads a workspace `.mcp.json`, user settings and plugins on its own — a
+server can appear that neither of our files mentions.
 
 **A tool declared but not answered is broken forever, silently.** The sidecar declares
 `ide_*` tools and the frontend answers them from `HOST_TOOL_NAMES`. `ide-tool-names.test.ts`
@@ -85,6 +96,39 @@ Errors say what happened and what to do about it. When a language server is stil
 say so in the answer — a model told "no references" reads it as proof rather than as
 "not yet".
 
+## Speed, and what may not be traded for it
+
+This is meant to be fast. Not fast for a demo -- fast on the sixth turn of a long
+session on a native codebase, which is the only measurement that counts here.
+
+The line: **latency comes out of the harness, never out of the model.** Anything that
+makes the model dumber to make the app quicker is the wrong trade, and it is the
+tempting one, because it always works.
+
+Fair game -- these cost nothing the model would have used:
+
+- Process and startup cost. Spawning, connecting, indexing, resolving a package.
+- Duplicate tools. Two servers offering `click` is two ways to do one thing, and the
+  model pays to read both and pays again to choose. Dropping one is free.
+- Deferred tool loading. Tool search exists so a tool the turn never uses costs
+  nothing; do not force tools into the prompt without measuring that they were
+  missing (see the `alwaysLoad` note in `sidecar/src/mcp-config.ts`).
+- Rendering, virtualisation, anything the webview does after the answer arrives.
+- Answering a question from the language server instead of from a file read: fewer
+  tokens *and* faster *and* more correct, which is the shape every good change here
+  has.
+
+Not fair game -- each of these buys speed by making the model worse:
+
+- Truncating tool output, file reads or diagnostics to save tokens.
+- Dropping or trimming the `claude_code` preset, or the tuned prompt.
+- Defaulting to a smaller model or a lower effort than the person chose.
+- Capping `maxTurns` to make a turn end sooner.
+- Summarising history the SDK would otherwise carry intact.
+
+When a change could go either way, measure it. `npm run smoke` runs a real turn and
+the MCP strip reports what the prompt was actually built with -- that is how the
+`alwaysLoad` question got settled instead of argued.
 ## Constraints
 
 - Windows 10, single machine. Rust from the standalone MSI: **no `rustup`**, and `rust-src`
