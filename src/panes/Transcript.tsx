@@ -353,6 +353,7 @@ export function TranscriptPane({
         effort={effort}
         onModel={setModel}
         onEffort={setEffort}
+        mcpServers={state.meta.mcpServers ?? []}
         disabled={state.status === "exited"}
       />
 

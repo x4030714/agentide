@@ -173,6 +173,29 @@ describe("system subtypes are not one variant", () => {
     expect(s.meta).toMatchObject({ model: "claude-opus-5", toolCount: 3 });
   });
 
+  it("counts each MCP server's tools from the flat tool list", () => {
+    const s = run({
+      t: "event",
+      sessionId: "s1",
+      msg: {
+        type: "system",
+        subtype: "init",
+        tools: ["Read", "mcp__agentide__ide_hover", "mcp__agentide__ide_run", "mcp__ida__decompile"],
+        mcp_servers: [
+          { name: "agentide", status: "connected" },
+          { name: "ida", status: "connected" },
+          { name: "blender", status: "failed" },
+        ],
+      },
+    });
+    expect(s.meta.mcpServers).toEqual([
+      { name: "agentide", status: "connected", tools: 2 },
+      { name: "ida", status: "connected", tools: 1 },
+      // A server that never came up contributes nothing, and is still listed.
+      { name: "blender", status: "failed", tools: 0 },
+    ]);
+  });
+
   it("draws api_retry as a warning", () => {
     const s = run({
       t: "event",

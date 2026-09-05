@@ -3,6 +3,7 @@ import type { EditMode } from "../lib/editmode";
 import { PROMPT_HELP, PROMPT_LABEL, PROMPT_MODES } from "../lib/promptmode";
 import type { PromptMode } from "../lib/promptmode";
 import type { EffortLevel, ModelInfo } from "../lib/protocol";
+import type { McpServerRow } from "../lib/transcript";
 
 /**
  * What the next turn runs on. Sits directly above the composer, because it describes
@@ -25,6 +26,25 @@ const PROVISIONAL_MODELS: ModelInfo[] = [
 
 const ALL_EFFORTS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
+/**
+ * A server's status as a colour class. Only `connected` is good news; everything else,
+ * including a status this build has not seen, is something the person has to act on, so
+ * an unknown word warns rather than passing silently.
+ *
+ * `pending` warns rather than reading as a quiet wait. MCP startup is non-blocking, and
+ * this row describes the init message -- the moment the turn's prompt was built. A server
+ * still pending then contributed no tools to the turn the person is watching, which is
+ * the state this strip was added to reveal. Dimming it would hide it.
+ *
+ * Only `disabled` is dimmed, because that one is a choice rather than an outcome.
+ */
+function mcpTone(status: string): string {
+  if (status === "connected") return "ok";
+  if (status === "disabled") return "off";
+  if (status === "failed") return "error";
+  return "warn";
+}
+
 interface RunControlsProps {
   mode: EditMode;
   onMode: (mode: EditMode) => void;
@@ -37,6 +57,8 @@ interface RunControlsProps {
   effort: EffortLevel | null;
   onModel: (model: string | null) => void;
   onEffort: (effort: EffortLevel | null) => void;
+  /** From the last init message. Empty before the first turn, and drawn as nothing. */
+  mcpServers: McpServerRow[];
   disabled: boolean;
 }
 
@@ -51,6 +73,7 @@ export function RunControls({
   effort,
   onModel,
   onEffort,
+  mcpServers,
   disabled,
 }: RunControlsProps) {
   const known = models.length > 0;
@@ -156,6 +179,40 @@ export function RunControls({
         <span className="note control-note">no .agentide/system.md — Tuned adds nothing</span>
       ) : (
         !known && <span className="note control-note">catalogue arrives with the first turn</span>
+      )}
+
+      {/**
+       * The MCP servers this turn will have, one chip each.
+       *
+       * Here rather than in a pane of its own, because it answers the same question the
+       * rest of this row does -- what the next prompt runs with -- and because an MCP
+       * server is only ever interesting for the two seconds after it fails to start.
+       * A connected server shows its tool count and nothing else; anything else shows
+       * the status word, because that is the part worth reading.
+       *
+       * A connected server contributing zero tools is drawn as a warning. It is the
+       * shape of the bug that hid the IDE's own tools for three phases, and "connected"
+       * on its own says nothing about whether the model can see anything.
+       */}
+      {mcpServers.length > 0 && (
+        <div className="mcp-strip">
+          <span className="legend">MCP</span>
+          {mcpServers.map((server) => {
+            const empty = server.status === "connected" && server.tools === 0;
+            return (
+              <span
+                key={server.name}
+                className={`mcp-server is-${empty ? "warn" : mcpTone(server.status)}`}
+                title={`${server.name}: ${server.status}, ${server.tools} tool${server.tools === 1 ? "" : "s"}`}
+              >
+                {server.name}
+                <span className="mcp-count">
+                  {server.status === "connected" ? server.tools : server.status}
+                </span>
+              </span>
+            );
+          })}
+        </div>
       )}
     </div>
   );

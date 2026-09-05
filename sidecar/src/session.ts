@@ -10,6 +10,7 @@ import { query, type Options, type Query, type SDKMessage } from "@anthropic-ai/
 
 import { HostLink } from "./host.ts";
 import { createIdeServer, IDE_SERVER_NAME, ideToolNames } from "./ide-tools.ts";
+import { loadMcpServers } from "./mcp-config.ts";
 import { ModelCatalogue } from "./models.ts";
 import { createPermissionHandler } from "./permissions.ts";
 import type { DoneReason, JsonObject, PromptOptions } from "./protocol.ts";
@@ -161,7 +162,21 @@ export class Session {
       // Keyed by `IDE_SERVER_NAME`, not a literal: the key is what the model sees in
       // `mcp__<key>__<tool>`, so a key that drifts from the server's own name is the
       // same class of bug as the one that made these tools invisible for three phases.
-      mcpServers: { [IDE_SERVER_NAME]: createIdeServer(this.#link, this.#sessionId) },
+      //
+      // The person's own servers merge underneath. Precedence runs project over user
+      // over nothing, and the IDE's key is written last so no file can displace it --
+      // `loadMcpServers` already refuses that name, and this is the second lock on the
+      // one failure that has cost this project the most. The user-level file is why the
+      // loader exists: a decompiler or a 3D editor belongs to the person, not to one
+      // repository, and there was previously nowhere to say so once.
+      //
+      // This is not the only source. With `strictMcpConfig` unset the SDK also loads a
+      // workspace `.mcp.json`, user settings and plugins on its own, so a server can
+      // appear here that neither file below mentions.
+      mcpServers: {
+        ...loadMcpServers(cwd),
+        [IDE_SERVER_NAME]: createIdeServer(this.#link, this.#sessionId),
+      },
       // The editing agent's own prompt, not a bare model. Without this the built-in
       // Read/Edit/Bash tools arrive with no instructions on how to use them well.
       //

@@ -86,6 +86,15 @@ export type Row =
       error?: string;
     });
 
+/** One MCP server the turn started with, as the init message described it. */
+export interface McpServerRow {
+  name: string;
+  /** The SDK's own word: `connected`, `failed`, `pending`, `needs-auth`, `disabled`. */
+  status: string;
+  /** How many of the turn's tools came from this server. Derived; see `readMcpServers`. */
+  tools: number;
+}
+
 export interface TranscriptMeta {
   pid?: number;
   sdkVersion?: string;
@@ -93,6 +102,8 @@ export interface TranscriptMeta {
   cwd?: string;
   toolCount?: number;
   permissionMode?: string;
+  /** Undefined until an init message arrives; empty means the turn had none. */
+  mcpServers?: McpServerRow[];
 }
 
 export type TranscriptStatus = "idle" | "starting" | "ready" | "running" | "exited";
@@ -478,16 +489,19 @@ function reduceSdk(state: TranscriptState, msg: JsonObject): TranscriptState {
 function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState {
   switch (msg.subtype) {
     case "init": {
-      const tools = Array.isArray(msg.tools) ? msg.tools.length : undefined;
+      const tools = Array.isArray(msg.tools)
+        ? msg.tools.filter((tool): tool is string => typeof tool === "string")
+        : [];
       return {
         ...state,
         meta: {
           ...state.meta,
           model: typeof msg.model === "string" ? msg.model : undefined,
           cwd: typeof msg.cwd === "string" ? msg.cwd : undefined,
-          toolCount: tools,
+          toolCount: Array.isArray(msg.tools) ? msg.tools.length : undefined,
           permissionMode:
             typeof msg.permissionMode === "string" ? msg.permissionMode : undefined,
+          mcpServers: readMcpServers(msg.mcp_servers, tools),
         },
       };
     }
@@ -530,6 +544,31 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
       // `status` and friends are chatter, not events worth an address.
       return state;
   }
+}
+
+/**
+ * The init message's MCP servers, each with the number of tools it contributed.
+ *
+ * The count is derived rather than reported: `mcp_servers` says only whether a server
+ * connected, and `tools` is the flat list the turn ended up with. Read apart, a server
+ * that connects and exposes nothing looks healthy -- which is exactly the failure that
+ * hid the IDE's own tools for three phases. Read together, it shows as a zero.
+ */
+function readMcpServers(value: unknown, tools: string[]): McpServerRow[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const rows: McpServerRow[] = [];
+  for (const entry of value) {
+    const name = (entry as { name?: unknown } | null)?.name;
+    if (typeof name !== "string") continue;
+    const status = (entry as { status?: unknown }).status;
+    const prefix = `mcp__${name}__`;
+    rows.push({
+      name,
+      status: typeof status === "string" ? status : "unknown",
+      tools: tools.filter((tool) => tool.startsWith(prefix)).length,
+    });
+  }
+  return rows;
 }
 
 function reduceAssistant(state: TranscriptState, msg: JsonObject): TranscriptState {

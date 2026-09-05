@@ -709,6 +709,66 @@
   text-overflow: ellipsis;
 }
 
+/**
+ * The MCP servers, on their own line under the controls.
+ *
+ * `flex-basis: 100%` rather than flowing inline: the list grows with the person's
+ * config, and a run of chips wrapping through the middle of the model and effort
+ * controls turns a row you read at a glance into one you have to parse.
+ */
+.mcp-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  flex: 0 0 100%;
+  min-width: 0;
+}
+
+.mcp-server {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+/* The count, or the status word when there is no count worth showing. */
+.mcp-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  opacity: 0.75;
+}
+
+/**
+ * Only the name is tinted, and only when something is wrong.
+ *
+ * A healthy row of servers is the normal case and colouring it would spend the pane's
+ * one accent on the state nobody needs to look at.
+ */
+.mcp-server.is-ok .mcp-count {
+  color: var(--xref);
+  opacity: 1;
+}
+
+.mcp-server.is-warn,
+.mcp-server.is-warn .mcp-count {
+  color: var(--warn);
+  opacity: 1;
+}
+
+.mcp-server.is-error,
+.mcp-server.is-error .mcp-count {
+  color: var(--error);
+  opacity: 1;
+}
+
+/* Off is a choice, not a problem: dimmer than normal, not coloured. Nothing else gets
+   this treatment -- `pending` warns, because at init it means the tools were missing. */
+.mcp-server.is-off {
+  opacity: 0.6;
+}
+
 /* --- Composer --------------------------------------------------------------- */
 
 .composer {
