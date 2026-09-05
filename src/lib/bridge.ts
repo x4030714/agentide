@@ -43,6 +43,7 @@ import type {
   GitStatus,
   ConversationSummary,
   ConversationEntry,
+  ClaudeProject,
 } from "./protocol";
 
 /** Native folder picker. Returns null when the user cancels. */
@@ -455,9 +456,10 @@ export async function gitSwitch(name: string): Promise<void> {
 // ---------------------------------------------------------------------------
 // Past conversations -- wrappers over `src-tauri/src/conversations.rs`
 //
-// These read the agent SDK's own transcripts. Nothing here writes one: the SDK owns
-// those files and resumes from them, and a transcript this app edited is one it could no
-// longer resume.
+// These read the agent SDK's own transcripts, which are also the Claude Code CLI's. No
+// existing transcript is ever modified: the SDK owns those files and resumes from them.
+// `conversationImport` writes, but only a new file — it copies one in rather than
+// editing it where it lies.
 // ---------------------------------------------------------------------------
 
 /** Most recently active first. Empty for a workspace that has never had a turn. */
@@ -465,7 +467,41 @@ export async function conversationsList(): Promise<ConversationSummary[]> {
   return invoke<ConversationSummary[]>("conversations_list");
 }
 
-/** One conversation's messages, for reading. */
-export async function conversationRead(id: string): Promise<ConversationEntry[]> {
-  return invoke<ConversationEntry[]>("conversation_read", { id });
+/**
+ * One conversation's messages, for reading.
+ *
+ * `fromDir` reads out of another project's directory instead of this workspace's, which
+ * is how a conversation is previewed before importing it.
+ */
+export async function conversationRead(
+  id: string,
+  fromDir?: string,
+): Promise<ConversationEntry[]> {
+  return invoke<ConversationEntry[]>("conversation_read", { id, fromDir: fromDir ?? null });
+}
+
+/**
+ * Every project directory under `~/.claude/projects`, newest first.
+ *
+ * Cheap by design — one head-of-file read per directory, not per transcript — because the
+ * store is hundreds of megabytes and this opens a settings panel.
+ */
+export async function claudeProjectsList(): Promise<ClaudeProject[]> {
+  return invoke<ClaudeProject[]>("claude_projects_list");
+}
+
+/** The conversations in one project directory. Costs a full scan of each transcript. */
+export async function claudeConversationsList(dir: string): Promise<ConversationSummary[]> {
+  return invoke<ConversationSummary[]>("claude_conversations_list", { dir });
+}
+
+/**
+ * Copy a conversation from another project into this workspace and return its new id.
+ *
+ * A copy under a fresh session id, so the original keeps working where it is. The result
+ * is a separate conversation that starts with the same history — resuming it here does
+ * not continue the one it came from.
+ */
+export async function conversationImport(id: string, fromDir: string): Promise<string> {
+  return invoke<string>("conversation_import", { id, fromDir });
 }

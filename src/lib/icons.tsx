@@ -151,6 +151,31 @@ export function IconTheme({ dark, size = 13 }: { dark: boolean; size?: number })
 }
 
 /**
+ * Settings. Sliders rather than a gear: a six-toothed gear turns to mush at 13px, and it
+ * would be the only icon here that needs its detail to be readable.
+ */
+export function IconSettings({ size = 13 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {/* The tracks are broken where a knob sits rather than drawn under one: the title
+          bar is translucent, so a filled knob would be the only opaque thing in it. */}
+      <path d="M1.6 3.6h2.2M6 3.6h6.4M1.6 7h5.4M8.8 7h3.6M1.6 10.4h3.4M6.8 10.4h5.6" />
+      <path d="M4.9 2.3v2.6M7.9 5.7v2.6M5.9 9.1v2.6" />
+    </svg>
+  );
+}
+
+/**
  * A mark per palette, drawn in the same family as everything else here.
  *
  * Each one names the palette's character rather than its colours: the colour is supplied

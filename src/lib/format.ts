@@ -21,3 +21,32 @@ export function formatSize(bytes: number, isDir: boolean): string {
     ? `${value.toFixed(1)}${units[unit]}`
     : `${Math.round(value)}${units[unit]}`;
 }
+
+/**
+ * "3 hours ago". Coarse on purpose: the only question a conversation list answers about
+ * time is which one you were just in, and an exact clock time makes that harder to see,
+ * not easier.
+ */
+export function ago(atMs: number | null): string {
+  if (!atMs) return "unknown";
+  const seconds = Math.max(0, (Date.now() - atMs) / 1000);
+  // Each divisor is the size of the unit held now, paired with the unit it produces.
+  const steps: Array<[number, string]> = [
+    [60, "minute"],
+    [60, "hour"],
+    [24, "day"],
+    [7, "week"],
+    [4.35, "month"],
+    [12, "year"],
+  ];
+  let value = seconds;
+  let unit = "second";
+  for (const [size, name] of steps) {
+    if (value < size) break;
+    value /= size;
+    unit = name;
+  }
+  const whole = Math.floor(value);
+  if (unit === "second" && whole < 30) return "just now";
+  return `${whole} ${unit}${whole === 1 ? "" : "s"} ago`;
+}

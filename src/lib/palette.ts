@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 /**
  * Which colour palette the app wears.
  *
@@ -56,4 +58,22 @@ export function applyPalette(palette: Palette): void {
   } catch {
     /* A context that refuses storage still gets the choice for this session. */
   }
+}
+
+/**
+ * The palette, applied and remembered, in the shape `useAppearance` uses.
+ *
+ * Lifted out of the picker because two surfaces set it now — the title bar and the
+ * settings overlay — and each holding its own copy would mean two answers to one question.
+ */
+export function usePalette(): [Palette, (next: Palette) => void] {
+  const [palette, setPalette] = useState<Palette>(storedPalette);
+
+  // Applied on mount as well as on change, so a remembered palette is on screen before the
+  // first paint rather than flashing the default first.
+  useEffect(() => {
+    applyPalette(palette);
+  }, [palette]);
+
+  return [palette, setPalette];
 }

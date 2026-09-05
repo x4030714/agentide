@@ -34,6 +34,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             conversations::conversations_list,
             conversations::conversation_read,
+            conversations::conversation_import,
+            conversations::claude_projects_list,
+            conversations::claude_conversations_list,
             git::git_status,
             git::git_file_diff,
             git::git_stage,

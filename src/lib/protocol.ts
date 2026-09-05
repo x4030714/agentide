@@ -745,6 +745,20 @@ export interface ConversationSummary {
   prompts: number;
   replies: number;
   branch: string | null;
+  /** Size on disk. Importing copies the file, so the cost is worth seeing beforehand. */
+  bytes: number;
+}
+
+/** One directory under `~/.claude/projects`: a workspace that has conversations in it. */
+export interface ClaudeProject {
+  /** The directory name, which is the handle for listing and importing out of it. */
+  dir: string;
+  /** The workspace the transcripts name, read from a record — `dir` cannot be reversed. */
+  cwd: string;
+  conversations: number;
+  /** Newest transcript's modified time, from the filesystem rather than the records. */
+  updatedMs: number | null;
+  bytes: number;
 }
 
 /** One message from a past conversation, flattened for display. */

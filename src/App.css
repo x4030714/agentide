@@ -2134,3 +2134,190 @@
   direction: rtl;
   text-align: left;
 }
+
+/* Settings.
+   The same dialog grammar as quick open — backdrop, elevated card, one mode at a time —
+   but taller and scrolled, because the conversation store is the long part of it. */
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  padding-top: 8vh;
+  background: rgb(0 0 0 / 28%);
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 86vw);
+  max-height: 78vh;
+  overflow: hidden;
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-2);
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.settings-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 14px 14px;
+}
+
+.settings-section + .settings-section {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* A section heading is the same role as a pane's legend, so it wears the same clothes;
+   `h2` only for the outline the screen reader builds. */
+.settings-legend {
+  margin: 12px 0 8px;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--ink-dim);
+}
+
+/* Label left, controls right, on one line. Two lines per setting would double the height
+   of a panel whose settings are all one word long. */
+.settings-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.settings-label {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.settings-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.settings-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  background: var(--sunken);
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  cursor: default;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+
+.settings-choice:hover {
+  color: var(--ink);
+}
+
+.settings-choice.is-on {
+  color: var(--sym);
+  background: var(--tint-accent);
+}
+
+.settings-projects {
+  margin-top: 8px;
+}
+
+.settings-project + .settings-project {
+  margin-top: 1px;
+}
+
+/* An expanded project is boxed rather than indented: its conversations are rows of the
+   same shape as the project rows, and indentation alone loses which list you are in. */
+.settings-project.is-open {
+  padding-bottom: 4px;
+  background: var(--sunken);
+  border-radius: var(--r-chip);
+}
+
+.settings-project-open {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  color: var(--ink-dim);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+}
+
+.settings-project-open:hover {
+  background: var(--sunken);
+}
+
+/* The path is the identity of the row, so it keeps its end when it does not fit: two
+   projects under the same parent differ in the last segment, never the first. */
+.settings-project-name {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.settings-project-meta {
+  font-size: 11px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.settings-convo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 0 6px;
+  padding-right: 6px;
+  border-radius: var(--r-chip);
+}
+
+.settings-convo:hover {
+  background: var(--elevated);
+}
+
+.settings-preview {
+  max-height: 34vh;
+  margin: 4px 6px 0;
+  overflow: auto;
+  background: var(--elevated);
+  border-radius: var(--r-chip);
+}
+
+.settings-project .note {
+  padding: 4px 12px;
+}

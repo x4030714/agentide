@@ -7,12 +7,13 @@ import {
   IconMinimize,
   IconPalette,
   IconRestore,
+  IconSettings,
   IconTheme,
 } from "../lib/icons";
 import { parentOf } from "../lib/protocol";
 import type { Workspace } from "../lib/protocol";
 import type { Appearance } from "../lib/appearance";
-import { PALETTES, applyPalette, storedPalette } from "../lib/palette";
+import { PALETTES } from "../lib/palette";
 import type { Palette } from "../lib/palette";
 
 /**
@@ -22,15 +23,25 @@ import type { Palette } from "../lib/palette";
  * interactive descendants automatically, so the buttons do not need to opt out, and
  * double-click-to-maximize is handled for us. Aero Snap still works, because the drag
  * goes through `WM_NCLBUTTONDOWN(HTCAPTION)` rather than moving the window by hand.
+ *
+ * Appearance and palette also live in the settings overlay. They stay here because they
+ * are the two settings that get changed for a reason as small as the sun going down, and
+ * routing that through a dialog would cost two clicks to save one row of chrome.
  */
 export function TitleBar({
   workspace,
   appearance,
   onAppearance,
+  palette,
+  onPalette,
+  onSettings,
 }: {
   workspace: Workspace | null;
   appearance: Appearance;
   onAppearance: (next: Appearance) => void;
+  palette: Palette;
+  onPalette: (next: Palette) => void;
+  onSettings: () => void;
 }) {
   const [maximized, setMaximized] = useState(false);
 
@@ -58,14 +69,7 @@ export function TitleBar({
 
   const parent = workspace ? parentOf(workspace.root) : null;
   const dark = appearance === "dark";
-  const [palette, setPalette] = useState<Palette>(storedPalette);
   const [pickerOpen, setPickerOpen] = useState(false);
-
-  // Applied on mount as well as on change, so a remembered palette is on screen before
-  // the first paint rather than flashing the default first.
-  useEffect(() => {
-    applyPalette(palette);
-  }, [palette]);
 
   // A click anywhere else closes it. Attached only while open, so the app is not
   // listening to every click in order to support a menu nobody has opened.
@@ -115,7 +119,7 @@ export function TitleBar({
                   aria-checked={option.id === palette}
                   className={`palette-option${option.id === palette ? " is-on" : ""}`}
                   onClick={() => {
-                    setPalette(option.id);
+                    onPalette(option.id);
                     setPickerOpen(false);
                   }}
                 >
@@ -137,6 +141,15 @@ export function TitleBar({
           onClick={() => onAppearance(nextAppearance(appearance))}
         >
           <IconTheme dark={dark} />
+        </button>
+        <button
+          type="button"
+          className="win-button"
+          title="Settings (Ctrl+,)"
+          aria-label="Settings"
+          onClick={onSettings}
+        >
+          <IconSettings />
         </button>
         <button
           type="button"

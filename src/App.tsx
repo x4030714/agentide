@@ -7,6 +7,7 @@ import { openWorkspace, pickFolder } from "./lib/bridge";
 import { errorMessage } from "./lib/protocol";
 import { answerIdeTool, HOST_TOOL_NAMES } from "./lib/ide-host";
 import { requestFocus, useKeybindings } from "./lib/keys";
+import { usePalette } from "./lib/palette";
 import { useLsp } from "./lib/useLsp";
 import type {
   Checkpoint,
@@ -23,6 +24,7 @@ import { FileTree } from "./panes/FileTree";
 import { ConversationsPane } from "./panes/Conversations";
 import { GitPane } from "./panes/Git";
 import { QuickOpen } from "./panes/QuickOpen";
+import { Settings } from "./panes/Settings";
 import { TitleBar } from "./panes/TitleBar";
 import { TerminalPane } from "./panes/Terminal";
 import { TranscriptPane } from "./panes/Transcript";
@@ -37,6 +39,7 @@ export default function App() {
   const [changes, setChanges] = useState<FsEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [appearance, setAppearance] = useAppearance();
+  const [palette, setPalette] = usePalette();
   /** The checkpoint the current turn started from, and what the review queue reads against. */
   const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
   const [reviewRevision, setReviewRevision] = useState(0);
@@ -55,6 +58,7 @@ export default function App() {
    */
   const [resumed, setResumed] = useState<string | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   /** The tree panel, so Ctrl+B can collapse it through the layout's own API. */
   const treeRef = useRef<PanelImperativeHandle>(null);
 
@@ -161,6 +165,14 @@ export default function App() {
           run: () => setQuickOpen(true),
         },
         {
+          // Ctrl+, is settings in every other editor, so it is settings here.
+          key: ",",
+          ctrl: true,
+          whileTyping: true,
+          describe: "Open settings",
+          run: () => setSettingsOpen(true),
+        },
+        {
           key: "b",
           ctrl: true,
           describe: "Show or hide the file tree",
@@ -223,6 +235,9 @@ export default function App() {
         workspace={workspace}
         appearance={appearance}
         onAppearance={setAppearance}
+        palette={palette}
+        onPalette={setPalette}
+        onSettings={() => setSettingsOpen(true)}
       />
       {error && <p className="note is-error app-error">{error}</p>}
       {quickOpen && (
@@ -233,6 +248,26 @@ export default function App() {
             setTab("editor");
           }}
           onClose={() => setQuickOpen(false)}
+        />
+      )}
+      {settingsOpen && (
+        <Settings
+          root={workspace?.root ?? null}
+          appearance={appearance}
+          onAppearance={setAppearance}
+          palette={palette}
+          onPalette={setPalette}
+          onImported={(id) => {
+            // An import is a file appearing in this workspace's own transcript directory,
+            // so the Conversations list has to be re-read for it to exist -- and the tab
+            // switch is the receipt: it shows the copy in place and marked as the one the
+            // next prompt continues.
+            setResumed(id);
+            setReviewRevision((n) => n + 1);
+            setTab("conversations");
+            setSettingsOpen(false);
+          }}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
 
