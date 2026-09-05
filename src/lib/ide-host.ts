@@ -87,6 +87,12 @@ export async function answerIdeTool(
         return await ideRenameSymbol(args, deps);
       case "ide_run":
         return await ideRun(args, deps);
+      case "ide_hover":
+        return await ideHover(args, deps);
+      case "ide_implementations":
+        return await ideImplementations(args, deps);
+      case "ide_code_actions":
+        return await ideCodeActions(args, deps);
       default:
         return toolError(`${name} is not a tool this build answers.`);
     }
@@ -530,6 +536,217 @@ async function ideRun(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
     : toolError(`${head}\n${body}`);
 }
 
+// --- Reading what the server knows -------------------------------------------------
+
+/**
+ * The resolved type and documentation at a position.
+ *
+ * The question a model cannot answer from the text in front of it: what this expression's
+ * type is once inference has run, what a generic resolves to here, what the doc comment
+ * on this function says. rust-analyzer answers all three, and reading the file harder is
+ * not a substitute for asking.
+ */
+async function ideHover(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
+  const at = position(args, deps.root);
+  if ("error" in at) return toolError(at.error);
+  const lsp = deps.lsp();
+  if (!lsp) return toolError("No workspace is open.");
+
+  const result = await lsp.ask<Json>(at.path, "textDocument/hover", {
+    position: { line: at.line - 1, character: at.column - 1 },
+  });
+  if (result && typeof result === "object" && "error" in result) {
+    return toolError(String((result as { error: string }).error));
+  }
+
+  const text = hoverText((result as Json | null)?.contents);
+  const where = `${display(at.path, deps.root)}:${at.line}:${at.column}`;
+  if (!text) {
+    return toolOk([`Nothing to say about ${where}.`, lsp.statusNote()].filter(Boolean).join("\n"));
+  }
+  return toolOk([where, "", text, lsp.statusNote()].filter(Boolean).join("\n"));
+}
+
+/**
+ * `Hover.contents` has four shapes across LSP versions, and rust-analyzer and clangd do
+ * not pick the same one. All four collapse to text.
+ */
+function hoverText(contents: unknown): string {
+  const fence = "```";
+  const one = (entry: unknown): string => {
+    if (typeof entry === "string") return entry;
+    const marked = entry as Json | undefined;
+    if (!marked || typeof marked.value !== "string") return "";
+    // A `MarkedString` is a code block waiting to be fenced; `MarkupContent` is not.
+    return typeof marked.language === "string"
+      ? `${fence}${marked.language}\n${marked.value}\n${fence}`
+      : marked.value;
+  };
+  const entries = Array.isArray(contents) ? contents : [contents];
+  return entries.map(one).filter(Boolean).join("\n\n").trim();
+}
+
+/**
+ * Who implements this.
+ *
+ * Distinct from references, and the distinction matters in Rust: the references to a
+ * trait are mostly bounds and imports, while its implementations are the code that
+ * actually runs. Asking for one when you wanted the other is a long detour.
+ */
+async function ideImplementations(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
+  const at = position(args, deps.root);
+  if ("error" in at) return toolError(at.error);
+  const lsp = deps.lsp();
+  if (!lsp) return toolError("No workspace is open.");
+
+  const result = await lsp.ask<Json | Json[]>(at.path, "textDocument/implementation", {
+    position: { line: at.line - 1, character: at.column - 1 },
+  });
+  if (result && typeof result === "object" && !Array.isArray(result) && "error" in result) {
+    return toolError(String((result as { error: string }).error));
+  }
+
+  const found = asLocations(result);
+  const note = lsp.statusNote();
+  if (found.length === 0) {
+    return toolOk(
+      [
+        `No implementations found at ${display(at.path, deps.root)}:${at.line}:${at.column}.`,
+        note ?? "Point at a trait or an abstract method; a concrete function has none.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const rows = await Promise.all(
+    found.slice(0, 50).map(async (location) => {
+      const line = await lineAt(location.path, location.line);
+      return `${display(location.path, deps.root)}:${location.line}:${location.column}${
+        line ? `  ${flatten(line)}` : ""
+      }`;
+    }),
+  );
+  return toolOk(
+    [`${found.length} implementation${found.length === 1 ? "" : "s"}:`, ...rows, note]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
+/**
+ * The fixes the language server itself offers, and applying one.
+ *
+ * This is what turns "the compiler is unhappy" into correct code without guesswork.
+ * rust-analyzer's actions are the ones a person reaches for constantly -- import this
+ * path, fill in the missing match arms, add the fields this struct literal lacks -- and
+ * each is computed from the real semantic model, so applying one is a different kind of
+ * act from typing the same text and hoping.
+ *
+ * Listing and applying are one tool with an `apply` argument rather than two, because a
+ * list whose entries cannot be acted on forces the model to name an action back to a
+ * second tool by title, and titles are not stable identifiers.
+ */
+async function ideCodeActions(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
+  const at = position(args, deps.root);
+  if ("error" in at) return toolError(at.error);
+  const lsp = deps.lsp();
+  if (!lsp) return toolError("No workspace is open.");
+
+  const endLine = positive(args.endLine) ?? at.line;
+  const endColumn = positive(args.endColumn) ?? at.column;
+  const range = {
+    start: { line: at.line - 1, character: at.column - 1 },
+    end: { line: endLine - 1, character: endColumn - 1 },
+  };
+
+  // The server needs the diagnostics in range to offer the fixes that belong to them: a
+  // quick fix is computed *from* a diagnostic, so omitting them silently drops the most
+  // useful half of the list.
+  const diagnostics = (lsp.diagnostics().get(at.path) ?? []).filter((diagnostic) => {
+    const start = startOf(diagnostic);
+    return start.line >= at.line && start.line <= endLine;
+  });
+
+  const result = await lsp.ask<Json[]>(at.path, "textDocument/codeAction", {
+    range,
+    context: { diagnostics },
+  });
+  if (result && typeof result === "object" && !Array.isArray(result) && "error" in result) {
+    return toolError(String((result as { error: string }).error));
+  }
+  const actions: Json[] = Array.isArray(result) ? result : [];
+  if (actions.length === 0) {
+    return toolOk(
+      [
+        `No code actions at ${display(at.path, deps.root)}:${at.line}:${at.column}.`,
+        lsp.statusNote(),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const titles = actions.map((action, index) => {
+    // rust-analyzer leaves `kind` empty on its assists, and ` []` after every title is
+    // noise the model has to read past.
+    const kind = action.kind ? ` [${String(action.kind)}]` : "";
+    return `${index + 1}. ${String(action.title ?? "untitled")}${kind}`;
+  });
+
+  if (args.apply === undefined) {
+    return toolOk(
+      [
+        `${actions.length} action${actions.length === 1 ? "" : "s"} available. Call again ` +
+          "with `apply` set to one of these numbers to perform it.",
+        ...titles,
+        lsp.statusNote(),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const which = positive(args.apply);
+  if (!which || which > actions.length) {
+    return toolError(`\`apply\` must be between 1 and ${actions.length}.`);
+  }
+  let action = actions[which - 1];
+
+  /**
+   * An action can arrive without its edit and be resolved on demand, which is how
+   * rust-analyzer avoids computing every fix for every keystroke. A model handed the
+   * unresolved form would apply nothing and be told it had succeeded.
+   */
+  if (!action.edit && action.data !== undefined) {
+    const resolved = await lsp.ask<Json>(at.path, "codeAction/resolve", action);
+    if (resolved && !("error" in resolved)) action = resolved;
+  }
+
+  if (!action.edit) {
+    // Some actions are a command for the server to run rather than an edit to apply, and
+    // running server commands is a surface this build does not have.
+    return toolError(
+      `'${String(action.title ?? "that action")}' has no edit to apply -- it asks the ` +
+        "server to run a command, which this build cannot do. Make the change with Edit.",
+    );
+  }
+
+  const applied = await applyWorkspaceEdit(action.edit as Json, deps);
+  if ("error" in applied) return toolError(applied.error);
+  if (applied.written.length === 0) {
+    return toolOk(`'${String(action.title)}' produced no change.`);
+  }
+  return toolOk(
+    [
+      `Applied '${String(action.title)}': ${applied.edits} edit${
+        applied.edits === 1 ? "" : "s"
+      } in ${applied.written.length} file${applied.written.length === 1 ? "" : "s"}.`,
+      ...applied.written,
+    ].join("\n"),
+  );
+}
+
 // --- Rename ---------------------------------------------------------------------
 
 interface TextEdit {
@@ -576,6 +793,83 @@ function isRange(value: unknown): boolean {
   return typeof range?.start?.line === "number" && typeof range?.end?.line === "number";
 }
 
+interface AppliedEdit {
+  /** One line per file, for the tool's answer. */
+  written: string[];
+  edits: number;
+}
+
+/**
+ * Apply a `WorkspaceEdit` to the project.
+ *
+ * Shared by rename and code actions, because both get one back and both have to put it on
+ * disk the same way. Two copies of this would be two behaviours within a release.
+ *
+ * Files are read and rewritten through the editor's own buffer when one is open: the
+ * server's positions came from the text it was told about, not from the text on disk, so
+ * basing the edit on disk would apply correct offsets to the wrong content.
+ *
+ * A file operation -- create, rename or delete -- refuses the whole edit rather than
+ * applying the text half. rust-analyzer asks for one when a module's name maps to a file,
+ * and there is no filesystem-rename command in this build; applying only the text would
+ * leave code referring to a file that does not exist, which fails while looking like
+ * success.
+ */
+async function applyWorkspaceEdit(
+  edit: Json,
+  deps: IdeHostDeps,
+): Promise<AppliedEdit | { error: string }> {
+  const perFile = new Map<WirePath, TextEdit[]>();
+  const fileOperations: string[] = [];
+
+  const collect = (uri: unknown, edits: unknown) => {
+    if (typeof uri !== "string" || !Array.isArray(edits)) return;
+    const path = uriPath(uri);
+    const parsed = edits.map(toTextEdit).filter((one): one is TextEdit => one !== null);
+    if (parsed.length === 0) return;
+    perFile.set(path, [...(perFile.get(path) ?? []), ...parsed]);
+  };
+
+  // `documentChanges` is the richer form and the one rust-analyzer sends. Its entries are
+  // either a versioned edit or a file operation, told apart by `kind`.
+  if (Array.isArray(edit.documentChanges)) {
+    for (const change of edit.documentChanges as Json[]) {
+      if (typeof change.kind === "string") {
+        fileOperations.push(String(change.kind));
+        continue;
+      }
+      collect((change.textDocument as Json)?.uri, change.edits);
+    }
+  } else if (edit.changes && typeof edit.changes === "object") {
+    for (const [uri, edits] of Object.entries(edit.changes as Record<string, unknown>)) {
+      collect(uri, edits);
+    }
+  }
+
+  if (fileOperations.length > 0) {
+    return {
+      error:
+        `This change also needs to ${[...new Set(fileOperations)].join(" and ")} files, ` +
+        "which this build cannot do, so nothing was changed. Do it with Edit instead.",
+    };
+  }
+  if (perFile.size === 0) return { written: [], edits: 0 };
+
+  const written: string[] = [];
+  let edits = 0;
+  for (const [path, fileEdits] of [...perFile].sort(byPath)) {
+    const model = monaco.editor.getModel(monaco.Uri.parse(toFileUri(path)));
+    const before = model && !model.isDisposed() ? model.getValue() : (await readFile(path)).text;
+    const after = applyEdits(before, fileEdits);
+    if (after === before) continue;
+    await writeFile(path, after);
+    if (model && !model.isDisposed()) model.setValue(after);
+    written.push(`${display(path, deps.root)}  (${fileEdits.length})`);
+    edits += fileEdits.length;
+  }
+  return { written, edits };
+}
+
 async function ideRenameSymbol(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   const at = position(args, deps.root);
   if ("error" in at) return toolError(at.error);
@@ -596,70 +890,9 @@ async function ideRenameSymbol(args: Json, deps: IdeHostDeps): Promise<ToolResul
   }
   if ("error" in edit) return toolError(String((edit as { error: string }).error));
 
-  // `documentChanges` is the richer form and the one rust-analyzer sends. Its entries are
-  // either a versioned edit or a file operation, and the two are told apart by `kind`.
-  const perFile = new Map<WirePath, TextEdit[]>();
-  const fileOperations: string[] = [];
-
-  const collect = (uri: unknown, edits: unknown) => {
-    if (typeof uri !== "string" || !Array.isArray(edits)) return;
-    const path = uriPath(uri);
-    const parsed = edits.map(toTextEdit).filter((one): one is TextEdit => one !== null);
-    if (parsed.length === 0) return;
-    perFile.set(path, [...(perFile.get(path) ?? []), ...parsed]);
-  };
-
-  if (Array.isArray(edit.documentChanges)) {
-    for (const change of edit.documentChanges as Json[]) {
-      if (typeof change.kind === "string") {
-        fileOperations.push(String(change.kind));
-        continue;
-      }
-      collect((change.textDocument as Json)?.uri, change.edits);
-    }
-  } else if (edit.changes && typeof edit.changes === "object") {
-    for (const [uri, edits] of Object.entries(edit.changes as Record<string, unknown>)) {
-      collect(uri, edits);
-    }
-  }
-
-  /**
-   * A rename that also moves files is refused whole rather than applied in part.
-   *
-   * rust-analyzer asks for this when the symbol is a module whose name maps to a file.
-   * There is no filesystem-rename command in this app yet, so applying only the text
-   * would leave code referring to a file that does not exist -- broken in a way that
-   * looks like the rename worked. A refusal the model can route around is better.
-   */
-  if (fileOperations.length > 0) {
-    return toolError(
-      `This rename also needs to ${fileOperations.join(" and ")} files, which this build ` +
-        "cannot do, so nothing was changed. Rename it with Edit and move the file yourself.",
-    );
-  }
-
-  if (perFile.size === 0) {
-    return toolError(
-      `The language server returned no edits for renaming to '${newName}'. ` +
-        "Either the position is not a symbol, or the new name is already what it is called.",
-    );
-  }
-
-  // Everything is read and rewritten through the same path the editor uses, so an open
-  // buffer's unsaved edits are the basis of the rename rather than being overwritten by
-  // it -- the server's positions came from that buffer, not from the file on disk.
-  const written: string[] = [];
-  let edits = 0;
-  for (const [path, fileEdits] of [...perFile].sort(byPath)) {
-    const model = monaco.editor.getModel(monaco.Uri.parse(toFileUri(path)));
-    const before = model && !model.isDisposed() ? model.getValue() : (await readFile(path)).text;
-    const after = applyEdits(before, fileEdits);
-    if (after === before) continue;
-    await writeFile(path, after);
-    if (model && !model.isDisposed()) model.setValue(after);
-    written.push(`${display(path, deps.root)}  (${fileEdits.length})`);
-    edits += fileEdits.length;
-  }
+  const applied = await applyWorkspaceEdit(edit, deps);
+  if ("error" in applied) return toolError(applied.error);
+  const { written, edits } = applied;
 
   if (written.length === 0) return toolOk("The rename produced no change.");
   return toolOk(

@@ -54,6 +54,10 @@ own reasoning for it.
   - `ide_document_symbols` to see a file's structure before reading it — a few hundred
     tokens for the outline instead of thousands for the file.
   - `ide_definition` and `ide_references` for what a symbol *is* and who uses it.
+  - `ide_implementations` when the thing is a trait: its references are mostly bounds
+    and imports, its implementations are the code that runs.
+  - `ide_hover` for a resolved type — what an inferred binding actually is, what a
+    generic resolves to at this call site. The source text does not contain this.
   These resolve through imports, re-exports and generics, and they never match a comment
   or a string. `Grep` is the right tool for text — a log message, a TODO, a config key —
   and the wrong one for a symbol, where it returns noise and still misses aliased uses.
@@ -68,6 +72,10 @@ own reasoning for it.
   spending a `cargo check`, and to see what was already broken before you started.
   It is not a substitute for the compiler: it does not run tests, macros it cannot expand
   are invisible to it, and a clean result is evidence, not proof.
+- **`ide_code_actions` on the line, before writing the fix yourself.** For the ordinary
+  diagnostics — a missing import, missing match arms, missing struct fields — the server
+  has already computed the correct fix from the semantic model, including the import path
+  you would otherwise guess at. List them at the diagnostic's line, then apply by number.
 - Prefer the narrowest check that would actually catch the mistake: `cargo check -p <crate>`
   over a workspace build, one test over the suite.
 - Do not claim something compiles or passes unless you ran the thing that proves it. "This

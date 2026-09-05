@@ -190,6 +190,34 @@ export function clientCapabilities(): Json {
       },
       hover: { dynamicRegistration: false, contentFormat: ["markdown", "plaintext"] },
       definition: { dynamicRegistration: false, linkSupport: true },
+      implementation: { dynamicRegistration: false, linkSupport: true },
+      /**
+       * Without `codeActionLiteralSupport` a server must answer with the 1.0 `Command[]`
+       * form, which carries no edit -- ide_code_actions would list actions it could never
+       * apply. `dataSupport` plus `resolveSupport` is the other half: rust-analyzer sends
+       * the actions without their edits and computes each one only when asked, which is
+       * why it can offer them at all on a large crate.
+       */
+      codeAction: {
+        dynamicRegistration: false,
+        codeActionLiteralSupport: {
+          codeActionKind: {
+            valueSet: [
+              "",
+              "quickfix",
+              "refactor",
+              "refactor.extract",
+              "refactor.inline",
+              "refactor.rewrite",
+              "source",
+              "source.organizeImports",
+            ],
+          },
+        },
+        isPreferredSupport: true,
+        dataSupport: true,
+        resolveSupport: { properties: ["edit"] },
+      },
       references: { dynamicRegistration: false },
       documentSymbol: { dynamicRegistration: false, hierarchicalDocumentSymbolSupport: true },
       rename: { dynamicRegistration: false, prepareSupport: true },

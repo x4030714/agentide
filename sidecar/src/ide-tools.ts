@@ -38,6 +38,9 @@ const INSTRUCTIONS = [
   "prefer ide_definition, ide_references, ide_document_symbols and ide_workspace_symbols",
   "over Grep. They resolve through imports and generics, they do not match comments or",
   "strings, and they cost a fraction of the tokens a text search over a common name does.",
+  "ide_hover gives a symbol's resolved type and docs, which the source text does not show.",
+  "When a diagnostic needs fixing, try ide_code_actions on its line before writing the fix",
+  "yourself: the server has usually already computed the correct one.",
 ].join(" ");
 
 /**
@@ -356,6 +359,114 @@ export function createIdeServer(link: HostLink, sessionId: string) {
     },
   );
 
+  const ideHover = tool(
+    "ide_hover",
+    [
+      "Get the resolved type and documentation of whatever is at a position -- the same",
+      "thing the user sees when they hover over it.",
+      "This answers questions the text cannot: what a variable's type actually is after",
+      "inference, what a generic or an associated type resolves to at this call site, what",
+      "an inferred return type is, and what the doc comment on the thing being called says.",
+      "Use it before assuming a type from a name or from how a value is used. Reading the",
+      "definition tells you what was written; this tells you what it means here.",
+    ].join(" "),
+    {
+      path: z.string().describe("Absolute path to the file."),
+      line: z.number().int().min(1).describe("1-based line of the position."),
+      column: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("1-based column, inside the name you are asking about. Defaults to 1."),
+    },
+    async (args) => proxy("ide_hover", args as JsonObject),
+    {
+      annotations: { title: "Type and docs at a position", readOnlyHint: true, openWorldHint: false },
+      searchHint: "What type is this, and what does it do",
+    },
+  );
+
+  const ideImplementations = tool(
+    "ide_implementations",
+    [
+      "Find the implementations of a trait, interface, or abstract method.",
+      "Ask this, not ide_references, when you want the code that actually runs. References",
+      "to a trait are mostly bounds, imports and mentions in signatures; its implementations",
+      "are the bodies, and they are usually what you were looking for.",
+      "Point at the trait's name, or at a method inside the trait, to get that method's",
+      "implementations specifically.",
+    ].join(" "),
+    {
+      path: z.string().describe("Absolute path to a file containing the trait or method."),
+      line: z.number().int().min(1).describe("1-based line of the name."),
+      column: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("1-based column within the name. Defaults to 1."),
+    },
+    async (args) => proxy("ide_implementations", args as JsonObject),
+    {
+      annotations: { title: "Find implementations", readOnlyHint: true, openWorldHint: false },
+      searchHint: "Who implements this trait or interface",
+    },
+  );
+
+  const ideCodeActions = tool(
+    "ide_code_actions",
+    [
+      "List the fixes and refactors the language server offers at a position, and apply one.",
+      "Call it without 'apply' to see the numbered list, then call it again with 'apply' set",
+      "to a number to perform that action.",
+      "This is the right response to a diagnostic from ide_diagnostics: point at the",
+      "diagnostic's line and the server offers the fix it already computed for it -- add the",
+      "missing import with the correct path, fill in the match arms that are missing, add the",
+      "fields a struct literal lacks, remove an unused import. Each is derived from the real",
+      "semantic model, so it is correct in a way that writing the same text by hand is not.",
+      "The list changes with the position, so pass the line the problem is on.",
+      "Applying edits the files directly and is covered by the turn's checkpoint, so the user",
+      "can undo it. Actions that would create, move or delete a file are refused rather than",
+      "half-applied.",
+    ].join(" "),
+    {
+      path: z.string().describe("Absolute path to the file."),
+      line: z.number().int().min(1).describe("1-based line to ask about."),
+      column: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("1-based column. Defaults to 1, which is right for a whole-line problem."),
+      endLine: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("1-based last line, to ask about a range. Defaults to line."),
+      endColumn: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("1-based end column of the range. Defaults to column."),
+      apply: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          "The number of the action to perform, from a previous call's list. Omit to list.",
+        ),
+    },
+    async (args) => proxy("ide_code_actions", args as JsonObject),
+    {
+      annotations: { title: "Code actions", readOnlyHint: false, idempotentHint: false },
+      searchHint: "Let the language server fix it",
+    },
+  );
+
   return createSdkMcpServer({
     name: IDE_SERVER_NAME,
     version: "0.1.0",
@@ -386,6 +497,9 @@ export function createIdeServer(link: HostLink, sessionId: string) {
       ideWorkspaceSymbols,
       ideRenameSymbol,
       ideRun,
+      ideHover,
+      ideImplementations,
+      ideCodeActions,
     ],
   });
 }
@@ -393,11 +507,12 @@ export function createIdeServer(link: HostLink, sessionId: string) {
 /**
  * The names these tools reach the model under: `mcp__agentide__ide_open` and so on.
  *
- * Used to auto-approve them. Seven of the eight only read state the user is already
- * looking at, and the eighth moves the cursor in their own editor -- there is nothing to
- * approve. Prompting anyway would be worse than not prompting: a dialog that is always
- * answered "Allow" teaches the habit of allowing without reading, and the prompts that
- * matter are the ones about writing to files.
+ * Used to auto-approve them. Most only read state the user is already looking at, or move
+ * the cursor in their own editor -- there is nothing to approve. The ones that do write
+ * (rename, code actions) write through the language server and are inside the turn's
+ * checkpoint, so the undo is one keystroke. Prompting anyway would be worse than not
+ * prompting: a dialog that is always answered "Allow" teaches the habit of allowing
+ * without reading, and then the prompts that matter get the same reflex.
  */
 export function ideToolNames(): string[] {
   return IDE_TOOL_NAMES.map((name) => `mcp__${IDE_SERVER_NAME}__${name}`);
@@ -415,4 +530,7 @@ export const IDE_TOOL_NAMES = [
   "ide_workspace_symbols",
   "ide_rename_symbol",
   "ide_run",
+  "ide_hover",
+  "ide_implementations",
+  "ide_code_actions",
 ] as const;

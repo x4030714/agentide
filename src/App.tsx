@@ -96,6 +96,18 @@ export default function App() {
     [workspace?.root, lsp.workspace, openAt],
   );
 
+  /**
+   * The same entry point the agent uses, reachable from the debug console.
+   *
+   * `scripts/smoke.mjs` calls it to exercise the language-server tools without spending
+   * a turn. That seam -- our client capabilities, the server's answer shape, the tool's
+   * formatting -- is not crossed by any unit test, and it is where this project's bugs
+   * keep being found. A hook is a cheap price for covering it.
+   */
+  useEffect(() => {
+    (window as unknown as { __ideTool?: typeof onToolCall }).__ideTool = onToolCall;
+  }, [onToolCall]);
+
   const onTurnStart = useCallback((next: Checkpoint) => {
     setCheckpoint(next);
     setChangeCount(0);
