@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useFocusTarget } from "../lib/keys";
 
 import {
   agentInterrupt,
@@ -582,6 +583,14 @@ function Composer({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [highlight, setHighlight] = useState(0);
+
+  // Ctrl+2 lands here: the composer is what the transcript column is *for*, and focusing
+  // the scrollback instead would put the cursor nowhere useful.
+  useFocusTarget("composer", () => ref.current?.focus());
+
+  // Ctrl+2 lands here: the composer is what the transcript column is *for*, and focusing
+  // the scrollback instead would put the cursor nowhere useful.
+  useFocusTarget("composer", () => ref.current?.focus());
 
   /**
    * The commands worth offering for what has been typed so far.

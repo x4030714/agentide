@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import { listDir } from "../lib/bridge";
 import { formatSize } from "../lib/format";
 import { IconChevron, IconFolder } from "../lib/icons";
+import { useFocusTarget } from "../lib/keys";
 import { errorMessage, parentOf } from "../lib/protocol";
 import type { DirEntry, FsChangeKind, FsEvent, WirePath } from "../lib/protocol";
 
@@ -35,6 +36,20 @@ export function FileTree({
   const [children, setChildren] = useState<Record<WirePath, DirEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<WirePath>>(new Set());
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Ctrl+1 puts the keyboard on the selected row, or the first one.
+   *
+   * The rows are buttons, so once focus is on one the arrow keys and Enter already work
+   * without this pane inventing a navigation model of its own.
+   */
+  useFocusTarget("tree", () => {
+    const pane = document.querySelector(".pane.tree");
+    const target =
+      pane?.querySelector<HTMLElement>(".tree-row.is-active") ??
+      pane?.querySelector<HTMLElement>(".tree-row");
+    target?.focus();
+  });
   /**
    * What the watcher has seen touch each path since this workspace opened. Drives the
    * length column's role colour, so the tree carries the same meanings the syntax theme

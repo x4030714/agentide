@@ -1,4 +1,5 @@
 import MonacoEditor from "@monaco-editor/react";
+import { useFocusTarget } from "../lib/keys";
 import type { editor as MonacoNs } from "monaco-editor";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -137,6 +138,10 @@ export function EditorPane({ path, changes, reveal, lsp }: EditorPaneProps) {
       setStatus(errorMessage(err));
     }
   }, []);
+
+  useFocusTarget("editor", () => editorRef.current?.focus());
+
+  useFocusTarget("editor", () => editorRef.current?.focus());
 
   // `addCommand` captures its handler once, so route it through a ref.
   const saveRef = useRef(save);

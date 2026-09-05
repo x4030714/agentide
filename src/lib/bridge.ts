@@ -74,6 +74,17 @@ export async function listDir(path: WirePath): Promise<DirListing> {
   return invoke<DirListing>("list_dir", { path });
 }
 
+/**
+ * Every file in the workspace, for quick open.
+ *
+ * One call, not a lazy walk: the palette ranks the whole project on each keystroke. Empty
+ * when no workspace is open. Capped in Rust, so a huge repository returns a prefix rather
+ * than a hang.
+ */
+export async function listFiles(limit?: number): Promise<WirePath[]> {
+  return invoke<WirePath[]>("list_files", { limit });
+}
+
 export async function readFile(path: WirePath): Promise<FileContents> {
   return invoke<FileContents>("read_file", { path });
 }

@@ -157,6 +157,51 @@ pub fn list_dir(path: WirePath) -> Result<DirListing, IpcError> {
     Ok(DirListing { path, entries })
 }
 
+/// Every file in the workspace, for the quick-open palette.
+///
+/// One walk, all of it, capped. Quick open has to rank the whole project on every
+/// keystroke, and a lazy per-directory listing -- which is right for the tree, where you
+/// only ever look at one level -- cannot answer "which file called config is nearest the
+/// root" without walking anyway. Doing it once and holding the result is the shape that
+/// matches the question.
+///
+/// The same ignore rules as the tree, deliberately: a file the tree hides is a file quick
+/// open must not offer, or the two disagree about what is in the project.
+#[tauri::command]
+pub fn list_files(
+    workspace: State<'_, WorkspaceState>,
+    limit: Option<usize>,
+) -> Result<Vec<WirePath>, IpcError> {
+    let Some(root) = workspace.root() else {
+        return Ok(Vec::new());
+    };
+    // A repository far larger than this exists, and a palette listing 200k files helps
+    // nobody: past the cap the answer is "narrow it", which the filter already does.
+    let cap = limit.unwrap_or(20_000).min(100_000);
+
+    let mut files = Vec::new();
+    let walk = WalkBuilder::new(root.to_path())
+        .hidden(false)
+        .require_git(false)
+        .filter_entry(|entry| entry.depth() == 0 || !is_always_ignored(entry.path()))
+        .build();
+
+    for result in walk {
+        let Ok(entry) = result else { continue };
+        // Directories are not openable, so they are not offered.
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+            continue;
+        }
+        if let Ok(path) = WirePath::from_path(entry.path()) {
+            files.push(path);
+        }
+        if files.len() >= cap {
+            break;
+        }
+    }
+    Ok(files)
+}
+
 /// Read a text file for the editor. Rejects directories, oversized and non-UTF-8 files.
 #[tauri::command]
 pub fn read_file(path: WirePath) -> Result<FileContents, IpcError> {

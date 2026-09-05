@@ -1,4 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { useFocusTarget } from "../lib/keys";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { Terminal } from "@xterm/xterm";
@@ -38,6 +39,28 @@ const nextSession = (): Session => {
 export function TerminalPane({ root }: TerminalProps) {
   const [sessions, setSessions] = useState<Session[]>(() => [nextSession()]);
   const [active, setActive] = useState(() => sessions[0].id);
+
+  /**
+   * Hand focus to the terminal that is showing.
+   *
+   * Through the DOM rather than a ref into every view: xterm keeps its own hidden
+   * textarea and that is the thing that must receive the keystroke, so reaching for it
+   * directly is both shorter and the only version that is actually correct.
+   */
+  const focusTerminal = useCallback(() => {
+    // After the state change above, so the newly shown tab is the one queried.
+    requestAnimationFrame(() => {
+      const panel = document.querySelector(".term-panel:not([hidden])");
+      panel?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
+    });
+  }, []);
+
+  // Focus reaches the pane, which hands it to whichever tab is showing -- and never to
+  // the agent's, which takes no input and would swallow the keystroke that follows.
+  useFocusTarget("terminal", () => {
+    if (active === AGENT_PTY_ID) setActive(sessions[sessions.length - 1].id);
+    focusTerminal();
+  });
 
   const close = useCallback(
     (id: string) => {

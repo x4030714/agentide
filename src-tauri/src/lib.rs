@@ -44,6 +44,7 @@ pub fn run() {
             fs::open_workspace,
             fs::close_workspace,
             fs::list_dir,
+            fs::list_files,
             fs::read_file,
             fs::write_file,
             agent::agent_start,

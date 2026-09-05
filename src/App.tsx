@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 
 import { useAppearance } from "./lib/appearance";
 import { openWorkspace, pickFolder } from "./lib/bridge";
 import { errorMessage } from "./lib/protocol";
 import { answerIdeTool, HOST_TOOL_NAMES } from "./lib/ide-host";
+import { requestFocus, useKeybindings } from "./lib/keys";
 import { useLsp } from "./lib/useLsp";
 import type {
   Checkpoint,
@@ -20,6 +22,7 @@ import type { RevealTarget } from "./panes/Editor";
 import { FileTree } from "./panes/FileTree";
 import { ConversationsPane } from "./panes/Conversations";
 import { GitPane } from "./panes/Git";
+import { QuickOpen } from "./panes/QuickOpen";
 import { TitleBar } from "./panes/TitleBar";
 import { TerminalPane } from "./panes/Terminal";
 import { TranscriptPane } from "./panes/Transcript";
@@ -51,6 +54,9 @@ export default function App() {
    * the same conversation, and a marker that cleared itself would say otherwise.
    */
   const [resumed, setResumed] = useState<string | null>(null);
+  const [quickOpen, setQuickOpen] = useState(false);
+  /** The tree panel, so Ctrl+B can collapse it through the layout's own API. */
+  const treeRef = useRef<PanelImperativeHandle>(null);
 
   /**
    * Go-to-definition landing in another file. The tab switch is part of the answer: a
@@ -124,6 +130,81 @@ export default function App() {
     if (picked) await open(picked);
   }, [open]);
 
+  /**
+   * The app's keyboard, in one table.
+   *
+   * Chords chosen to match what a person coming from any editor already has in their
+   * fingers: Ctrl+P for a file, Ctrl+B for the sidebar, Ctrl+` for the terminal. The
+   * number row moves focus between the four panes in the order they appear on screen,
+   * so the mapping is positional rather than something to memorise.
+   */
+  useKeybindings(
+    useMemo(
+      () => [
+        {
+          key: "p",
+          ctrl: true,
+          whileTyping: true,
+          describe: "Open a file by name",
+          run: () => setQuickOpen(true),
+        },
+        {
+          key: "b",
+          ctrl: true,
+          describe: "Show or hide the file tree",
+          run: () => {
+            const panel = treeRef.current;
+            if (!panel) return;
+            // Asked of the layout rather than tracked separately: dragging the
+            // separator collapses it too, and two sources of truth would disagree.
+            if (panel.isCollapsed()) panel.expand();
+            else panel.collapse();
+          },
+        },
+        {
+          // Ctrl+` is the terminal everywhere else, so it is the terminal here.
+          key: "`",
+          ctrl: true,
+          whileTyping: true,
+          describe: "Focus the terminal",
+          run: () => requestFocus("terminal"),
+        },
+        {
+          key: "Digit1",
+          ctrl: true,
+          whileTyping: true,
+          describe: "Focus the file tree",
+          run: () => requestFocus("tree"),
+        },
+        {
+          key: "Digit2",
+          ctrl: true,
+          whileTyping: true,
+          describe: "Focus the composer",
+          run: () => requestFocus("composer"),
+        },
+        {
+          key: "Digit3",
+          ctrl: true,
+          whileTyping: true,
+          describe: "Focus the editor",
+          run: () => {
+            setTab("editor");
+            requestFocus("editor");
+          },
+        },
+        {
+          key: "Digit4",
+          ctrl: true,
+          whileTyping: true,
+          describe: "Focus the terminal",
+          run: () => requestFocus("terminal"),
+        },
+      ],
+      [],
+    ),
+  );
+
   return (
     <div className="app">
       <TitleBar
@@ -132,6 +213,16 @@ export default function App() {
         onAppearance={setAppearance}
       />
       {error && <p className="note is-error app-error">{error}</p>}
+      {quickOpen && (
+        <QuickOpen
+          root={workspace?.root ?? null}
+          onOpen={(path) => {
+            setActivePath(path);
+            setTab("editor");
+          }}
+          onClose={() => setQuickOpen(false)}
+        />
+      )}
 
       {/**
        * The agent leads and the editor is the surface it acts on, so the transcript is
@@ -141,7 +232,7 @@ export default function App() {
        * agentic editor already ships, which is the one this build exists to refuse.
        */}
       <Group orientation="horizontal" className="workbench">
-        <Panel id="tree" defaultSize="14" minSize="10" collapsible>
+        <Panel id="tree" defaultSize="14" minSize="10" collapsible panelRef={treeRef}>
           <FileTree
             root={workspace?.root ?? null}
             activePath={activePath}
