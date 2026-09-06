@@ -17,9 +17,9 @@
  * is the right mode for a quick "did I break the shell".
  */
 
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 const PORT = 9222;
@@ -28,6 +28,58 @@ const RUN_TURN = !process.argv.includes("--no-turn");
 
 const checks = [];
 let child = null;
+/** Set by `main`, read by the teardown that removes this run's transcripts. */
+let workspace = null;
+
+const VITE_PORT = 1420;
+
+/** PIDs of every running agentide.exe. Empty on anything that is not Windows. */
+function appPids() {
+  if (process.platform !== "win32") return [];
+  try {
+    const out = execFileSync("tasklist", ["/FI", "IMAGENAME eq agentide.exe", "/FO", "CSV", "/NH"], {
+      encoding: "utf8",
+    });
+    return [...out.matchAll(/"agentide\.exe","(\d+)"/g)].map((match) => Number(match[1]));
+  } catch {
+    return [];
+  }
+}
+
+/** The PID listening on a port, or null. */
+function portHolder(port) {
+  if (process.platform !== "win32") return null;
+  try {
+    const out = execFileSync("netstat", ["-ano"], { encoding: "utf8" });
+    const line = out.split(/\r?\n/).find((row) => row.includes(`:${port} `) && row.includes("LISTENING"));
+    const pid = line?.trim().split(/\s+/).pop();
+    return pid ? Number(pid) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Synchronous on purpose. The signal path calls this and then exits immediately, and an
+ * async spawn would be abandoned before `taskkill` had started -- failing in exactly the
+ * case the signal handler exists for.
+ */
+function kill(pid) {
+  try {
+    execFileSync("taskkill", ["/F", "/PID", String(pid)], { stdio: "ignore" });
+  } catch {
+    /* Gone between listing it and killing it, which is the outcome anyway. */
+  }
+}
+
+/** Taken before launch, so teardown only kills what this run is responsible for. */
+const appsBefore = appPids();
+const viteBefore = portHolder(VITE_PORT);
+
+/** The directory name the SDK mangles a workspace path into ends with its last segment. */
+function workspaceName(path) {
+  return path ? path.split("/").filter(Boolean).pop() : null;
+}
 
 /** A tool's answer is multi-line by design; a check's detail column is not. */
 function flatten(text) {
@@ -220,10 +272,19 @@ class Page {
 // --- The checks -------------------------------------------------------------------
 
 async function main() {
-  const workspace = makeWorkspace();
+  workspace = makeWorkspace();
   console.log(`workspace: ${workspace}\n`);
 
   if (!ATTACH) {
+    // A teardown cannot run when the run is killed outright -- Ctrl+C, or a harness
+    // stopping the command -- so the previous run's Vite can still be holding 1420 and
+    // `tauri dev` fails before it starts. Clearing it here rather than in teardown is
+    // the difference between a guarantee and a hope. Only a stale one is touched: a
+    // holder that predates this process was not started by this script, and the check
+    // below leaves it alone.
+    const stale = portHolder(VITE_PORT);
+    if (stale && stale !== viteBefore) kill(stale);
+
     // One string, no argv array: with `shell: true` Node warns that arguments are
     // concatenated rather than escaped, and this command has no arguments to escape.
     child = spawn("npm run tauri dev", {
@@ -447,22 +508,71 @@ async function main() {
   page.close();
 }
 
+/** Everything this run is responsible for, released. Safe to call twice. */
+let cleaned = false;
+function cleanUp() {
+  if (cleaned) return;
+  cleaned = true;
+  // Killing the npm process is not enough. `tauri dev` spawns Vite and the built
+  // agentide.exe, both of which are re-parented and survive a kill of the tree they
+  // started in. Three runs' worth of those orphans is what left a Vite server holding
+  // port 1420, an agentide.exe holding the debug binary cargo wanted to relink, and a
+  // half-copied node_modules from a stage killed mid-copy.
+  //
+  // Only what this run started is killed: both lists are diffed against a snapshot
+  // taken before launch, so a window the person already had open is left alone.
+  if (child) {
+    try {
+      process.platform === "win32"
+        ? execFileSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" })
+        : child.kill();
+    } catch {
+      /* Already gone. */
+    }
+    for (const pid of appPids().filter((pid) => !appsBefore.includes(pid))) kill(pid);
+    const holder = portHolder(VITE_PORT);
+    if (holder && holder !== viteBefore) kill(holder);
+  }
+
+  // The scratch workspace is a real workspace as far as the agent SDK is concerned, so
+  // a turn leaves a transcript directory behind in ~/.claude/projects. Nine had piled
+  // up before anyone noticed, sitting at the top of the conversation import list where
+  // the person's own projects should be. A test that litters the thing it is testing is
+  // worse than no test.
+  try {
+    const projects = join(homedir(), ".claude", "projects");
+    const leaf = workspaceName(workspace);
+    for (const entry of readdirSync(projects)) {
+      if (leaf && entry.endsWith(leaf)) {
+        rmSync(join(projects, entry), { recursive: true, force: true });
+      }
+    }
+  } catch {
+    /* No transcripts to clean, or no store at all. Not a failure of the run. */
+  }
+}
+
+/**
+ * Teardown on the way out, however the run ends.
+ *
+ * `finally` covers a run that finishes or throws. It does not cover the one that gets
+ * killed, which is exactly the run that leaves a Vite server on 1420 and an
+ * agentide.exe on the debug binary -- and then the next build fails for a reason that
+ * has nothing to do with the change being tested.
+ */
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
+  process.on(signal, () => {
+    cleanUp();
+    process.exit(130);
+  });
+}
+
 main()
   .catch((error) => {
     record("smoke run", false, error.message);
   })
   .finally(() => {
-    if (child) {
-      // The app was launched here, so it is stopped here; a leftover window holding the
-      // debug port would make the next run attach to the wrong build.
-      try {
-        process.platform === "win32"
-          ? spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" })
-          : child.kill();
-      } catch {
-        /* Already gone. */
-      }
-    }
+    cleanUp();
     const failed = checks.filter((check) => !check.ok);
     console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
     process.exitCode = failed.length > 0 ? 1 : 0;

@@ -31,6 +31,16 @@ export interface ServerSpec {
    * marker at the root is the cheap, honest signal that this is that kind of project.
    */
   markers: string[];
+  /**
+   * What to send as `initializationOptions`, given where the markers actually were.
+   *
+   * The workspace root and the project root are not the same thing. Open a folder holding
+   * several checkouts -- a Desktop, a `code/` directory -- and rust-analyzer is handed a
+   * root that is not a Cargo project, which it reports as `failed to find any projects in
+   * [...]` and then does nothing for the rest of the session. Naming the `Cargo.toml`
+   * files it should treat as projects is rust-analyzer's own answer to that.
+   */
+  initialization?: (markerPaths: string[]) => Json;
 }
 
 /**
@@ -45,6 +55,10 @@ export const SERVERS: ServerSpec[] = [
     languages: ["rust"],
     missingHint: "rust-analyzer is not on PATH. It ships with the Rust toolchain.",
     markers: ["Cargo.toml"],
+    // Capped, and the cap is the point: a folder with a dozen checkouts under it would
+    // otherwise have every crate in all of them indexed at once, which is minutes of CPU
+    // for projects the person is not working in. The ones nearest the root come first.
+    initialization: (markerPaths) => ({ linkedProjects: markerPaths.slice(0, 8) }),
   },
   {
     id: "clangd",
@@ -110,10 +124,19 @@ export class LspSession {
   #diagnostics = new Map<string, Json[]>();
   #stderr: string[] = [];
 
-  constructor(spec: ServerSpec, root: WirePath, handlers: SessionHandlers) {
+  /** Absolute paths of the markers that started this server. See `initialization`. */
+  readonly #markerPaths: string[];
+
+  constructor(
+    spec: ServerSpec,
+    root: WirePath,
+    handlers: SessionHandlers,
+    markerPaths: string[] = [],
+  ) {
     this.spec = spec;
     this.#root = root;
     this.#handlers = handlers;
+    this.#markerPaths = markerPaths;
     this.client = new LspClient(
       (message) => {
         // A send to a dead server rejects; the exit event already explains why.
@@ -155,6 +178,9 @@ export class LspSession {
       rootUri: toFileUri(this.#root),
       workspaceFolders: [{ uri: toFileUri(this.#root), name: baseName(this.#root) }],
       capabilities: clientCapabilities(),
+      ...(this.spec.initialization && this.#markerPaths.length > 0
+        ? { initializationOptions: this.spec.initialization(this.#markerPaths) }
+        : {}),
     });
     this.client.capabilities = result?.capabilities ?? {};
     this.client.initialized = true;

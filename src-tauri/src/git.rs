@@ -374,7 +374,7 @@ fn short(sha: &str) -> String {
 // --- Commands -------------------------------------------------------------------
 
 #[tauri::command]
-pub fn git_status(workspace: State<'_, WorkspaceState>) -> Result<GitStatus, IpcError> {
+pub async fn git_status(workspace: State<'_, WorkspaceState>) -> Result<GitStatus, IpcError> {
     let dir = root_of(&workspace)?;
     let Some(root) = repo_root(&dir)? else {
         return Ok(GitStatus {
@@ -407,7 +407,7 @@ pub fn git_status(workspace: State<'_, WorkspaceState>) -> Result<GitStatus, Ipc
 /// `staged` picks which comparison: the index against HEAD, or the working tree against
 /// the index. That is the same split the panel shows, so a row and its diff always agree.
 #[tauri::command]
-pub fn git_file_diff(
+pub async fn git_file_diff(
     workspace: State<'_, WorkspaceState>,
     rel: String,
     staged: bool,
@@ -494,7 +494,7 @@ fn decode(bytes: Vec<u8>) -> Blob {
 
 /// Stage whole files. `--` guards against a path that looks like a revision.
 #[tauri::command]
-pub fn git_stage(workspace: State<'_, WorkspaceState>, paths: Vec<String>) -> Result<(), IpcError> {
+pub async fn git_stage(workspace: State<'_, WorkspaceState>, paths: Vec<String>) -> Result<(), IpcError> {
     if paths.is_empty() {
         return Ok(());
     }
@@ -510,7 +510,7 @@ pub fn git_stage(workspace: State<'_, WorkspaceState>, paths: Vec<String>) -> Re
 /// `restore --staged` rather than `reset`: it is the operation that only ever touches the
 /// index, so there is no version of this that can eat someone's edits.
 #[tauri::command]
-pub fn git_unstage(
+pub async fn git_unstage(
     workspace: State<'_, WorkspaceState>,
     paths: Vec<String>,
 ) -> Result<(), IpcError> {
@@ -537,7 +537,7 @@ pub struct GitCommitResult {
 /// rejects the commit surfaces as the error it wrote, which is the only useful thing to
 /// show: the hook already explained itself better than we could.
 #[tauri::command]
-pub fn git_commit(
+pub async fn git_commit(
     workspace: State<'_, WorkspaceState>,
     message: String,
     amend: bool,
@@ -583,7 +583,7 @@ pub fn git_commit(
 
 /// Local and remote branches, newest commit first.
 #[tauri::command]
-pub fn git_branches(workspace: State<'_, WorkspaceState>) -> Result<Vec<GitBranch>, IpcError> {
+pub async fn git_branches(workspace: State<'_, WorkspaceState>) -> Result<Vec<GitBranch>, IpcError> {
     let dir = root_of(&workspace)?;
     if repo_root(&dir)?.is_none() {
         return Ok(Vec::new());
@@ -629,7 +629,7 @@ pub fn git_branches(workspace: State<'_, WorkspaceState>) -> Result<Vec<GitBranc
 /// refusal names the files -- which is exactly what the user needs to decide what to do,
 /// and far better than this app deciding for them.
 #[tauri::command]
-pub fn git_switch(workspace: State<'_, WorkspaceState>, name: String) -> Result<(), IpcError> {
+pub async fn git_switch(workspace: State<'_, WorkspaceState>, name: String) -> Result<(), IpcError> {
     let dir = root_of(&workspace)?;
     let result = run(&dir, &["switch", "--", &name])?;
     if !result.ok {

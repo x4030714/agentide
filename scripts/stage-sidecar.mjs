@@ -30,6 +30,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,7 +87,51 @@ function stageDependencies() {
     .map(([path]) => path);
   if (wanted.length === 0) throw new Error("the lockfile lists no production dependencies");
 
+  /**
+   * A receipt, written last, naming what this tree was built from.
+   *
+   * Its absence is what tells the next run the directory is rubble rather than a tree.
+   */
+  const receipt = join(sidecar, "dist", ".staged.json");
+  const lockStamp = statSync(join(sidecar, "package-lock.json")).mtimeMs;
+  const want = { lockStamp, count: wanted.length };
+
+  if (existsSync(receipt)) {
+    try {
+      const have = JSON.parse(readFileSync(receipt, "utf8"));
+      // The tree is counted, not just trusted. An interrupted stage removes the receipt
+      // before it starts, so that case is covered -- but a receipt also outlives a tree
+      // deleted by anything that never read it: a disk cleanup, a quarantine, a hand.
+      // One `readdir` is nothing against re-copying 238 MB, and against believing a
+      // directory is there when it is not.
+      const present = existsSync(staged) ? readdirSync(staged).length : 0;
+      if (have.lockStamp === want.lockStamp && have.count === want.count && present === have.top) {
+        return { count: have.copied, staged, bytes: have.bytes, reused: true };
+      }
+    } catch {
+      /* A receipt that will not parse is no receipt; fall through and stage again. */
+    }
+  }
+
+  /**
+   * The receipt is removed first and written last, so the tree is only ever trusted
+   * whole.
+   *
+   * Copied straight into place rather than staged beside and renamed. The rename is the
+   * textbook answer and it does not work here: Windows refuses it with EPERM while a
+   * scanner still has the freshly written 238 MB open, for longer than is worth
+   * retrying. Since this script runs ahead of every build, the receipt does the same job
+   * -- an interrupted copy leaves no receipt, and the next run stages again from scratch
+   * instead of letting a half-tree through.
+   *
+   * That half-tree is not hypothetical. `scripts/smoke.mjs` kills the whole process tree
+   * on teardown, and a Ctrl+C does the same by hand; one of those left a single package
+   * of 103 behind, and the next build failed on an arbitrary file deep inside an
+   * unrelated package rather than saying the staging was incomplete.
+   */
+  rmSync(receipt, { force: true });
   rmSync(staged, { recursive: true, force: true });
+
   let bytes = 0;
   let copied = 0;
   for (const relPath of wanted) {
@@ -101,7 +146,10 @@ function stageDependencies() {
     bytes += du(source);
     copied += 1;
   }
-  return { count: copied, staged, bytes };
+
+  const top = readdirSync(staged).length;
+  writeFileSync(receipt, JSON.stringify({ ...want, copied, bytes, top }, null, 2));
+  return { count: copied, staged, bytes, reused: false };
 }
 
 function du(path) {
@@ -134,7 +182,8 @@ if (!current) copyFileSync(process.execPath, target);
 const deps = stageDependencies();
 console.log(`sidecar bundle  ${bundle} (${mb(bundle)})`);
 console.log(
-  `dependencies    ${deps.count} packages, ${(deps.bytes / 1024 / 1024).toFixed(0)} MB`,
+  `dependencies    ${deps.count} packages, ${(deps.bytes / 1024 / 1024).toFixed(0)} MB` +
+    (deps.reused ? " — already current" : ""),
 );
 console.log(`node runtime    ${target} (${mb(target)})${current ? " — already current" : ""}`);
 console.log(`                from ${process.execPath}, ${process.version}`);

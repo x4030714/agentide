@@ -955,7 +955,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// Always produces a commit, even when nothing changed since the last one, so a turn
 /// always has an id of its own to be rewound to.
 #[tauri::command]
-pub fn checkpoint_create(
+pub async fn checkpoint_create(
     workspace: State<'_, WorkspaceState>,
     label: Option<String>,
 ) -> Result<Checkpoint, IpcError> {
@@ -966,7 +966,7 @@ pub fn checkpoint_create(
 
 /// The timeline, newest first. `limit` defaults to 50.
 #[tauri::command]
-pub fn checkpoint_list(
+pub async fn checkpoint_list(
     workspace: State<'_, WorkspaceState>,
     limit: Option<u32>,
 ) -> Result<Vec<Checkpoint>, IpcError> {
@@ -981,7 +981,7 @@ pub fn checkpoint_list(
 /// for files over 2 MiB a side, and for whatever falls past the payload budget once a
 /// diff runs to tens of megabytes. Fetch those one at a time with [`checkpoint_file_diff`].
 #[tauri::command]
-pub fn checkpoint_diff(
+pub async fn checkpoint_diff(
     workspace: State<'_, WorkspaceState>,
     from: String,
     to: Option<String>,
@@ -997,7 +997,7 @@ pub fn checkpoint_diff(
 /// One file's before and after, for re-reading a row after a revert -- or for one the
 /// bulk diff left out because of its budget.
 #[tauri::command]
-pub fn checkpoint_file_diff(
+pub async fn checkpoint_file_diff(
     workspace: State<'_, WorkspaceState>,
     from: String,
     to: Option<String>,
@@ -1018,7 +1018,7 @@ pub fn checkpoint_file_diff(
 /// lines, so they survive the file moving underneath them; they do not survive the hunk
 /// itself being edited, and that is the point.
 #[tauri::command]
-pub fn checkpoint_hunks(
+pub async fn checkpoint_hunks(
     workspace: State<'_, WorkspaceState>,
     checkpoint: String,
     path: WirePath,
@@ -1055,7 +1055,7 @@ pub fn checkpoint_hunks(
 /// mean it was never captured in the first place, in which case this refuses rather than
 /// delete something it never had a copy of.
 #[tauri::command]
-pub fn checkpoint_revert_file(
+pub async fn checkpoint_revert_file(
     workspace: State<'_, WorkspaceState>,
     checkpoint: String,
     path: WirePath,
@@ -1131,7 +1131,7 @@ fn checkpoint_revert_file_inner(
 /// [`ErrorCode::Stale`] and nothing is written. `git apply` is likewise all-or-nothing:
 /// if the subset does not apply in reverse, the file is left exactly as it was.
 #[tauri::command]
-pub fn checkpoint_revert_hunks(
+pub async fn checkpoint_revert_hunks(
     workspace: State<'_, WorkspaceState>,
     checkpoint: String,
     path: WirePath,
@@ -1242,7 +1242,7 @@ fn checkpoint_revert_hunks_inner(
 /// a rewind removes files through git's index, and a file that was never captured is not
 /// in it. Unsaved editor buffers are not on disk and so are not touched at all.
 #[tauri::command]
-pub fn checkpoint_rewind(
+pub async fn checkpoint_rewind(
     workspace: State<'_, WorkspaceState>,
     checkpoint: String,
     delete_created: Option<bool>,

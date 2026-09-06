@@ -402,7 +402,7 @@ fn summarise_dir(dir: &Path) -> Result<Vec<ConversationSummary>, IpcError> {
 
 /// Every past conversation for the open workspace, most recently active first.
 #[tauri::command]
-pub fn conversations_list(
+pub async fn conversations_list(
     workspace: State<'_, WorkspaceState>,
 ) -> Result<Vec<ConversationSummary>, IpcError> {
     let Some(root) = workspace.root() else {
@@ -421,7 +421,7 @@ pub fn conversations_list(
 /// workspace's own -- that is how the settings panel previews another project's history
 /// before importing it. Absent means this workspace.
 #[tauri::command]
-pub fn conversation_read(
+pub async fn conversation_read(
     workspace: State<'_, WorkspaceState>,
     id: String,
     from_dir: Option<String>,
@@ -487,7 +487,7 @@ fn entry_of(record: &serde_json::Value) -> Option<ConversationEntry> {
 /// though the store is hundreds of megabytes. The per-conversation detail waits until a
 /// directory is expanded.
 #[tauri::command]
-pub fn claude_projects_list() -> Result<Vec<ClaudeProject>, IpcError> {
+pub async fn claude_projects_list() -> Result<Vec<ClaudeProject>, IpcError> {
     let Some(projects) = projects_dir() else {
         // No `~/.claude/projects` means Claude Code has never run here. Not an error.
         return Ok(Vec::new());
@@ -550,7 +550,7 @@ pub fn claude_projects_list() -> Result<Vec<ClaudeProject>, IpcError> {
 
 /// Every conversation in one project directory, most recently active first.
 #[tauri::command]
-pub fn claude_conversations_list(dir: String) -> Result<Vec<ConversationSummary>, IpcError> {
+pub async fn claude_conversations_list(dir: String) -> Result<Vec<ConversationSummary>, IpcError> {
     summarise_dir(&project_dir_named(&dir)?)
 }
 
@@ -629,7 +629,7 @@ fn rebrand(record: &mut serde_json::Value, session: &str, cwd: &str) {
 /// What comes back is a separate conversation that happens to start with the same
 /// messages -- continuing it here does not continue it over there.
 #[tauri::command]
-pub fn conversation_import(
+pub async fn conversation_import(
     workspace: State<'_, WorkspaceState>,
     id: String,
     from_dir: String,

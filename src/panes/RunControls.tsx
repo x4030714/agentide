@@ -54,7 +54,7 @@ interface RunControlsProps {
   onMode: (mode: EditMode) => void;
   promptMode: PromptMode;
   onPromptMode: (mode: PromptMode) => void;
-  /** False when `.agentide/system.md` is absent, so Tuned can say it has nothing to add. */
+  /** False when neither system.md exists, so Tuned can say it has nothing to add. */
   tunedAvailable: boolean;
   models: ModelInfo[];
   model: string | null;
@@ -127,7 +127,7 @@ export function RunControls({
             className={`segment${option === promptMode ? " is-on" : ""}`}
             title={
               option === "tuned" && !tunedAvailable
-                ? "No .agentide/system.md in this workspace, so this adds nothing yet."
+                ? "No system.md in ~/.agentide or this workspace, so this adds nothing yet."
                 : PROMPT_HELP[option]
             }
             disabled={disabled}
@@ -180,7 +180,7 @@ export function RunControls({
        * something the person can fix; the catalogue arriving is just a wait.
        */}
       {promptMode === "tuned" && !tunedAvailable ? (
-        <span className="note control-note">no .agentide/system.md — Tuned adds nothing</span>
+        <span className="note control-note">no system.md — Tuned adds nothing</span>
       ) : (
         !known && <span className="note control-note">catalogue arrives with the first turn</span>
       )}

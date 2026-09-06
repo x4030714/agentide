@@ -110,6 +110,16 @@ fn apply_effect(window: &WebviewWindow) -> bool {
     /// The build Windows 11 starts at, which is also the one `apply_mica` needs.
     const WINDOWS_11: u32 = 22000;
 
+    // An escape hatch, because the effect depends on the compositor and the graphics
+    // driver rather than on anything this code can inspect. Set `AGENTIDE_NO_BACKDROP=1`
+    // to run the window opaque; the frontend already paints its own ground when the
+    // effect does not take, so nothing else has to change. It is also the way to tell a
+    // backdrop problem from a rendering one in a single run.
+    if std::env::var_os("AGENTIDE_NO_BACKDROP").is_some() {
+        eprintln!("[window] backdrop disabled by AGENTIDE_NO_BACKDROP");
+        return false;
+    }
+
     let build = windows_version::OsVersion::current().build;
     // `None` leaves the tint to the frontend: the effect only blurs what is behind the
     // window, and the colour laid over it is CSS.

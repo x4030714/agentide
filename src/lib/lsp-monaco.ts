@@ -108,25 +108,38 @@ export class LspWorkspace {
     const MAX_DEPTH = 3;
     const prefix = `${this.#root.replace(/\/$/, "")}/`;
 
-    let found: Set<string>;
     try {
       const files = await listFiles();
-      found = new Set(
-        files
-          .filter((path) => path.startsWith(prefix))
-          .map((path) => path.slice(prefix.length))
-          .filter((relative) => relative.split("/").length <= MAX_DEPTH)
-          .map((relative) => relative.slice(relative.lastIndexOf("/") + 1)),
-      );
+      const near = files
+        .filter((path) => path.startsWith(prefix))
+        .map((path) => ({ path, relative: path.slice(prefix.length) }))
+        .filter(({ relative }) => relative.split("/").length <= MAX_DEPTH)
+        // Shallowest first, so the cap in a spec's `initialization` keeps the projects
+        // nearest the root rather than whichever the file listing happened to reach.
+        .sort((a, b) => a.relative.split("/").length - b.relative.split("/").length);
+
+      for (const spec of SERVERS) {
+        this.#markerPaths.set(
+          spec.id,
+          near
+            .filter(({ relative }) =>
+              spec.markers.includes(relative.slice(relative.lastIndexOf("/") + 1)),
+            )
+            .map(({ path }) => path),
+        );
+      }
     } catch {
       // An unreadable workspace is not this function's problem to report; lazy start
       // still covers every file that actually gets opened.
-      return;
+    } finally {
+      // Always, including the failure above: `#ensureSession` waits on this, and a scan
+      // that never settled would hang every lazy start for the life of the workspace.
+      this.#scanned();
     }
     if (this.#disposed) return;
 
     for (const spec of SERVERS) {
-      if (!spec.markers.some((marker) => found.has(marker))) continue;
+      if ((this.#markerPaths.get(spec.id)?.length ?? 0) === 0) continue;
       void this.#ensureSession(spec);
     }
   }
@@ -299,15 +312,35 @@ export class LspWorkspace {
 
   // --- Servers -----------------------------------------------------------------
 
-  #ensureSession(spec: ServerSpec): Promise<void> {
+  /**
+   * Where each server's markers were found, absolute. Empty until the scan finishes.
+   *
+   * `#ensureSession` waits for it, because a server started before the scan would be
+   * initialised with no projects named -- which is the bug this exists to fix, just
+   * moved to whichever file the person happened to open first.
+   */
+  #markerPaths = new Map<string, string[]>();
+  #scanned!: () => void;
+  #scanDone = new Promise<void>((resolve) => {
+    this.#scanned = resolve;
+  });
+
+  async #ensureSession(spec: ServerSpec): Promise<void> {
+    await this.#scanDone;
+    if (this.#disposed) return;
     const existing = this.#starting.get(spec.id);
     if (existing) return existing;
-    if (this.#sessions.has(spec.id)) return Promise.resolve();
+    if (this.#sessions.has(spec.id)) return;
 
-    const session = new LspSession(spec, this.#root, {
-      onState: (state) => this.#handlers.onState(spec.id, spec, state),
-      onDiagnostics: (uri, diagnostics) => this.#diagnostics(spec, uri, diagnostics),
-    });
+    const session = new LspSession(
+      spec,
+      this.#root,
+      {
+        onState: (state) => this.#handlers.onState(spec.id, spec, state),
+        onDiagnostics: (uri, diagnostics) => this.#diagnostics(spec, uri, diagnostics),
+      },
+      this.#markerPaths.get(spec.id) ?? [],
+    );
     this.#sessions.set(spec.id, session);
     this.#handlers.onState(spec.id, spec, session.state);
 
