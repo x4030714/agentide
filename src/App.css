@@ -308,6 +308,20 @@
 
 /* --- Tree ------------------------------------------------------------------- */
 
+/**
+ * The tree draws only the rows in view. `.tree-canvas` is given the height of the whole
+ * listing inline, so the scrollbar still measures the folder; `.tree-window` holds the
+ * drawn slice and is translated into place.
+ *
+ * Scroll anchoring is off because the rows above the viewport are replaced on every
+ * scroll. Chromium reads that as content shifting and corrects `scrollTop` to compensate
+ * -- a scroll that fights the one the user just made, and it only shows up on a listing
+ * long enough that the correction has room to accumulate.
+ */
+.tree-canvas {
+  overflow-anchor: none;
+}
+
 .tree-row {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) auto;

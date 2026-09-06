@@ -72,7 +72,7 @@ impl WorkspaceState {
 /// Replaces any previously open workspace. The returned root is canonicalized, so every
 /// path derived from it compares equal by string.
 #[tauri::command]
-pub fn open_workspace(
+pub async fn open_workspace(
     state: State<'_, WorkspaceState>,
     path: WirePath,
     on_event: Channel<Vec<FsEvent>>,
@@ -120,7 +120,7 @@ pub fn close_workspace(state: State<'_, WorkspaceState>) {
 
 /// One directory level, gitignore-aware. The tree calls this once per expansion.
 #[tauri::command]
-pub fn list_dir(path: WirePath) -> Result<DirListing, IpcError> {
+pub async fn list_dir(path: WirePath) -> Result<DirListing, IpcError> {
     let dir = path.to_path();
     if !dir.is_dir() {
         return Err(IpcError::new(
@@ -168,7 +168,7 @@ pub fn list_dir(path: WirePath) -> Result<DirListing, IpcError> {
 /// The same ignore rules as the tree, deliberately: a file the tree hides is a file quick
 /// open must not offer, or the two disagree about what is in the project.
 #[tauri::command]
-pub fn list_files(
+pub async fn list_files(
     workspace: State<'_, WorkspaceState>,
     limit: Option<usize>,
 ) -> Result<Vec<WirePath>, IpcError> {
@@ -204,7 +204,7 @@ pub fn list_files(
 
 /// Read a text file for the editor. Rejects directories, oversized and non-UTF-8 files.
 #[tauri::command]
-pub fn read_file(path: WirePath) -> Result<FileContents, IpcError> {
+pub async fn read_file(path: WirePath) -> Result<FileContents, IpcError> {
     let target = path.to_path();
     let meta = fs::metadata(&target)
         .map_err(|err| IpcError::from_io(&err, format!("cannot stat {path}")))?;
@@ -247,7 +247,7 @@ pub fn read_file(path: WirePath) -> Result<FileContents, IpcError> {
 ///
 /// `bom` re-adds the byte-order mark the file was read with; see [`FileContents`].
 #[tauri::command]
-pub fn write_file(
+pub async fn write_file(
     path: WirePath,
     contents: String,
     bom: Option<bool>,
@@ -475,18 +475,26 @@ mod tests {
         let path = dir.wire("nested/note.txt");
         let text = "line one\r\nsecond \u{2014} dash\n";
 
-        write_file(path.clone(), text.to_string(), None).expect("write failed");
-        let plain = read_file(path.clone()).expect("read failed");
+        done(write_file(path.clone(), text.to_string(), None)).expect("write failed");
+        let plain = done(read_file(path.clone())).expect("read failed");
         assert_eq!(plain.text, text);
         assert!(!plain.had_bom);
 
-        write_file(path.clone(), text.to_string(), Some(true)).expect("write with bom failed");
-        let with_bom = read_file(path).expect("read failed");
+        done(write_file(path.clone(), text.to_string(), Some(true))).expect("write with bom failed");
+        let with_bom = done(read_file(path)).expect("read failed");
         assert_eq!(with_bom.text, text, "the BOM must not reach the editor");
         assert!(with_bom.had_bom);
         assert_eq!(with_bom.size, plain.size + 3);
     }
 
+    /// Run one of the async commands to completion.
+    ///
+    /// The commands are `async` so Tauri keeps them off the main thread -- a synchronous
+    /// command runs on the thread that draws, and `git add --all` there froze the window.
+    /// These tests call them directly, so they supply the runtime themselves.
+    fn done<T>(work: impl std::future::Future<Output = T>) -> T {
+        tauri::async_runtime::block_on(work)
+    }
     #[test]
     fn listing_puts_directories_first_and_drops_ignored_entries() {
         let dir = TempDir::new("list");
@@ -497,7 +505,7 @@ mod tests {
         fs::write(dir.0.join("Build.txt"), "hi").unwrap();
         fs::write(dir.0.join("debug.log"), "hi").unwrap();
 
-        let listing = list_dir(dir.wire("")).expect("list failed");
+        let listing = done(list_dir(dir.wire(""))).expect("list failed");
         let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["src", ".gitignore", "app.txt", "Build.txt"]);
         assert!(listing.entries[0].is_dir, "directories sort first");
@@ -510,15 +518,15 @@ mod tests {
         fs::write(dir.0.join("image.bin"), [0x89, 0x50, 0x00, 0x01]).unwrap();
 
         assert_eq!(
-            read_file(dir.wire("image.bin")).unwrap_err().code,
+            done(read_file(dir.wire("image.bin"))).unwrap_err().code,
             ErrorCode::NotUtf8
         );
         assert_eq!(
-            read_file(dir.wire("")).unwrap_err().code,
+            done(read_file(dir.wire(""))).unwrap_err().code,
             ErrorCode::IsDirectory
         );
         assert_eq!(
-            read_file(dir.wire("absent.txt")).unwrap_err().code,
+            done(read_file(dir.wire("absent.txt"))).unwrap_err().code,
             ErrorCode::NotFound
         );
     }

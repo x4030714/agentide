@@ -609,7 +609,7 @@ fn node_runtime() -> PathBuf {
 ///
 /// Replaces any agent already running, which stops the old one first.
 #[tauri::command]
-pub fn agent_start(
+pub async fn agent_start(
     state: State<'_, AgentState>,
     options: AgentStartOptions,
     on_event: Channel<AgentEvent>,

@@ -154,7 +154,7 @@ pub struct PtyState(Sessions);
 /// `cwd` defaults to the open workspace and then to the home directory: a terminal is
 /// useful before a folder is open, so this does not insist on one.
 #[tauri::command]
-pub fn pty_spawn(
+pub async fn pty_spawn(
     state: State<'_, PtyState>,
     workspace: State<'_, WorkspaceState>,
     options: PtySpawnOptions,

@@ -330,7 +330,7 @@ pub struct LspState(Sessions);
 /// frontend's decision. A server that is not installed fails here with `notFound`, at
 /// once, rather than becoming a session that never answers.
 #[tauri::command]
-pub fn lsp_start(
+pub async fn lsp_start(
     state: State<'_, LspState>,
     workspace: State<'_, WorkspaceState>,
     options: LspStartOptions,
