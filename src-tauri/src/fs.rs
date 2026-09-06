@@ -299,7 +299,7 @@ fn modified_ms(meta: &fs::Metadata) -> Option<u64> {
         .map(|since| since.as_millis() as u64)
 }
 
-fn is_always_ignored(path: &Path) -> bool {
+pub(crate) fn is_always_ignored(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| ALWAYS_IGNORED.contains(&name))

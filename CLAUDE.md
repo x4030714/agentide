@@ -66,6 +66,23 @@ using it is dropped with a warning. The third place is the SDK's: `strictMcpConf
 unset, so it also loads a workspace `.mcp.json`, user settings and plugins on its own — a
 server can appear that neither of our files mentions.
 
+**Memory is the SDK's, pointed at a folder we choose.** `sidecar/src/memory-config.ts`
+resolves a vault -- `~/agentide-vault` by default, overridable in `~/.agentide/memory.json`
+-- and `session.ts` passes it as `settings.autoMemoryDirectory` on every query. The recall
+supervisor, the note format and the writer are all the SDK's; we choose the directory and
+who may write to it. Do not build a memory engine beside it.
+
+Two things make it work and are easy to undo by accident. The settings go in **inline**,
+through `Options.settings`, never into the person's `~/.claude/settings.json` -- agentide's
+choice of vault has no business changing how their Claude Code behaves everywhere else.
+And `permissions.ask` on the vault path is the *whole* approval story: memory writes are
+ordinary `Write` calls, so in Review mode (`acceptEdits`) they would otherwise land without
+ever reaching `canUseTool`. Remove that rule and writes go silent rather than stopping.
+
+The format is markdown with YAML frontmatter and `[[wikilinks]]`, which is what Obsidian
+reads -- the vault is a vault because of what the SDK already writes, not because of
+anything here. Obsidian does not need to be installed.
+
 **A tool declared but not answered is broken forever, silently.** The sidecar declares
 `ide_*` tools and the frontend answers them from `HOST_TOOL_NAMES`. `ide-tool-names.test.ts`
 reads the sidecar's source and fails on drift, because nothing else would.

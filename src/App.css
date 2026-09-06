@@ -770,6 +770,95 @@
   opacity: 0.6;
 }
 
+/* --- Activity ---------------------------------------------------------------- */
+
+/**
+ * What the agent is doing, on one line above the composer.
+ *
+ * Above the composer and not in the pane header, because this is read while waiting and
+ * waiting happens with your eyes on the thing you just typed. It occupies a row that is
+ * empty when idle rather than pushing the composer around — a line that appears and
+ * disappears is already motion enough without the layout moving too.
+ */
+.activity {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex: 0 0 auto;
+  margin: 0 12px;
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+/**
+ * The pulse. It is the only moving thing in the window, which is what makes it readable
+ * as "still going" rather than as decoration.
+ */
+.activity-mark {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--sym);
+  animation: activity-pulse 1.4s var(--ease) infinite;
+}
+
+@keyframes activity-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Motion is a preference, and a pulse is exactly the kind people turn off. */
+@media (prefers-reduced-motion: reduce) {
+  .activity-mark {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+.activity-verb {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.activity-detail {
+  min-width: 0;
+  font-family: var(--mono);
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* The tail of a path is the identifying part; see `.settings-project-name`. */
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+}
+
+/* The clock, right-aligned: a number climbing past thirty seconds is the real signal. */
+.activity-measure {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  opacity: 0.75;
+}
+
+/* Waiting on a person is a different wait, and the only one they can end. */
+.activity.is-blocked .activity-mark {
+  background: var(--warn);
+  animation: none;
+}
+
+.activity.is-blocked .activity-verb {
+  color: var(--warn);
+}
+
 /* --- Composer --------------------------------------------------------------- */
 
 .composer {
@@ -2240,6 +2329,44 @@
   background: var(--tint-accent);
 }
 
+/* A path and the button that opens it. The path takes whatever room is left; the button
+   never shrinks, because a half-width "Reveal" is unreadable. */
+.settings-vault {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Truncated from the left, with the same bidi caveat `.settings-project-name` explains:
+   the end of a path is the part that identifies it. */
+.settings-path {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+}
+
+/* A setting that is read rather than chosen, so it sits where a control would. */
+.settings-value {
+  font-size: 12px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The clause in a settings note that changes what actually happens has to come out of
+   the secondary ink the rest of the prose is set in, or it reads as an aside. */
+.settings-section .note strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
 .settings-projects {
   margin-top: 8px;
 }
@@ -2278,6 +2405,16 @@
 
 /* The path is the identity of the row, so it keeps its end when it does not fit: two
    projects under the same parent differ in the last segment, never the first. */
+/**
+ * A path, truncated from the *left*, because the end of a path is the part that
+ * identifies it.
+ *
+ * `direction: rtl` is the trick that moves the ellipsis to the front. Its cost is that
+ * the bidi algorithm then reorders trailing punctuation: `C:\` rendered as `\:C`, which
+ * reads as a corrupt value rather than as a styling artefact. `unicode-bidi: plaintext`
+ * takes the direction from each run's first strong character instead, so the text lays
+ * out left-to-right while the box still truncates from the left.
+ */
 .settings-project-name {
   min-width: 0;
   font-size: 12.5px;
@@ -2286,6 +2423,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   direction: rtl;
+  unicode-bidi: plaintext;
   text-align: left;
 }
 

@@ -44,6 +44,8 @@ import type {
   ConversationSummary,
   ConversationEntry,
   ClaudeProject,
+  MemoryStats,
+  MemoryVault,
 } from "./protocol";
 
 /** Native folder picker. Returns null when the user cancels. */
@@ -504,4 +506,39 @@ export async function claudeConversationsList(dir: string): Promise<Conversation
  */
 export async function conversationImport(id: string, fromDir: string): Promise<string> {
   return invoke<string>("conversation_import", { id, fromDir });
+}
+
+// ---------------------------------------------------------------------------
+// The memory vault -- wrappers over `src-tauri/src/memory.rs`
+//
+// The notes are written by the model through ordinary `Write` calls, which is why there
+// is no write command here. These four only locate the folder, make it, measure it and
+// show it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where memory lives, resolved from `~/.agentide/memory.json` or the default.
+ *
+ * Asked of Rust rather than worked out here: the sidecar resolves the same file for the
+ * SDK, and a second guess in the frontend would eventually disagree with the folder being
+ * written to. It also comes back as a `WirePath`, which is what makes it comparable
+ * against the paths the model types.
+ */
+export async function memoryVault(): Promise<MemoryVault> {
+  return invoke<MemoryVault>("memory_vault");
+}
+
+/** Create the vault if absent, and explain it in a README if it is empty. Never overwrites. */
+export async function memorySeed(vault: WirePath): Promise<void> {
+  return invoke("memory_seed", { vault });
+}
+
+/** Note count and size. Stats only — no note is opened, so this is cheap enough for a panel. */
+export async function memoryStats(vault: WirePath): Promise<MemoryStats> {
+  return invoke<MemoryStats>("memory_stats", { vault });
+}
+
+/** Show the vault in the OS file manager. */
+export async function memoryReveal(vault: WirePath): Promise<void> {
+  return invoke("memory_reveal", { vault });
 }

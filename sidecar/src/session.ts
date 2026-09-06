@@ -17,6 +17,7 @@ import {
 import { HostLink } from "./host.ts";
 import { createIdeServer, IDE_SERVER_NAME, ideToolNames } from "./ide-tools.ts";
 import { loadMcpServers } from "./mcp-config.ts";
+import { loadMemoryConfig, memorySettings } from "./memory-config.ts";
 import { ModelCatalogue } from "./models.ts";
 import { createPermissionHandler } from "./permissions.ts";
 import type { DoneReason, JsonObject, PromptOptions } from "./protocol.ts";
@@ -102,11 +103,15 @@ export class Session {
     // started at all, which saves its spawn and keeps a row of failures out of the
     // prompt. The checks run in parallel and are a localhost connect each.
     const external = await loadMcpServers(cwd);
+    const memory = loadMemoryConfig();
     // Sent every turn, held-back list empty or not: the empty list is what clears the
     // chips the last turn left in the strip. A server the loader skipped never reaches
     // the SDK's init message, so this is the only report that it was configured at all.
     this.#link.send({ t: "mcp_gated", sessionId: this.#sessionId, servers: external.gated });
-    const running = query({ prompt: text, options: this.#options(cwd, external.servers, options) });
+    const running = query({
+      prompt: text,
+      options: this.#options(cwd, external.servers, memorySettings(memory), options),
+    });
     this.#active = running;
     // The only handle the model list can be asked through. Fire and forget: it resolves
     // out of band, and this turn neither waits for it nor fails with it.
@@ -151,6 +156,7 @@ export class Session {
   #options(
     cwd: string,
     external: Record<string, McpServerConfig>,
+    memory: Record<string, unknown> | null,
     options?: PromptOptions,
   ): Options {
     return {
@@ -216,6 +222,17 @@ export class Session {
       // Deliberately no `env`: setting it *replaces* the subprocess environment, and this
       // process was started with the user's, which is where ANTHROPIC_API_KEY or an
       // existing Claude Code login lives. The sidecar never reads or forwards a key.
+      /**
+       * The agent's memory, and who may write to it.
+       *
+       * Passed inline rather than written into the person's `~/.claude/settings.json`:
+       * this is agentide's choice of vault, and it has no business changing how their
+       * Claude Code behaves everywhere else.
+       *
+       * The memory system itself is the SDK's -- the recall supervisor, the note
+       * format, the writer. See `memory-config.ts` for why the directory is a vault.
+       */
+      ...(memory ? { settings: memory as Options["settings"] } : {}),
       stderr: (data) => process.stderr.write(data),
     };
   }

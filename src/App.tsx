@@ -112,7 +112,10 @@ export default function App() {
     (window as unknown as { __ideTool?: typeof onToolCall }).__ideTool = onToolCall;
   }, [onToolCall]);
 
-  const onTurnStart = useCallback((next: Checkpoint) => {
+  // `null` when the turn is running without one -- a workspace whose checkpoint could not
+  // be taken. Stored as null rather than left alone, so the review queue compares against
+  // nothing instead of against a point two turns back.
+  const onTurnStart = useCallback((next: Checkpoint | null) => {
     setCheckpoint(next);
     setChangeCount(0);
   }, []);
@@ -258,13 +261,13 @@ export default function App() {
           palette={palette}
           onPalette={setPalette}
           onImported={(id) => {
-            // An import is a file appearing in this workspace's own transcript directory,
-            // so the Conversations list has to be re-read for it to exist -- and the tab
-            // switch is the receipt: it shows the copy in place and marked as the one the
-            // next prompt continues.
+            // The imported conversation belongs in the transcript, which is where it is
+            // continued -- setting it as resumed makes that pane replay it. Sending the
+            // person to the Conversations list instead showed them a read-only copy of
+            // the thing they had just asked to carry on with, which is the wrong half.
+            // The list still needs re-reading, because the file is new.
             setResumed(id);
             setReviewRevision((n) => n + 1);
-            setTab("conversations");
             setSettingsOpen(false);
           }}
           onClose={() => setSettingsOpen(false)}
@@ -303,6 +306,7 @@ export default function App() {
             onTurnEnd={onTurnEnd}
             resumeConversation={resumed}
             onNewConversation={() => setResumed(null)}
+            onAgentEdit={openAt}
             onToolCall={onToolCall}
             hostTools={HOST_TOOL_NAMES}
           />

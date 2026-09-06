@@ -7,6 +7,7 @@ mod fs;
 mod git;
 mod ipc;
 mod lsp;
+mod memory;
 mod pty;
 mod window;
 
@@ -50,6 +51,10 @@ pub fn run() {
             fs::list_files,
             fs::read_file,
             fs::write_file,
+            memory::memory_vault,
+            memory::memory_seed,
+            memory::memory_stats,
+            memory::memory_reveal,
             agent::agent_start,
             agent::agent_stop,
             agent::agent_prompt,

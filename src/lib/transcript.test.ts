@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
+import { editedFile,
   formatMeasure,
   initialState,
   MCP_CLOSED,
@@ -518,5 +518,205 @@ describe("measure", () => {
     expect(formatMeasure("x".repeat(512))).toBe("512");
     expect(formatMeasure("x".repeat(1536))).toBe("1.5K");
     expect(formatMeasure("x".repeat(20480))).toBe("20K");
+  });
+});
+
+describe("continuing a past conversation", () => {
+  it("replays its messages as rows so the person can read what the model already knows", () => {
+    const state = reduce(initialState(), {
+      t: "conversation_loaded",
+      id: "abc-123",
+      entries: [
+        { role: "user", text: "the passphrase is TANGERINE", atMs: 1, tools: [] },
+        { role: "assistant", text: "Noted.", atMs: 2, tools: [] },
+      ],
+    });
+
+    expect(state.rows.map((row) => row.kind)).toEqual(["prompt", "text", "notice"]);
+    expect(state.rows[0]).toMatchObject({ kind: "prompt", text: "the passphrase is TANGERINE" });
+    expect(state.rows[1]).toMatchObject({ kind: "text", text: "Noted." });
+  });
+
+  it("names the conversation and where its history ends", () => {
+    const state = reduce(initialState(), {
+      t: "conversation_loaded",
+      id: "abc-123",
+      entries: [{ role: "user", text: "hello", atMs: 1, tools: [] }],
+    });
+
+    const last = state.rows[state.rows.length - 1];
+    expect(last.kind).toBe("notice");
+    expect(last.kind === "notice" && last.text).toContain("abc-123");
+    expect(last.kind === "notice" && last.text).toContain("1 message");
+  });
+
+  it("names the tools a reply used rather than drawing an empty row", () => {
+    // A turn that only called tools has no text of its own, and dropping it would make
+    // the replay claim the model said nothing when it did the work.
+    const state = reduce(initialState(), {
+      t: "conversation_loaded",
+      id: "x",
+      entries: [{ role: "assistant", text: "   ", atMs: 1, tools: ["ide_definition", "Read"] }],
+    });
+
+    expect(state.rows[0]).toMatchObject({ kind: "text", text: "(used ide_definition, Read)" });
+  });
+
+  it("replaces whatever was on screen, so two histories never stack", () => {
+    const started = reduce(initialState(), { t: "prompt_submitted", text: "an earlier thing" });
+    const state = reduce(started, {
+      t: "conversation_loaded",
+      id: "y",
+      entries: [{ role: "user", text: "the resumed one", atMs: 1, tools: [] }],
+    });
+
+    expect(state.rows.some((row) => row.kind === "prompt" && row.text === "an earlier thing")).toBe(
+      false,
+    );
+  });
+});
+
+describe("a turn with no checkpoint", () => {
+  it("says so on its own line rather than leaving it unsaid", () => {
+    // A workspace whose checkpoint cannot be taken -- a drive root, or a tree too large
+    // to walk before the prompt -- still runs. What must not happen is running as if the
+    // safety net were there.
+    const state = reduce(initialState(), {
+      t: "local_notice",
+      tone: "warn",
+      text: "no checkpoint — nothing in this turn can be reverted (permission denied)",
+    });
+
+    const row = state.rows[0];
+    expect(row.kind).toBe("notice");
+    expect(row.kind === "notice" && row.tone).toBe("warn");
+    expect(row.kind === "notice" && row.text).toContain("can be reverted");
+  });
+
+  it("takes an address like any other row, so it can be referred to later", () => {
+    const started = reduce(initialState(), { t: "prompt_submitted", text: "do a thing" });
+    const state = reduce(started, { t: "local_notice", tone: "warn", text: "no checkpoint" });
+
+    expect(state.rows.map((row) => row.addr)).toEqual([1, 2]);
+    expect(state.nextAddr).toBe(3);
+  });
+});
+
+describe("opening the file the agent is editing", () => {
+  const assistant = (name: string, input: Record<string, unknown>) => ({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id: "t1", name, input }] },
+  });
+
+  it("names the file a Write is about to change", () => {
+    expect(editedFile(assistant("Write", { file_path: "C:/work/a.rs" }))).toBe("C:/work/a.rs");
+  });
+
+  it("spells the path the way the rest of the app does", () => {
+    // The model types Windows paths. The editor and the watcher match by string, so one
+    // spelling reaching one and a different one reaching the other means the file opens
+    // and then never refreshes.
+    expect(editedFile(assistant("Edit", { file_path: "c:\\work\\a.rs" }))).toBe("C:/work/a.rs");
+  });
+
+  it("ignores a tool that only reads, so the view is not yanked around mid-turn", () => {
+    expect(editedFile(assistant("Read", { file_path: "C:/work/a.rs" }))).toBeNull();
+    expect(editedFile(assistant("Grep", { pattern: "x" }))).toBeNull();
+  });
+
+  it("ignores a message that is not the assistant's", () => {
+    expect(editedFile({ type: "user", message: { content: [] } })).toBeNull();
+  });
+
+  it("takes the notebook path when that is what the tool was given", () => {
+    expect(editedFile(assistant("NotebookEdit", { notebook_path: "C:/w/n.ipynb" }))).toBe(
+      "C:/w/n.ipynb",
+    );
+  });
+
+  const VAULT = "C:/Users/tung/agentide-vault";
+
+  it("leaves the editor alone when the write is a memory note", () => {
+    // A note is an ordinary Write. Without this, recording something mid-turn takes the
+    // view off the code the turn is about and puts it on the agent's own bookkeeping.
+    const write = assistant("Write", { file_path: `${VAULT}/machine/rust-has-no-rust-src.md` });
+    expect(editedFile(write, VAULT)).toBeNull();
+    // The same message with no vault known still opens: this is an exclusion, not a
+    // change to what counts as an edit.
+    expect(editedFile(write)).toBe(`${VAULT}/machine/rust-has-no-rust-src.md`);
+  });
+
+  it("matches the vault whatever case the model typed it in", () => {
+    // The core normalizes the vault to an upper-case drive; the model types back whatever
+    // it inferred. A case-sensitive compare would read `c:\users\...` as a different tree
+    // and let every note through.
+    expect(editedFile(assistant("Edit", { file_path: "c:\\users\\tung\\agentide-vault\\a.md" }), VAULT)).toBeNull();
+  });
+
+  it("still opens a project file whose path merely starts like the vault's", () => {
+    // `agentide-vault-backup` is not inside `agentide-vault`; a bare prefix test would
+    // say it is and silently stop opening a whole directory of real files.
+    expect(editedFile(assistant("Write", { file_path: `${VAULT}-backup/notes.md` }), VAULT)).toBe(
+      `${VAULT}-backup/notes.md`,
+    );
+  });
+});
+
+describe("memory recalled into a turn", () => {
+  const recall = (memories: unknown[], mode = "select") => ({
+    t: "event" as const,
+    sessionId: "s1",
+    msg: { type: "system", subtype: "memory_recall", mode, memories },
+  });
+
+  it("says which notes were surfaced, so recall is not mistaken for guessing", () => {
+    const s = run(
+      recall([
+        { path: "C:/Users/tung/agentide-vault/airlock.md", scope: "personal" },
+        { path: "C:/Users/tung/agentide-vault/machine/no-rust-src.md", scope: "personal" },
+      ]),
+    );
+
+    expect(s.rows).toHaveLength(1);
+    const row = s.rows[0];
+    expect(row.kind).toBe("notice");
+    expect(row.kind === "notice" && row.tone).toBe("info");
+    // Basenames only: every entry shares the vault prefix, so it distinguishes nothing
+    // and would push the row past the pane.
+    expect(row.kind === "notice" && row.text).toBe(
+      "recalled from memory — airlock.md, no-rust-src.md",
+    );
+  });
+
+  it("names a synthesis for what it is rather than printing its sentinel", () => {
+    // `synthesize` mode has no file behind it -- the path is `<synthesis:DIR>` -- and
+    // rendering that raw reads as a bug in the transcript.
+    const s = run(recall([{ path: "<synthesis:C:/Users/tung/agentide-vault>" }], "synthesize"));
+
+    expect(s.rows[0].kind === "notice" && s.rows[0].text).toBe("recalled from memory — a synthesis");
+  });
+
+  it("takes the last segment of an organization memory's URL", () => {
+    const s = run(recall([{ path: "https://memories.example/team/build-flags/", scope: "organization" }]));
+
+    expect(s.rows[0].kind === "notice" && s.rows[0].text).toBe("recalled from memory — build-flags");
+  });
+
+  it("says one note once when two scopes surface the same file", () => {
+    const s = run(
+      recall([
+        { path: "C:/v/airlock.md", scope: "personal" },
+        { path: "D:/team/airlock.md", scope: "team" },
+      ]),
+    );
+
+    expect(s.rows[0].kind === "notice" && s.rows[0].text).toBe("recalled from memory — airlock.md");
+  });
+
+  it("draws nothing when nothing was recalled", () => {
+    // An empty recall is not an event. A row saying so would appear on turns where memory
+    // did nothing at all, which is most of them.
+    expect(run(recall([])).rows).toEqual([]);
+    expect(run(recall([{ scope: "personal" }])).rows).toEqual([]);
   });
 });

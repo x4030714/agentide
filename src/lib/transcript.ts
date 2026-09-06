@@ -19,7 +19,13 @@
  * renumbers, so a row can be referred to after the fact.
  */
 
-import type { AgentEvent, JsonObject, ModelInfo, SlashCommand } from "./protocol";
+import type {
+  AgentEvent,
+  ConversationEntry,
+  JsonObject,
+  ModelInfo,
+  SlashCommand,
+} from "./protocol";
 
 /** What drives a tool row's colour: what kind of thing the agent reached for. */
 export type ToolClass =
@@ -97,6 +103,70 @@ export type Row =
  */
 export const MCP_CLOSED = "closed";
 
+/**
+ * What the agent is doing right now, for the line above the composer.
+ *
+ * Derived from the rows rather than tracked alongside them. A second piece of state
+ * saying "currently editing" would be a second thing that can be wrong, and it would go
+ * stale exactly when a turn ends unexpectedly -- which is the moment the line matters.
+ */
+export interface Activity {
+  /** What is happening, in a word: `thinking`, `editing`, `running`. */
+  verb: string;
+  /** What it is happening to: a file, a command, a symbol. */
+  detail?: string;
+  /** Reasoning tokens so far, while the model is thinking. */
+  tokens?: number;
+  /** Waiting on a person rather than on the model, which is a different kind of wait. */
+  blocked?: boolean;
+}
+
+/** The verb for a tool, from what kind of thing it reaches for. */
+const VERBS: Record<ToolClass, string> = {
+  read: "reading",
+  mutate: "editing",
+  exec: "running",
+  semantic: "resolving",
+  net: "fetching",
+  agent: "delegating",
+  other: "working",
+};
+
+/**
+ * The one thing worth saying about a turn in flight, or `null` when nothing is.
+ *
+ * Ordered by what the person can act on. An approval outranks everything, because
+ * nothing is happening until it is answered and the wait is theirs to end. A running
+ * tool outranks thinking, because the tool is the more specific answer -- "editing
+ * ide-host.ts" beats "thinking" when both are true.
+ */
+export function liveActivity(state: TranscriptState): Activity | null {
+  if (state.status !== "running") return null;
+
+  const pending = findLastIndex(
+    state.rows,
+    (row) =>
+      (row.kind === "permission" && row.status === "pending") ||
+      (row.kind === "tool" && row.permission?.status === "pending"),
+  );
+  if (pending !== -1) {
+    const row = state.rows[pending];
+    const tool = row.kind === "permission" ? row.tool : row.kind === "tool" ? row.name : "";
+    return { verb: "waiting for you", detail: shortToolName(tool), blocked: true };
+  }
+
+  const busy = findLastIndex(state.rows, (row) => row.kind === "tool" && row.status === "running");
+  if (busy !== -1) {
+    const row = state.rows[busy];
+    if (row.kind === "tool") {
+      return { verb: VERBS[row.cls], detail: row.operand || shortToolName(row.name) };
+    }
+  }
+
+  if (state.thinking !== null) return { verb: "thinking", tokens: state.thinking };
+  return { verb: "working" };
+}
+
 /** One MCP server the turn started with, as the init message described it. */
 export interface McpServerRow {
   name: string;
@@ -163,6 +233,14 @@ export interface TranscriptState {
    */
   thinking: number | null;
   /**
+   * When the running turn began, for the elapsed clock beside the activity line.
+   *
+   * Wall clock rather than a tick count: the number has to survive the pane
+   * re-rendering, and a counter incremented in the reducer would reset every time a
+   * row arrived -- which on a busy turn is constantly.
+   */
+  turnStartedAt: number;
+  /**
    * The SDK's own model catalogue, empty until the first turn publishes it. Empty means
    * "not known yet", never "none available" -- the UI must say so rather than showing an
    * empty picker, and must not gate sending on it.
@@ -188,7 +266,29 @@ export type TranscriptAction =
    * model list and the command list were read once per sidecar and are still true. The
    * status stays too, because the sidecar did not restart and is still ready.
    */
+  /**
+   * A line the UI needs to say for itself, with no event behind it.
+   *
+   * Raised locally like `prompt_submitted`, and for the same reason: the checkpoint
+   * that could not be taken is something this app knows and the SDK never hears about,
+   * so there is no event to fold. It is a row rather than a toast because it belongs to
+   * the turn it qualifies -- scrolling back to a turn should show that it had no
+   * checkpoint, not leave that fact in a notification that has since gone.
+   */
+  | { t: "local_notice"; tone: NoticeTone; text: string }
   | { t: "conversation_reset" }
+  /**
+   * Replay a conversation this session is about to continue.
+   *
+   * Resuming used to be invisible: the SDK was handed the id at prompt time and the
+   * transcript stayed empty, so the model knew the history and the person did not. What
+   * you were continuing was a word in a status line rather than something you could read.
+   *
+   * The rows are the real exchange, drawn as prompts and replies like any other, because
+   * that is what they are. A notice marks where the replay ends and this session begins --
+   * the one thing the rows cannot say for themselves.
+   */
+  | { t: "conversation_loaded"; id: string; entries: ConversationEntry[] }
   | AgentEvent;
 
 export function initialState(): TranscriptState {
@@ -203,6 +303,7 @@ export function initialState(): TranscriptState {
     turn: 0,
     turnClosed: false,
     thinking: null,
+    turnStartedAt: 0,
     models: [],
     commands: [],
     mcp: { gated: [] },
@@ -244,6 +345,67 @@ export function shortToolName(name: string): string {
  * in the input rather than printing nothing, because an unknown tool with no operand is
  * a row you cannot act on.
  */
+/**
+ * The file an assistant message is about to change, or `null` when it is not changing one.
+ *
+ * Read straight off the message rather than out of the rows, because the point is to open
+ * the file *as the edit is announced* -- a row exists by then too, but it carries the
+ * display operand, which is relative and has already lost the drive letter.
+ *
+ * Only `mutate` tools count. Opening the editor on every `Read` would yank the view around
+ * for the whole of a turn spent looking, and the person is usually reading something else
+ * while that happens.
+ *
+ * `vault` is the memory vault, when there is one. A note is written with `Write` like any
+ * other file, so without this the editor jumps to a memory note the moment the agent
+ * records something -- taking the view off the code the turn is actually about. What is in
+ * the vault is the agent's own bookkeeping; it is worth a row, not the editor.
+ */
+export function editedFile(msg: JsonObject, vault?: string): string | null {
+  if (msg.type !== "assistant") return null;
+  for (const block of blocksOf(msg)) {
+    if (block.type !== "tool_use" || !block.name) continue;
+    if (toolClass(block.name) !== "mutate") continue;
+    const input = block.input as JsonObject | undefined;
+    for (const key of ["file_path", "notebook_path", "path"]) {
+      const value = input?.[key];
+      if (typeof value !== "string" || value === "") continue;
+      const path = wirePath(value);
+      return inside(path, vault) ? null : path;
+    }
+  }
+  return null;
+}
+
+/**
+ * Is `path` under `dir`?
+ *
+ * Case-insensitive, because this is Windows and the model types whatever spelling it
+ * inferred -- `c:\users\...` against a vault the core normalized to `C:/Users/...` would
+ * compare as a different tree and let the note through. Both sides are already
+ * forward-slashed by the time they get here.
+ */
+function inside(path: string, dir: string | undefined): boolean {
+  if (!dir) return false;
+  const base = dir.replace(/\/$/, "").toLowerCase();
+  return path.toLowerCase().startsWith(`${base}/`);
+}
+
+/**
+ * A path as the rest of this app spells one: forward slashes, upper-case drive.
+ *
+ * The SDK hands back what the model typed, which on Windows is `C:\a\b`. Everything here
+ * matches paths by string -- the editor's open file, the watcher's events -- so one
+ * spelling reaching the editor and another reaching the watcher means the file opens and
+ * then never refreshes. See the `WirePath` note in CLAUDE.md.
+ */
+function wirePath(raw: string): string {
+  return raw
+    .split("\\")
+    .join("/")
+    .replace(/^([a-z]):/, (_, letter: string) => `${letter.toUpperCase()}:`);
+}
+
 export function operandOf(name: string, input: JsonObject | undefined, cwd?: string): string {
   if (!input) return "";
   const bare = shortToolName(name);
@@ -366,9 +528,25 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
   switch (action.t) {
     case "prompt_submitted":
       return push(
-        { ...state, status: "running", turn: state.turn + 1, turnClosed: false, thinking: null },
+        {
+          ...state,
+          status: "running",
+          turn: state.turn + 1,
+          turnClosed: false,
+          thinking: null,
+          turnStartedAt: Date.now(),
+        },
         (addr, turn) => ({ kind: "prompt", addr, turn, text: action.text }),
       );
+
+    case "local_notice":
+      return push(state, (addr, turn) => ({
+        kind: "notice",
+        addr,
+        turn,
+        tone: action.tone,
+        text: action.text,
+      }));
 
     case "conversation_reset": {
       const fresh = initialState();
@@ -379,6 +557,46 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
         commands: state.commands,
         meta: { ...fresh.meta, pid: state.meta.pid, sdkVersion: state.meta.sdkVersion },
       };
+    }
+
+    case "conversation_loaded": {
+      // Reset first, for the same reasons `conversation_reset` gives: a replay is the
+      // start of a different conversation, and leaving the previous one above it would
+      // put two histories in one column with nothing marking the seam.
+      const fresh = initialState();
+      let next: TranscriptState = {
+        ...fresh,
+        status: state.status === "exited" ? "exited" : "ready",
+        models: state.models,
+        commands: state.commands,
+        meta: { ...fresh.meta, pid: state.meta.pid, sdkVersion: state.meta.sdkVersion },
+      };
+
+      for (const entry of action.entries) {
+        const text = entry.text.trim();
+        // A reply that only called tools has no text of its own. Naming the tools is
+        // better than an empty row, and much better than dropping the turn entirely.
+        const body =
+          text || (entry.tools.length > 0 ? `(used ${entry.tools.join(", ")})` : "");
+        if (!body) continue;
+        next = push(next, (addr, turn) =>
+          entry.role === "user"
+            ? { addr, turn, kind: "prompt", text: body }
+            : { addr, turn, kind: "text", text: body },
+        );
+      }
+
+      const count = next.rows.length;
+      return push(next, (addr, turn) => ({
+        addr,
+        turn,
+        kind: "notice",
+        tone: "info",
+        text:
+          count > 0
+            ? `continuing ${action.id} — ${count} message${count === 1 ? "" : "s"} above are its history`
+            : `continuing ${action.id} — nothing was said in it yet`,
+      }));
     }
 
     case "models":
@@ -563,6 +781,22 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
         text: `api retry ${attempt ?? "?"}/${max ?? "?"}${status} — ${String(msg.error ?? "")}`,
       }));
     }
+    case "memory_recall": {
+      // The recall supervisor pulled notes into this turn before the model saw the
+      // prompt. Unsaid, that is indistinguishable from the model guessing correctly --
+      // and when it recalls the wrong note, from the model being wrong for no reason.
+      // Naming the notes is what makes both cases readable, and it is the only place the
+      // vault appears in the transcript at all.
+      const names = recalled(msg.memories);
+      if (names.length === 0) return state;
+      return push(state, (addr, turn) => ({
+        kind: "notice",
+        addr,
+        turn,
+        tone: "info",
+        text: `recalled from memory — ${names.join(", ")}`,
+      }));
+    }
     case "thinking_tokens": {
       // A live estimate while the model reasons. Never a row.
       const tokens = num(msg.estimated_tokens);
@@ -590,6 +824,35 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
       // `status` and friends are chatter, not events worth an address.
       return state;
   }
+}
+
+/**
+ * What a `memory_recall` surfaced, as short names.
+ *
+ * A memory's `path` is one of three things and only the first is a file: an absolute path
+ * to a note, a `<synthesis:DIR>` sentinel standing for a paragraph distilled from many
+ * small notes, or an https URL for an organization memory. Each gets the shortest thing
+ * that still identifies it -- the whole path would push the row past the pane and the
+ * vault prefix is the same on every entry, so it distinguishes nothing.
+ *
+ * Duplicates are dropped: two entries can name the same file when the same note is
+ * surfaced under more than one scope, and the row should not say it twice.
+ */
+function recalled(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names: string[] = [];
+  for (const memory of value) {
+    const path = (memory as { path?: unknown } | null)?.path;
+    if (typeof path !== "string" || path === "") continue;
+    // `filter(Boolean)` so a URL with a trailing slash names its last segment rather
+    // than nothing -- an entry that contributes no name would make the row understate
+    // what was recalled, which is the whole failure this is here to prevent.
+    const name = path.startsWith("<synthesis:")
+      ? "a synthesis"
+      : (path.split(/[\\/]/).filter(Boolean).pop() ?? path);
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
 }
 
 /**
@@ -762,6 +1025,62 @@ function findLastIndex(rows: Row[], match: (row: Row) => boolean): number {
 
 function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** What the turn is doing right now, for the line above the composer. */
+export interface Activity {
+  /** One or two words. The thing that is happening. */
+  verb: string;
+  /** What it is happening to, when there is something worth naming. */
+  detail?: string;
+  /** A live reasoning estimate, while the model is thinking. */
+  tokens?: number;
+  /**
+   * The turn is waiting on the person, not on the machine.
+   *
+   * Drawn differently, because it is the one state where staring at the indicator will
+   * never change it -- a spinner that means "answer me" reads as "still working", and
+   * the person waits for something that is waiting for them.
+   */
+  blocked?: boolean;
+}
+
+/**
+ * The current activity, or `null` when nothing is running.
+ *
+ * Derived rather than tracked: every fact here is already in `rows` and `thinking`, and a
+ * second copy updated alongside them would be a second thing to get wrong. Reading it back
+ * out costs one scan of a list that is short by construction.
+ *
+ * The order is a priority, not a sequence. A pending approval outranks everything because
+ * it is the only state the person can act on; a running tool outranks thinking because a
+ * name and an operand say more than a token count.
+ */
+export function activity(state: TranscriptState): Activity | null {
+  if (state.status !== "running") return null;
+
+  const waiting = findLastIndex(
+    state.rows,
+    (row) =>
+      (row.kind === "permission" && row.status === "pending") ||
+      (row.kind === "tool" && row.permission?.status === "pending"),
+  );
+  if (waiting !== -1) {
+    const row = state.rows[waiting];
+    const tool = row.kind === "permission" ? row.tool : row.kind === "tool" ? row.name : "";
+    return { verb: "waiting for you", detail: shortToolName(tool), blocked: true };
+  }
+
+  const active = findLastIndex(state.rows, (row) => row.kind === "tool" && row.status === "running");
+  if (active !== -1) {
+    const row = state.rows[active];
+    if (row.kind === "tool") {
+      return { verb: shortToolName(row.name), detail: row.operand || undefined };
+    }
+  }
+
+  if (state.thinking !== null) return { verb: "thinking", tokens: state.thinking };
+  return { verb: "working" };
 }
 
 /** Token counts, in the compact shape the rest of the listing measures in. */

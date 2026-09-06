@@ -769,3 +769,26 @@ export interface ConversationEntry {
   /** Tools this message called, so a reply that only used tools is not blank. */
   tools: string[];
 }
+
+// ---------------------------------------------------------------------------
+// The memory vault -- mirrors `src-tauri/src/memory.rs`
+//
+// The notes themselves are the SDK's; the sidecar points it at this folder. Nothing here
+// reads a note. See the module docs in `memory.rs` for why the path is resolved twice.
+// ---------------------------------------------------------------------------
+
+/** Where memory lives on this machine, and whether the SDK is being told to use it. */
+export interface MemoryVault {
+  vault: WirePath;
+  enabled: boolean;
+}
+
+/** What is in the vault, counted without opening any of it. */
+export interface MemoryStats {
+  /** Markdown files, at any depth. */
+  notes: number;
+  /** Bytes of those files only, not of everything in the folder. */
+  bytes: number;
+  /** The most recently written note, or `null` for an empty vault. */
+  newestMs: number | null;
+}

@@ -6,13 +6,23 @@ import {
   claudeProjectsList,
   conversationImport,
   conversationRead,
+  memoryReveal,
+  memorySeed,
+  memoryStats,
+  memoryVault,
 } from "../lib/bridge";
 import { ago, formatSize } from "../lib/format";
 import { IconChevron, IconPalette } from "../lib/icons";
 import { PALETTES } from "../lib/palette";
 import type { Palette } from "../lib/palette";
 import { errorMessage } from "../lib/protocol";
-import type { ClaudeProject, ConversationEntry, ConversationSummary } from "../lib/protocol";
+import type {
+  ClaudeProject,
+  ConversationEntry,
+  ConversationSummary,
+  MemoryStats,
+  MemoryVault,
+} from "../lib/protocol";
 
 interface SettingsProps {
   /** The open workspace, for marking its own project and for what import copies into. */
@@ -120,10 +130,110 @@ export function Settings({
             </div>
           </section>
 
+          <MemorySection />
+
           <ImportSection root={root} onImported={onImported} />
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * What the agent remembers between sessions, and where it keeps it.
+ *
+ * Read-only on purpose. There is no text input anywhere in Settings and no place to
+ * persist one, and the path has a working default — so the section says where the
+ * override lives instead of growing an editor for a value that is changed once.
+ *
+ * The counting is one directory walk that stats and never opens a file, which is what
+ * makes it cheap enough to run on open.
+ */
+function MemorySection() {
+  const [vault, setVault] = useState<MemoryVault | null>(null);
+  const [stats, setStats] = useState<MemoryStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const found = await memoryVault();
+        if (cancelled) return;
+        setVault(found);
+        // Seeded from here rather than at startup: this is the first place the folder is
+        // named, so it must exist by the time anyone clicks Reveal or opens Obsidian on
+        // it. Seeding never overwrites, so running it on every open costs a stat.
+        await memorySeed(found.vault);
+        const counted = await memoryStats(found.vault);
+        if (!cancelled) setStats(counted);
+      } catch (err) {
+        if (!cancelled) setError(errorMessage(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const reveal = useCallback(() => {
+    if (!vault) return;
+    memoryReveal(vault.vault).catch((err) => setError(errorMessage(err)));
+  }, [vault]);
+
+  return (
+    <section className="settings-section">
+      <h2 className="settings-legend">Memory</h2>
+      <p className="note">
+        The agent records what it learns here as it goes — a decision and the reason for it,
+        a constraint found the hard way, a fact about this machine — and reads it back in
+        later sessions. Every write stops for your approval first, <strong>except in Auto
+        mode</strong>: Auto skips every permission prompt, and memory writes are not an
+        exception to that.
+      </p>
+      <p className="note">
+        Notes are markdown with frontmatter, linked to each other with [[wikilinks]], so the
+        folder opens in Obsidian as a vault. Edit them by hand, and delete one to make the
+        agent forget it. To keep the vault somewhere else, put a path in
+        ~/.agentide/memory.json.
+      </p>
+
+      {error && <p className="note is-error">{error}</p>}
+      {vault && !vault.enabled && (
+        <p className="note">memory is off — ~/.agentide/memory.json says enabled: false</p>
+      )}
+
+      <div className="settings-row">
+        <span className="settings-label">Vault</span>
+        <div className="settings-vault">
+          <span className="settings-path" title={vault?.vault ?? ""}>
+            {vault?.vault ?? "…"}
+          </span>
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={!vault}
+            title="Open the vault in the file manager"
+            onClick={reveal}
+          >
+            Reveal
+          </button>
+        </div>
+      </div>
+      <div className="settings-row">
+        <span className="settings-label">Notes</span>
+        <span className="settings-value">
+          {!stats && !error && "counting…"}
+          {stats && stats.notes === 0 && "nothing recorded yet"}
+          {stats && stats.notes > 0 && (
+            <>
+              {stats.notes} note{stats.notes === 1 ? "" : "s"} · {formatSize(stats.bytes, false)} ·
+              newest {ago(stats.newestMs)}
+            </>
+          )}
+        </span>
+      </div>
+    </section>
   );
 }
 

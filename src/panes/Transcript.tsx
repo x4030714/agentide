@@ -9,6 +9,8 @@ import {
   agentStart,
   agentStop,
   agentToolReply,
+  conversationRead,
+  memoryVault,
 } from "../lib/bridge";
 import { errorMessage } from "../lib/protocol";
 import { isEditMode, modeOptions } from "../lib/editmode";
@@ -24,15 +26,29 @@ import type {
   ToolResult,
   WirePath,
 } from "../lib/protocol";
-import { formatAddr, formatTokens, initialState, reduce } from "../lib/transcript";
+import {
+  editedFile,
+  formatAddr,
+  formatTokens,
+  initialState,
+  liveActivity,
+  reduce,
+} from "../lib/transcript";
 import { Markdown } from "./Markdown";
 import { RunControls } from "./RunControls";
-import type { Row } from "../lib/transcript";
+import type { Activity, Row } from "../lib/transcript";
 
 interface TranscriptProps {
   root: WirePath | null;
-  /** A checkpoint was taken; the turn that follows can be reverted to it. */
-  onTurnStart: (checkpoint: Checkpoint) => void;
+  /**
+   * A checkpoint was taken; the turn that follows can be reverted to it.
+   *
+   * `null` when one could not be taken and the turn ran anyway. It has to be said rather
+   * than left unsaid: keeping the previous turn's checkpoint would leave the review queue
+   * measuring this turn's edits against a point two turns back, and reverting would undo
+   * work nobody asked to lose.
+   */
+  onTurnStart: (checkpoint: Checkpoint | null) => void;
   /** The turn ended, so the review queue should re-read. */
   onTurnEnd: () => void;
   /**
@@ -40,6 +56,14 @@ interface TranscriptProps {
    * language servers; this pane only knows when a call arrives.
    */
   onToolCall: (name: string, args: JsonObject) => Promise<ToolResult>;
+  /**
+   * The agent is about to change this file, so show it.
+   *
+   * Watching an edit land is the reason to have an editor in an agent's IDE at all;
+   * the file already reloads from disk when the watcher reports it, so opening it is
+   * the whole of what was missing.
+   */
+  onAgentEdit: (path: WirePath) => void;
   /** The names `onToolCall` will answer. Anything else is answered by the Rust core. */
   hostTools: readonly string[];
   /**
@@ -80,6 +104,25 @@ function remember(key: string, value: string | null) {
   }
 }
 
+/**
+ * How long to wait for a checkpoint before running the turn without one.
+ *
+ * Generous on purpose. A real project with a large tree can legitimately take many
+ * seconds, and timing that out would cost the safety net exactly where it is worth
+ * most. This bounds the pathological case -- a drive root, where the walk is the whole
+ * disk -- rather than trimming the normal one.
+ */
+const CHECKPOINT_MS = 30_000;
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`still running after ${Math.round(ms / 1000)}s`)), ms),
+    ),
+  ]);
+}
+
 /** A conversation handle. `crypto.randomUUID` needs a secure context; not all are. */
 function newSessionId(): string {
   if (typeof crypto?.randomUUID === "function") return crypto.randomUUID();
@@ -101,11 +144,13 @@ export function TranscriptPane({
   onTurnEnd,
   onToolCall,
   hostTools,
+  onAgentEdit,
   resumeConversation,
   onNewConversation,
 }: TranscriptProps) {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
   const [sessionId, setSessionId] = useState(newSessionId);
+
   const [draft, setDraft] = useState("");
   const [model, setModelState] = useState<string | null>(() => stored(MODEL_KEY));
   const [effort, setEffortState] = useState<EffortLevel | null>(() => stored<EffortLevel>(EFFORT_KEY));
@@ -119,7 +164,7 @@ export function TranscriptPane({
     const saved = stored(PROMPT_KEY);
     return isPromptMode(saved) ? saved : "tuned";
   });
-  /** Whether `.agentide/system.md` exists, so Tuned can admit when it adds nothing. */
+  /** Whether either system.md exists, so Tuned can admit when it adds nothing. */
   const [tunedAvailable, setTunedAvailable] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [startError, setStartError] = useState<string | null>(null);
@@ -131,16 +176,68 @@ export function TranscriptPane({
   // callback identity from the parent does not restart it.
   const toolCallRef = useRef(onToolCall);
   const hostToolsRef = useRef(hostTools);
+  const onAgentEditRef = useRef(onAgentEdit);
+  /**
+   * The memory vault, once Rust has resolved it. A ref rather than state for the same
+   * reason the callbacks above are: the event handler is installed on mount and must not
+   * be rebuilt when this arrives. `null` until then, which only means an early note could
+   * still open -- the fetch is one IPC call and beats the first turn.
+   */
+  const vaultRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void memoryVault()
+      .then(({ vault }) => {
+        if (!cancelled) vaultRef.current = vault;
+      })
+      .catch(() => {
+        /* No vault means nothing to exclude, which is how this behaved before memory. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  /**
+   * Draw the conversation being continued, rather than only telling the SDK about it.
+   *
+   * Keyed on the id alone: re-reading on every render would fight the live rows, and the
+   * only moment a replay is wanted is when the conversation being continued changes. A
+   * read that fails leaves the transcript as it was -- the resume itself still works,
+   * since that is the SDK's business and not this pane's.
+   */
+  useEffect(() => {
+    if (!resumeConversation) return;
+    let cancelled = false;
+    void conversationRead(resumeConversation)
+      .then((entries) => {
+        if (!cancelled) {
+          dispatch({ t: "conversation_loaded", id: resumeConversation, entries });
+        }
+      })
+      .catch(() => {
+        /* Nothing to replay; the turn will still resume. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resumeConversation]);
+
   useEffect(() => {
     toolCallRef.current = onToolCall;
     hostToolsRef.current = hostTools;
-  }, [onToolCall, hostTools]);
+    onAgentEditRef.current = onAgentEdit;
+  }, [onToolCall, hostTools, onAgentEdit]);
 
   useEffect(() => {
     let cancelled = false;
     const onEvent = (event: AgentEvent) => {
       if (cancelled) return;
       dispatch(event);
+      if (event.t === "event") {
+        const edited = editedFile(event.msg, vaultRef.current ?? undefined);
+        if (edited) onAgentEditRef.current(edited as WirePath);
+      }
       if (event.t === "done" || event.t === "exited") onTurnEnd();
       if (event.t === "tool_call") {
         // Every call must be answered, including the ones that fail: an unanswered
@@ -191,6 +288,9 @@ export function TranscriptPane({
   }, []);
 
   const running = state.status === "running";
+  // Derived on every render rather than memoised: it reads two fields and returns a small
+  // object, and the render it feeds is already happening because a row arrived.
+  const live: Activity | null = liveActivity(state);
 
   const submit = useCallback(() => {
     const text = draft.trim();
@@ -201,21 +301,27 @@ export function TranscriptPane({
 
     /**
      * Checkpoint first, prompt second, and never the other way round: a turn that began
-     * before its checkpoint is a turn with nothing to go back to. If the checkpoint
-     * fails the turn does not run at all — proceeding would quietly drop the guarantee
-     * the whole mode system rests on.
+     * before its checkpoint is a turn with nothing to go back to.
+     *
+     * A checkpoint that cannot be taken no longer stops the turn, though. Some
+     * workspaces cannot have one -- a drive root cannot hold `.agentide` without
+     * elevation, and a huge tree takes long enough that waiting is its own failure --
+     * and refusing to run there made the app useless in a place someone reasonably
+     * wants to work. The guarantee is not dropped quietly, which was the real objection:
+     * the turn says on its own line that nothing in it can be reverted, and the parent
+     * is told there is no checkpoint so the review queue does not measure against a
+     * stale one.
      */
     void (async () => {
       try {
-        onTurnStart(await checkpointCreate(text.slice(0, 72)));
+        onTurnStart(await withTimeout(checkpointCreate(text.slice(0, 72)), CHECKPOINT_MS));
       } catch (err) {
+        onTurnStart(null);
         dispatch({
-          t: "exited",
-          code: null,
-          message: `no checkpoint, so the turn did not run: ${errorMessage(err)}`,
-          pending: [],
+          t: "local_notice",
+          tone: "warn",
+          text: `no checkpoint — nothing in this turn can be reverted (${errorMessage(err)})`,
         });
-        return;
       }
       try {
         // Read now, not at mount: the file is meant to be iterated on, and a cached
@@ -356,6 +462,8 @@ export function TranscriptPane({
         mcpServers={state.meta.mcpServers ?? []}
         disabled={state.status === "exited"}
       />
+
+      {live && <ActivityLine activity={live} startedAt={state.turnStartedAt} />}
 
       <Composer
         value={draft}
@@ -565,6 +673,42 @@ const TranscriptRow = memo(function TranscriptRow({
       );
   }
 });
+
+/**
+ * What the agent is doing, while it is doing it.
+ *
+ * Above the composer rather than in the pane header: this is read while waiting, and
+ * waiting happens with your eyes on the thing you just typed into. The header keeps its
+ * one-word version for when the transcript is scrolled away.
+ *
+ * The elapsed clock is the point of the whole line. A tool name tells you what is
+ * happening; a number climbing past thirty seconds is what tells you something is wrong,
+ * and it is the only signal here that distinguishes slow from hung.
+ */
+function ActivityLine({ activity, startedAt }: { activity: Activity; startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  // One interval, only while a turn is live, and it stops when this unmounts. A second
+  // clock ticking beside the SDK's own `tool_progress` would be two answers to one
+  // question.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const seconds = Math.max(0, Math.round((now - startedAt) / 1000));
+  return (
+    <div className={`activity${activity.blocked ? " is-blocked" : ""}`} role="status" aria-live="polite">
+      <span className="activity-mark" aria-hidden="true" />
+      <span className="activity-verb">{activity.verb}</span>
+      {activity.detail && <span className="activity-detail">{activity.detail}</span>}
+      <span className="activity-measure">
+        {activity.tokens !== undefined && `${formatTokens(activity.tokens)} · `}
+        {seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`}
+      </span>
+    </div>
+  );
+}
 
 function Composer({
   value,
