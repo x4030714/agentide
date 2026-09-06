@@ -119,6 +119,31 @@ describe("assistant content", () => {
     expect(tools(s)[0]).toMatchObject({ name: "Edit", cls: "mutate", status: "running" });
   });
 
+  it("keeps an edit's input, because the diff is built from it and not from the result", () => {
+    const input = { file_path: "src/fs.rs", old_string: "a", new_string: "b" };
+    const s = run(assistant({ type: "tool_use", id: "t1", name: "Edit", input }));
+    expect(tools(s)[0].input).toEqual(input);
+  });
+
+  it("keeps the whole file a Write sent, since that is the only copy of the addition", () => {
+    const input = { file_path: "notes.txt", content: "one\ntwo\n" };
+    const s = run(assistant({ type: "tool_use", id: "t1", name: "Write", input }));
+    expect(tools(s)[0].input).toEqual(input);
+  });
+
+  it("drops the input of a call that changes nothing", () => {
+    // Nothing draws it, so holding it would be a session's worth of arguments kept for
+    // the length of the session. A `Task` prompt alone is larger than the row it belongs to.
+    const s = run(
+      assistant(
+        { type: "tool_use", id: "t1", name: "Read", input: { file_path: "a.rs" } },
+        { type: "tool_use", id: "t2", name: "Bash", input: { command: "cargo test" } },
+        { type: "tool_use", id: "t3", name: "Task", input: { prompt: "a long brief" } },
+      ),
+    );
+    expect(tools(s).map((row) => row.input)).toEqual([undefined, undefined, undefined]);
+  });
+
   it("ignores empty text blocks", () => {
     expect(kinds(run(assistant({ type: "text", text: "   " })))).toEqual([]);
   });

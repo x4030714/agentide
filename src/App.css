@@ -595,6 +595,105 @@
   overflow-wrap: anywhere;
 }
 
+/* The size of an edit, under the file it changed. Visible without opening the row: how
+   much a turn touched is the thing you scan a transcript for, and the `└` says the line
+   belongs to the call above it rather than being a call of its own. */
+.t-diffstat {
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  /* Tighter than the row rhythm: this line belongs to the call above it, and 24px of
+     leading under a 24px row reads as a second entry rather than as a continuation. */
+  line-height: 16px;
+}
+
+.t-diffstat::before {
+  content: "└ ";
+}
+
+/**
+ * What the edit actually did, in the row that made it.
+ *
+ * The gutter carries the file's own numbering — `locateHunks` rebases it against the file
+ * on disk, and a hunk that could not be placed falls back to counting from 1 rather than
+ * going undrawn.
+ *
+ * Scrolls on its own axis. The transcript is the narrow column and a long line of code
+ * must never be able to push the pane itself sideways.
+ */
+.t-diff {
+  margin: 4px 0 6px;
+  max-height: 320px;
+  padding: 6px 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 17px;
+  background: var(--sunken);
+  border-radius: var(--r-control);
+}
+
+/* Two hunks are two places in the file, not one listing. */
+.t-hunk + .t-hunk {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* `max-content` is what makes a ground run the whole line instead of stopping at the
+   visible edge: the added line you scrolled right to read is still on green. */
+.t-dline {
+  display: flex;
+  gap: 8px;
+  min-width: max-content;
+  padding: 0 8px;
+  white-space: pre;
+}
+
+/* The roles that already mean added and removed everywhere else in the app, as a field
+   rather than as ink. Mixed from the token, so a palette retunes the role and the ground
+   follows it — there is no second value here to keep true. */
+.t-dline.is-add {
+  background: color-mix(in oklch, var(--xref) 14%, transparent);
+}
+
+.t-dline.is-remove {
+  background: color-mix(in oklch, var(--imm) 14%, transparent);
+}
+
+.t-dnum {
+  flex: 0 0 auto;
+  min-width: 4ch;
+  text-align: right;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+/* The sign carries add and remove without the colour having to. It is also why the two
+   columns are unselectable: what you copy out of a diff is the code. */
+.t-dsign {
+  flex: 0 0 1ch;
+  color: var(--ink-dim);
+  user-select: none;
+}
+
+.t-dline.is-add .t-dsign {
+  color: var(--xref);
+}
+
+.t-dline.is-remove .t-dsign {
+  color: var(--imm);
+}
+
+.t-dtext {
+  flex: 0 0 auto;
+  font: inherit;
+  color: var(--ink);
+  white-space: pre;
+}
+
 /** A call waiting on you: a real field, because this one must not be missable. */
 .t-permission.is-pending,
 .t-tool.is-awaiting {

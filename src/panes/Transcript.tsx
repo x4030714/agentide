@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useFocusTarget } from "../lib/keys";
 
+import { useResolvedAppearance } from "../lib/appearance";
 import {
   agentInterrupt,
   checkpointCreate,
@@ -11,7 +12,12 @@ import {
   agentToolReply,
   conversationRead,
   memoryVault,
+  readFile,
 } from "../lib/bridge";
+import { locateHunks, summarize, toolDiff } from "../lib/diff";
+import type { DiffHunk, LineKind } from "../lib/diff";
+import { languageForPath } from "../lib/lsp-monaco";
+import { monaco, themeFor } from "../lib/monaco-setup";
 import { errorMessage } from "../lib/protocol";
 import { isEditMode, modeOptions } from "../lib/editmode";
 import type { EditMode } from "../lib/editmode";
@@ -536,85 +542,16 @@ const TranscriptRow = memo(function TranscriptRow({
       );
 
     case "tool":
+      // Its own component: this is the only row kind that holds state -- the file behind
+      // an edit is read on first expand -- and a hook cannot live inside this switch.
       return (
-        <>
-          <div className={cls}>
-            {addr}
-            {/**
-             * A div, not a button: the approval controls nest inside this row, and a
-             * button inside a button is invalid markup. Expansion is wired by hand so
-             * the row still answers to the keyboard when there is detail to show.
-             */}
-            <div
-              className={[
-                "t-tool",
-                `is-${row.cls}`,
-                `is-${row.status}`,
-                row.permission?.status === "pending" ? "is-awaiting" : "",
-                row.detail ? "is-expandable" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              title={row.operand}
-              role={row.detail ? "button" : undefined}
-              tabIndex={row.detail ? 0 : undefined}
-              aria-expanded={row.detail ? expanded : undefined}
-              onClick={() => row.detail && onToggle(row.addr)}
-              onKeyDown={(event) => {
-                if (!row.detail) return;
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onToggle(row.addr);
-                }
-              }}
-            >
-              <span className="t-op">{row.name}</span>
-              <span className="t-operand">{row.operand}</span>
-              {row.permission?.status === "pending" ? (
-                <span className="t-actions">
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onAnswer(row.permission!.id, "allow");
-                    }}
-                  >
-                    Allow
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-button is-warn"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onAnswer(row.permission!.id, "deny");
-                    }}
-                  >
-                    Deny
-                  </button>
-                </span>
-              ) : (
-                <span className="measure">
-                  {row.status === "denied"
-                    ? `denied${row.permission?.source === "host" ? " (auto)" : ""}`
-                    : row.status === "running"
-                      ? row.elapsed !== undefined
-                        ? `${Math.round(row.elapsed)}s`
-                        : "…"
-                      : row.status === "abandoned"
-                        ? "—"
-                        : (row.measure ?? "")}
-                </span>
-              )}
-            </div>
-          </div>
-          {expanded && row.detail && (
-            <div className="t-row is-detail">
-              <span className="t-addr" />
-              <pre className="t-detail">{row.detail}</pre>
-            </div>
-          )}
-        </>
+        <ToolRow
+          row={row}
+          className={cls}
+          expanded={expanded}
+          onToggle={onToggle}
+          onAnswer={onAnswer}
+        />
       );
 
     case "permission":
@@ -673,6 +610,248 @@ const TranscriptRow = memo(function TranscriptRow({
       );
   }
 });
+
+/**
+ * One tool call, and -- when the call changed a file -- what it changed.
+ *
+ * The diff is built from the call's *input*, so it is ready as the row is drawn and it
+ * survives a call that was denied. What used to sit under an edit was the tool's result
+ * text, "File created successfully at: ...", which says nothing about the change it is
+ * reporting.
+ *
+ * The summary line is always visible; the body waits for an expand, because that is when
+ * reading the file back is worth an IPC call.
+ */
+function ToolRow({
+  row,
+  className,
+  expanded,
+  onToggle,
+  onAnswer,
+}: {
+  row: Row & { kind: "tool" };
+  className: string;
+  expanded: boolean;
+  onToggle: (addr: number) => void;
+  onAnswer: (id: string, decision: "allow" | "deny") => void;
+}) {
+  // Memoised on the row's own fields: the reducer replaces this row when the result lands
+  // and again on every progress tick, and rediffing a `Write` of a whole file on each of
+  // those is work with no output. `input` is only kept for a mutating call, so every
+  // other row settles this with a property lookup.
+  const diff = useMemo(() => toolDiff(row.name, row.input), [row.name, row.input]);
+
+  /**
+   * The hunks placed in the file, once it has been read back; `null` until then.
+   *
+   * Read on first expand and kept: doing it when the row arrives is a round trip per
+   * edited file for a body most rows never open. A failed read is cached as the *unplaced*
+   * hunks rather than retried -- `locateHunks` already degrades one hunk at a time when an
+   * anchor has moved, and a diff numbered from 1 is still the diff. Withholding it because
+   * the file could not be read would hide the change over the least interesting half of it.
+   */
+  const [hunks, setHunks] = useState<DiffHunk[] | null>(null);
+
+  useEffect(() => {
+    // Not while the call is still running. A hunk's anchor is its *new* text, which is not
+    // in the file until the write lands, so an early read would cache a failed placement.
+    if (!expanded || diff === null || hunks !== null || row.status === "running") return;
+    let cancelled = false;
+    void readFile(diff.path)
+      .then((file) => {
+        if (!cancelled) setHunks(locateHunks(diff.hunks, file.text));
+      })
+      .catch(() => {
+        if (!cancelled) setHunks(diff.hunks);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, diff, hunks, row.status]);
+
+  // A diff is worth opening before the result arrives, and worth opening when the call was
+  // denied and there is no result at all.
+  const canExpand = row.detail !== undefined || diff !== null;
+
+  return (
+    <>
+      <div className={className}>
+        <span className="t-addr">{formatAddr(row.addr)}</span>
+        {/**
+         * A div, not a button: the approval controls nest inside this row, and a
+         * button inside a button is invalid markup. Expansion is wired by hand so
+         * the row still answers to the keyboard when there is detail to show.
+         */}
+        <div
+          className={[
+            "t-tool",
+            `is-${row.cls}`,
+            `is-${row.status}`,
+            row.permission?.status === "pending" ? "is-awaiting" : "",
+            canExpand ? "is-expandable" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          title={row.operand}
+          role={canExpand ? "button" : undefined}
+          tabIndex={canExpand ? 0 : undefined}
+          aria-expanded={canExpand ? expanded : undefined}
+          onClick={() => canExpand && onToggle(row.addr)}
+          onKeyDown={(event) => {
+            if (!canExpand) return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onToggle(row.addr);
+            }
+          }}
+        >
+          <span className="t-op">{row.name}</span>
+          <span className="t-operand">{row.operand}</span>
+          {row.permission?.status === "pending" ? (
+            <span className="t-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAnswer(row.permission!.id, "allow");
+                }}
+              >
+                Allow
+              </button>
+              <button
+                type="button"
+                className="ghost-button is-warn"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAnswer(row.permission!.id, "deny");
+                }}
+              >
+                Deny
+              </button>
+            </span>
+          ) : (
+            <span className="measure">
+              {row.status === "denied"
+                ? `denied${row.permission?.source === "host" ? " (auto)" : ""}`
+                : row.status === "running"
+                  ? row.elapsed !== undefined
+                    ? `${Math.round(row.elapsed)}s`
+                    : "…"
+                  : row.status === "abandoned"
+                    ? "—"
+                    : (row.measure ?? "")}
+            </span>
+          )}
+        </div>
+      </div>
+      {/* The size of the change, under the file it changed, whether or not it is open. */}
+      {diff && (
+        <div className="t-row is-diffstat">
+          <span className="t-addr" />
+          <span className="t-diffstat">{summarize(diff)}</span>
+        </div>
+      )}
+      {expanded &&
+        (diff ? (
+          <div className="t-row is-detail">
+            <span className="t-addr" />
+            <DiffBody path={diff.path} hunks={hunks ?? diff.hunks} />
+          </div>
+        ) : (
+          row.detail && (
+            <div className="t-row is-detail">
+              <span className="t-addr" />
+              <pre className="t-detail">{row.detail}</pre>
+            </div>
+          )
+        ))}
+    </>
+  );
+}
+
+/** The editor's own tab width, so a tab indents the same here as in the file. */
+const DIFF_TAB_SIZE = 2;
+
+const SIGNS: Record<LineKind, string> = { context: " ", add: "+", remove: "-" };
+
+/**
+ * The edit itself: a gutter of line numbers, the sign, and the code -- removals and
+ * additions on their roles' grounds, context plain.
+ *
+ * Colour comes from `monaco.editor.colorize`, which is already loaded and already carries
+ * the theme the editor is drawn with. A highlighting library would be a second set of
+ * colours to keep true to the palette, and this world does not choose colours twice.
+ */
+function DiffBody({ path, hunks }: { path: string; hunks: DiffHunk[] }) {
+  const appearance = useResolvedAppearance();
+  const [painted, setPainted] = useState<string[][] | null>(null);
+
+  useEffect(() => {
+    const language = languageForPath(path);
+    // Nothing Monaco tokenizes. The uncoloured lines below are the whole diff already.
+    if (language === null) return;
+
+    // `colorize` paints with whatever theme was last set globally, and the editor pane is
+    // what sets it -- with no file open it has never mounted, and the diff would come back
+    // in Monaco's default light theme over a dark pane. Setting the id the editor would
+    // set is idempotent when it has.
+    monaco.editor.setTheme(themeFor(appearance));
+
+    let cancelled = false;
+    void Promise.all(
+      // One call per hunk rather than one per line: the tokenizer carries state between
+      // lines, so a multi-line string or comment ends where it really ends.
+      hunks.map((hunk) =>
+        monaco.editor.colorize(hunk.lines.map((line) => line.text).join("\n"), language, {
+          tabSize: DIFF_TAB_SIZE,
+        }),
+      ),
+    )
+      .then((html) => {
+        // `colorize` terminates every line with `<br/>`; the split is its inverse.
+        if (!cancelled) setPainted(html.map((one) => one.split("<br/>")));
+      })
+      .catch(() => {
+        /* Uncoloured is still the whole diff; only the colour went missing. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, hunks, appearance]);
+
+  return (
+    <div className="t-diff">
+      {hunks.map((hunk, index) => (
+        <div className="t-hunk" key={index}>
+          {hunk.lines.map((line, at) => {
+            const html = painted?.[index]?.[at];
+            return (
+              <div className={`t-dline is-${line.kind}`} key={at}>
+                <span className="t-dnum">{line.number}</span>
+                <span className="t-dsign" aria-hidden="true">
+                  {SIGNS[line.kind]}
+                </span>
+                {html === undefined ? (
+                  <code className="t-dtext">{line.text}</code>
+                ) : (
+                  /**
+                   * Monaco's own output, and the one place in the transcript that inserts
+                   * HTML. It escapes the text it renders and emits nothing but `mtk*`
+                   * spans, so a file's contents cannot become markup on the way through --
+                   * which is what `Markdown` refuses to risk with a model's prose, where
+                   * the text really is the untrusted thing.
+                   */
+                  <code className="t-dtext" dangerouslySetInnerHTML={{ __html: html }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /**
  * What the agent is doing, while it is doing it.

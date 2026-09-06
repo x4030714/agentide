@@ -578,9 +578,10 @@ export class LspWorkspace {
  * as a second extension table here. A tool can name a file nobody has opened, so there
  * is no model to read the language off -- but the answer still has to match the one the
  * editor would produce, or a tool and the editor would disagree about which server owns
- * a file.
+ * a file. Exported for the transcript's diff, which colours files nobody has opened for
+ * the same reason and must not answer this question a second way.
  */
-function languageForPath(path: WirePath): string | null {
+export function languageForPath(path: WirePath): string | null {
   const name = baseName(path).toLowerCase();
   const dot = name.lastIndexOf(".");
   if (dot <= 0) return null;

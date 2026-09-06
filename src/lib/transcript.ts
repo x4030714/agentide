@@ -63,6 +63,17 @@ export type Row =
       measure?: string;
       /** Full result text, for expansion. */
       detail?: string;
+      /**
+       * What the tool was called with, kept only when `cls` is `mutate`.
+       *
+       * Conditional because this is the one class whose input is drawn: `toolDiff` builds
+       * the edit's diff out of it, and the result text -- "File created successfully" --
+       * cannot. Every other tool's arguments would sit in state for the rest of the
+       * session having never been read, and inputs are not small: a `Task` carries a whole
+       * subagent prompt. The mutating ones are already the expensive half, since a `Write`
+       * holds the entire file.
+       */
+      input?: JsonObject;
       /** Seconds elapsed, while still running. */
       elapsed?: number;
       /**
@@ -924,14 +935,17 @@ function reduceAssistant(state: TranscriptState, msg: JsonObject): TranscriptSta
       next = push(next, (addr, turn) => ({ kind: "thinking", addr, turn, text }));
     } else if (block.type === "tool_use" && block.id && block.name) {
       const { id, name, input } = block;
+      const cls = toolClass(name);
       next = push(next, (addr, turn) => ({
         kind: "tool",
         addr,
         turn,
         id,
         name: shortToolName(name),
-        cls: toolClass(name),
+        cls,
         operand: operandOf(name, input, next.meta.cwd),
+        // Only the class whose diff gets drawn keeps its arguments; see `input` on Row.
+        input: cls === "mutate" ? input : undefined,
         status: "running",
       }));
       next.toolIndex.set(id, next.rows.length - 1);
