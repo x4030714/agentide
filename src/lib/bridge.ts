@@ -221,6 +221,15 @@ export const windowChrome = {
   async effectActive(): Promise<boolean> {
     return invoke<boolean>("window_effect_active");
   },
+
+  /**
+   * Put the backdrop back, or take it away, for the Transparency setting. Resolves to
+   * whether it is on afterwards -- which is not the same as what was asked for: applying
+   * can fail, and the honest answer is what the CSS has to be told.
+   */
+  async setBackdrop(enabled: boolean): Promise<boolean> {
+    return invoke<boolean>("window_set_backdrop", { enabled });
+  },
 };
 
 // ---------------------------------------------------------------------------

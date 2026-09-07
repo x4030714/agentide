@@ -112,6 +112,11 @@ export function FileTree({
     const body = bodyRef.current;
     if (!body) return;
     const measure = () => {
+      // A tree the sidebar is not showing -- another view is selected, or Ctrl+B put the
+      // whole sidebar away -- measures zero, and a zero viewport means "draw everything".
+      // That would build ten thousand rows behind a pane nobody is looking at. Keeping
+      // the last real measurement bounds the DOM and is still right when it comes back.
+      if (body.clientHeight === 0) return;
       const next: Metrics = {
         row: readRowHeight(body),
         pad: Math.max(0, Number.parseFloat(getComputedStyle(body).paddingTop) || 0),
@@ -288,7 +293,9 @@ export function FileTree({
   return (
     <div className="pane tree">
       <div className="pane-header">
-        <span className="legend">Files</span>
+        {/* Named for the view the rail selects, not for what it lists: the header is the
+            sidebar's title now, and two words for one view is one too many. */}
+        <span className="legend">Explorer</span>
         <button type="button" className="ghost-button" onClick={onOpenFolder}>
           <IconFolder />
           Open

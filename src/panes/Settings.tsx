@@ -16,6 +16,7 @@ import { IconChevron, IconPalette } from "../lib/icons";
 import { PALETTES } from "../lib/palette";
 import type { Palette } from "../lib/palette";
 import { errorMessage } from "../lib/protocol";
+import type { Transparency } from "../lib/transparency";
 import type {
   ClaudeProject,
   ConversationEntry,
@@ -31,6 +32,8 @@ interface SettingsProps {
   onAppearance: (next: Appearance) => void;
   palette: Palette;
   onPalette: (next: Palette) => void;
+  transparency: Transparency;
+  onTransparency: (next: Transparency) => void;
   /** An imported conversation, by its new id: the next prompt should continue it. */
   onImported: (id: string) => void;
   onClose: () => void;
@@ -40,6 +43,15 @@ const APPEARANCES: Array<{ id: Appearance; label: string }> = [
   { id: "system", label: "System" },
   { id: "light", label: "Light" },
   { id: "dark", label: "Dark" },
+];
+
+const TRANSPARENCIES: Array<{ id: Transparency; label: string; note: string }> = [
+  { id: "glass", label: "Glass", note: "Blurred desktop behind the window, translucent panes." },
+  {
+    id: "solid",
+    label: "Solid",
+    note: "No blur and no translucency. Every palette has a flat set solved for this.",
+  },
 ];
 
 /**
@@ -60,6 +72,8 @@ export function Settings({
   onAppearance,
   palette,
   onPalette,
+  transparency,
+  onTransparency,
   onImported,
   onClose,
 }: SettingsProps) {
@@ -102,6 +116,23 @@ export function Settings({
                     className={`settings-choice${option.id === appearance ? " is-on" : ""}`}
                     aria-pressed={option.id === appearance}
                     onClick={() => onAppearance(option.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="settings-row">
+              <span className="settings-label">Transparency</span>
+              <div className="settings-choices">
+                {TRANSPARENCIES.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={`settings-choice${option.id === transparency ? " is-on" : ""}`}
+                    aria-pressed={option.id === transparency}
+                    title={option.note}
+                    onClick={() => onTransparency(option.id)}
                   >
                     {option.label}
                   </button>

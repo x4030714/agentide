@@ -191,8 +191,13 @@
 /**
  * No window effect on this machine. The window is `transparent: true`, so a failed
  * blur leaves clear glass rather than an opaque window — the ground has to become
- * solid or the desktop shows through unblurred behind the chrome. Content panes are
- * already opaque and need no fallback.
+ * solid or the desktop shows through unblurred behind the chrome.
+ *
+ * The ground is all this can fix, because the panes above it are translucent too. The
+ * rest is `data-opaque="true"`, which swaps every palette for the flat set in
+ * `palettes.css`; `useTransparency` sets it both when the setting asks for it and when
+ * the backdrop turns out not to be available. This stays as the first-paint answer,
+ * before that round trip has come back.
  */
 :root[data-effect="off"] {
   --ground: #f4f5f8;
@@ -220,6 +225,15 @@
    * "smooth" rather than "animated" — the eye sees the arrival, not the travel.
    */
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  /**
+   * The second curve, and the last. `--ease` is a drawer: right for something that
+   * travels from one place to another, because it makes the arrival the readable part.
+   * Something that *enters or leaves* has no travel to read, so it wants a harder
+   * ease-out — most of the change in the first third, then settling. A palette of
+   * easings nobody can tell apart is noise; there are two, and they divide on movement
+   * against appearance.
+   */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --t-fast: 120ms;
   --t-base: 180ms;
   --t-slow: 260ms;
@@ -228,6 +242,12 @@
   --row: 24px;
   --titlebar: 38px;
   --header: 30px;
+  /* The frame's own furniture. Here with the other metrics because a density pass has
+     to be able to find every fixed height in one place. */
+  --statusbar: 22px;
+  --rail: 48px;
+  /* One rail button, which is also the step its selection marker slides by. */
+  --rail-item: 44px;
 
   --ui: "Geist Sans", -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace;

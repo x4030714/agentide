@@ -113,7 +113,8 @@
   cursor: default;
   transition:
     background var(--t-fast) var(--ease),
-    color var(--t-fast) var(--ease);
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
 }
 
 .win-button:last-child {
@@ -132,9 +133,21 @@
 
 /* --- Frame ------------------------------------------------------------------ */
 
+/**
+ * Everything between the title bar and the status bar: the icon rail, then the
+ * resizable columns. The rail is outside the panel group on purpose -- it is a fixed
+ * 48px of chrome, and a panel would let it be dragged to a width where its icons no
+ * longer fit.
+ */
 .workbench {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.workbench-panels {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .separator {
@@ -248,6 +261,206 @@
   padding: 6px 12px;
 }
 
+/* --- Activity bar ------------------------------------------------------------ */
+
+/**
+ * The icon rail. Classes are `rail-*` and not `activity-*` because `.activity` further
+ * down is the transcript's live status row; one prefix over two unrelated things is how
+ * a stylesheet stops being readable.
+ */
+.rail {
+  /* Positioned, because the selection marker is placed against it rather than in flow. */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+  width: var(--rail);
+  padding: 2px 0 6px;
+  background: var(--chrome);
+  border-right: 1px solid var(--hairline);
+}
+
+.rail-item {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: var(--rail);
+  height: var(--rail-item);
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  cursor: default;
+  transition:
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.rail-item:hover {
+  color: var(--ink);
+}
+
+.rail-item.is-on {
+  color: var(--ink);
+}
+
+/**
+ * The selected view is marked on the leading edge rather than filled. A 2px bar is
+ * legible at a glance and costs nothing to look at for hours, which a highlighted block
+ * of accent in the corner of the eye does not.
+ *
+ * One marker for the rail rather than a rule on each button: a bar that slides says
+ * which view you left as well as which you landed on, and four bars cutting in and out
+ * can only say the second. `ease-in-out` and not `--ease-out`, because this is the one
+ * thing here that genuinely travels — an element arriving wants the hard decelerate, an
+ * element moving between two places wants symmetry at both ends.
+ */
+.rail-marker {
+  position: absolute;
+  /* The rail's own top padding, then the inset that keeps the bar off the icon. */
+  top: calc(2px + 7px);
+  left: 0;
+  width: 2px;
+  height: calc(var(--rail-item) - 14px);
+  background: var(--sym);
+  border-radius: 0 1px 1px 0;
+  transform: translateY(calc(var(--rail-index, 0) * var(--rail-item)));
+  transition:
+    transform var(--t-base) ease-in-out,
+    opacity var(--t-fast) var(--ease-out);
+  pointer-events: none;
+}
+
+/* The sidebar is away, so nothing is selected. The marker goes rather than moves, and
+   stays where it was: reopening carries on from the view you left. */
+.rail-marker.is-off {
+  opacity: 0;
+}
+
+/* Settings sits at the bottom of the rail; the auto margin is what separates it. */
+.rail-settings {
+  margin-top: auto;
+}
+
+/**
+ * Edits waiting on review, badged on the Changes icon. The count is the whole reason
+ * that view is reachable in one click, and it reads as a state rather than a label —
+ * the same grammar the tab count it replaces used.
+ */
+.rail-badge {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  min-width: 15px;
+  padding: 0 3px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: #ffffff;
+  background: var(--sym-fill);
+  border-radius: 8px;
+}
+
+/* --- Sidebar ----------------------------------------------------------------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--surface);
+}
+
+.sidebar-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Same pairing as `.tab-panel` used to need: `display` above outranks `hidden`. */
+.sidebar-view[hidden] {
+  display: none;
+}
+
+/**
+ * Swapping the view fades the content in and moves nothing: the column, its header and
+ * its width all stay exactly where they were, so a slide would only be the container
+ * lying about having changed.
+ *
+ * Keyframes rather than a transition because the outgoing view is `display: none` and
+ * nothing transitions out of that. Fading both halves would need them co-mounted, which
+ * in a flex column means two views stacked for the length of the fade -- so only the
+ * arriving half is animated, and at 120ms it reads as one change rather than two.
+ */
+.sidebar-view:not([hidden]) {
+  animation: view-enter var(--t-fast) var(--ease-out);
+}
+
+@keyframes view-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+/**
+ * The view's own header is the sidebar's title: uppercase and letter-spaced, the way
+ * every editor with a rail names its column. One row rather than two — a dedicated
+ * title bar above each view's header would spend 30px repeating a word the rail has
+ * already shown, and the view's actions have to live somewhere anyway.
+ */
+.sidebar .pane-header .legend {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+/* --- Status bar --------------------------------------------------------------- */
+
+/**
+ * The bar across the bottom of the window.
+ *
+ * On `--chrome`, not on VS Code's blue. The blue is a strong opinion about which colour
+ * owns the bottom of the window; this palette's accent is `--sym` and it is spent on the
+ * one thing in view that is active, so a field of it under everything would make it mean
+ * nothing. The editor's own footer is `.editor-footer`, which is a different bar about a
+ * different subject.
+ */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 auto;
+  height: var(--statusbar);
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  background: var(--chrome);
+  border-top: 1px solid var(--hairline);
+  user-select: none;
+}
+
+.status-branch {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+/* Pinned right, because it is the one thing here that changes while you type and
+   nothing else should move when it does. */
+.status-cursor {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* --- Controls --------------------------------------------------------------- */
 
 .ghost-button {
@@ -268,16 +481,13 @@
   transition:
     color var(--t-fast) var(--ease),
     background var(--t-fast) var(--ease),
-    border-color var(--t-fast) var(--ease);
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
 }
 
 .ghost-button:hover:not(:disabled) {
   color: var(--ink);
   border-color: var(--border);
-}
-
-.ghost-button:active:not(:disabled) {
-  transform: translateY(0.5px);
 }
 
 .ghost-button:disabled {
@@ -304,6 +514,29 @@
 .ghost-button.is-primary:hover:not(:disabled) {
   color: #ffffff;
   filter: brightness(1.08);
+}
+
+/**
+ * Press feedback, for everything that takes a click.
+ *
+ * One rule rather than an `:active` beside each control: how the app answers a press is
+ * a single decision, and a list is the only form of it anybody can audit. 0.97 is the
+ * whole range -- the control has to acknowledge the press without appearing to move, and
+ * the half pixel of `translateY` this replaces read as a wobble against the straight
+ * edges it sits next to rather than as a button going down.
+ *
+ * On `:active` and never on `:hover`: nothing in this window moves before you commit to
+ * it. Which is also why there is nothing here to put behind `(hover: hover)` -- hover
+ * changes colour, and colour is free to change under a finger.
+ */
+.win-button:active,
+.rail-item:active,
+.tree-row:active,
+.ghost-button:active:not(:disabled),
+.segment:active:not(:disabled),
+.settings-choice:active,
+.term-tab:active {
+  transform: scale(0.97);
 }
 
 /* --- Tree ------------------------------------------------------------------- */
@@ -341,7 +574,9 @@
   border-radius: var(--r-chip);
   cursor: default;
   white-space: nowrap;
-  transition: background var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
 }
 
 .tree-row:hover {
@@ -595,6 +830,37 @@
   color: var(--warn);
 }
 
+/**
+ * Opening a tool row.
+ *
+ * The only thing in the transcript that animates, and it earns it: you open a diff a few
+ * times an hour, deliberately, and the rows below it have to be seen to move rather than
+ * to teleport. Everything else here arrives while the agent streams -- a per-row
+ * entrance would be a cascade that never stops, and output you wait to finish reading.
+ *
+ * `grid-template-rows: 0fr -> 1fr` is the height animation that does not animate height.
+ * The detail keeps its own size the whole way and the row clips what has not been
+ * revealed yet; squashing the detail instead would flash its scrollbar in and out on
+ * every open. `@starting-style` supplies the from-state because React mounts this row on
+ * open and unmounts it on close -- there is no exit to animate, and holding a row on
+ * screen after you closed it would be latency spent on the way out.
+ */
+.t-row.is-detail {
+  align-items: start;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  transition:
+    grid-template-rows var(--t-base) var(--ease-out),
+    opacity var(--t-fast) var(--ease-out);
+}
+
+@starting-style {
+  .t-row.is-detail {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
 .t-detail {
   margin: 4px 0 6px;
   max-height: 220px;
@@ -739,7 +1005,9 @@
 /* The live reasoning estimate. Pulses, never spins. */
 .measure.is-thinking {
   color: var(--sym);
-  animation: thinking-pulse 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  /* `ease-in-out`, not `--ease`: a loop that returns to where it started has two ends
+     to soften, and the decelerating curve makes the same pulse read as a stutter. */
+  animation: thinking-pulse 1.6s ease-in-out infinite;
 }
 
 @keyframes thinking-pulse {
@@ -914,7 +1182,7 @@
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--sym);
-  animation: activity-pulse 1.4s var(--ease) infinite;
+  animation: activity-pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes activity-pulse {
@@ -986,7 +1254,9 @@
   background: var(--sunken);
   border: 1px solid transparent;
   border-radius: var(--r-panel);
-  transition: border-color var(--t-base) var(--ease);
+  /* `--t-fast`, because Ctrl+2 lands here: this border is the only confirmation the
+     focus moved, and 180ms of it made the chord feel like it had missed. */
+  transition: border-color var(--t-fast) var(--ease);
 }
 
 .composer:focus-within {
@@ -1040,7 +1310,7 @@
   transform-origin: top;
   pointer-events: none;
   border-radius: 0 2px 2px 0;
-  animation: gutter-sync var(--t-slow) var(--ease) forwards;
+  animation: gutter-sync var(--t-slow) var(--ease-out) forwards;
 }
 
 @keyframes gutter-sync {
@@ -1058,6 +1328,14 @@
   }
 }
 
+/**
+ * Reduced motion means gentler, not none.
+ *
+ * What goes is *movement* -- anything that travels, scales or grows. Colour and opacity
+ * stay: they are how a control says it took the press and how a dialog says it is in
+ * front of the work, and cutting them leaves an app that snaps between states with no
+ * feedback at all, which is not what the preference asked for.
+ */
 @media (prefers-reduced-motion: reduce) {
   .gutter-sync,
   .measure.is-thinking {
@@ -1068,11 +1346,32 @@
     opacity: 0;
   }
 
-  .tree-row,
-  .ghost-button,
-  .composer,
-  .separator {
+  /* The press still answers, in colour alone. */
+  .win-button:active,
+  .rail-item:active,
+  .tree-row:active,
+  .ghost-button:active:not(:disabled),
+  .segment:active:not(:disabled),
+  .settings-choice:active,
+  .term-tab:active {
+    transform: none;
+  }
+
+  /* The marker still marks the view; it just does not travel to get there. */
+  .rail-marker {
+    transition: opacity var(--t-fast) var(--ease-out);
+  }
+
+  /* The dialogs keep the fade and lose the growth. With no transition left on the
+     transform, the `@starting-style` scale never runs. */
+  .quick-open,
+  .settings {
     transition: none;
+  }
+
+  /* Same for the diff: it appears at full height, still fading in. */
+  .t-row.is-detail {
+    transition: opacity var(--t-fast) var(--ease-out);
   }
 }
 
@@ -1084,7 +1383,113 @@
   background: var(--uncommitted);
 }
 
-.status-bar {
+/**
+ * The editor's open files.
+ *
+ * Deliberately the terminal's tab vocabulary rather than a second one: same height, same
+ * radius, same close button that only appears under the pointer. Two strips in one window
+ * that behave differently is the kind of detail nobody can name and everybody feels.
+ *
+ * The strip scrolls rather than shrinking its tabs. A name truncated to fit is a name you
+ * cannot read, and the whole reason to look at this row is to find a file by name.
+ */
+.editor-tabs {
+  gap: 0;
+  padding: 0 4px;
+  overflow: hidden;
+}
+
+.tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  border-radius: var(--r-control);
+  transition:
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.tab:hover {
+  background: var(--sunken);
+}
+
+.tab.is-on {
+  background: var(--sunken);
+}
+
+.tab:active {
+  transform: scale(0.97);
+}
+
+.tab-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 4px 0 9px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.tab.is-on .tab-name {
+  color: var(--ink);
+}
+
+/* Only on the tab you are pointing at, and on the one you are in: a row of close buttons
+   is a row of mistakes waiting to happen. */
+.tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 3px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+  opacity: 0;
+  transition:
+    opacity var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+
+.tab:hover .tab-close,
+.tab.is-on .tab-close,
+.tab-close:focus-visible {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  color: var(--ink);
+  background: var(--raised);
+}
+
+/* The editor's own footer: which file this is, how big, and what just happened to it.
+   The window's status bar is `.status-bar`, and it answers about the workspace. */
+.editor-footer {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1123,88 +1528,6 @@
 
 .status-message.is-error {
   color: var(--error);
-}
-
-/* --- Tabbed work column ------------------------------------------------------ */
-
-.tabbed {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-  background: var(--surface);
-}
-
-.tabs {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  flex: 0 0 auto;
-  height: var(--header);
-  padding: 0 6px;
-  border-bottom: 1px solid var(--hairline);
-}
-
-.tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--ink-dim);
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-control);
-  cursor: default;
-  transition:
-    color var(--t-fast) var(--ease),
-    background var(--t-fast) var(--ease);
-}
-
-.tab:hover {
-  color: var(--ink);
-}
-
-.tab.is-on {
-  color: var(--ink);
-  background: var(--sunken);
-}
-
-/** The count is the whole reason this tab exists; it reads as a state, not a label. */
-.tab-count {
-  min-width: 16px;
-  padding: 0 4px;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  color: #ffffff;
-  background: var(--sym-fill);
-  border-radius: 7px;
-}
-
-.tab-body {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.tab-panel {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/**
- * `display: flex` above outranks the `hidden` attribute's own `display: none`, so
- * without this both panels paint at once, stacked. Any rule that sets `display` on an
- * element that also uses `hidden` needs this pair.
- */
-.tab-panel[hidden] {
-  display: none;
 }
 
 /* --- Changes ------------------------------------------------------------------ */
@@ -1393,7 +1716,8 @@
   cursor: default;
   transition:
     color var(--t-fast) var(--ease),
-    background var(--t-fast) var(--ease);
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
 }
 
 .segment:hover:not(:disabled) {
@@ -1422,7 +1746,9 @@
   display: inline-flex;
   align-items: center;
   border-radius: var(--r-control);
-  transition: background var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
 }
 
 .term-tab:hover {
@@ -1520,6 +1846,17 @@
   flex: 1 1 auto;
   min-height: 0;
   padding: 6px 4px 4px 10px;
+  /**
+   * The fit addon sizes the terminal from this box, so this box must never be sized by
+   * the terminal.
+   *
+   * Without this a fitted line that lands a fraction of a pixel over the width gives the
+   * container a horizontal scrollbar; the scrollbar changes the box; the ResizeObserver
+   * refits; the new fit no longer overflows and the bar goes away -- and it flickers at
+   * the bottom of the pane for as long as the terminal is open. xterm scrolls its own
+   * viewport, so there is nothing here that a scrollbar was ever needed for.
+   */
+  overflow: hidden;
 }
 
 /**
@@ -1537,16 +1874,16 @@
   outline: none;
 }
 
-/* Language-server health, in the editor's status bar.
+/* Language-server health, in the window's status bar.
    The dot carries the state and the label carries the name; only a server that is
    indexing or broken adds a word, because a ready server has nothing to say. */
 .lsp-status {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-left: auto;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .lsp-server {
@@ -2081,8 +2418,8 @@
   z-index: 20;
   display: grid;
   gap: 1px;
-  /* Wide enough that a note is one line: two-line rows make four options look like a
-     settings page rather than a short list. */
+  /* Wide enough that a note is one line: two-line rows make the list look like a
+     settings page rather than a menu. */
   min-width: 320px;
   padding: 4px;
   background: var(--elevated);
@@ -2113,6 +2450,14 @@
   background: var(--tint-accent);
 }
 
+/* Whether the window is glass, under a rule: it belongs with the look, but it is not one
+   of the palettes above and a checkbox in a radio list has to say so. */
+.palette-solid {
+  margin-top: 3px;
+  padding-top: 7px;
+  border-top: 1px solid var(--hairline);
+}
+
 .palette-label {
   font-size: 12.5px;
   color: var(--ink);
@@ -2138,7 +2483,12 @@
 
 /* Each chip carries its palette's accent as `currentColor`, so the icon inside is drawn
    in the colour that palette would actually use. A row therefore shows the name, the
-   character, and a true sample — rather than a swatch you have to decode. */
+   character, and a true sample — rather than a swatch you have to decode.
+
+   The accents come from `--chip-*`, which the solver emits alongside the palettes: a
+   chip written by hand here is a colour nobody re-checks when its theme moves, and it
+   was already one palette out of date. They are mode-aware at the source, so there is no
+   dark override to keep in step either. */
 .palette-chip {
   display: grid;
   place-items: center;
@@ -2147,46 +2497,31 @@
 }
 
 .palette-chip.is-quiet {
-  color: #0956b1;
+  color: var(--chip-quiet);
 }
 .palette-chip.is-ferrous {
-  color: #a52b1e;
+  color: var(--chip-ferrous);
 }
 .palette-chip.is-halide {
-  color: #06626b;
+  color: var(--chip-halide);
 }
 .palette-chip.is-vellum {
-  color: #5f46af;
+  color: var(--chip-vellum);
 }
-
-/* The accents are solved per mode, so the chips follow: the light values above are
-   unreadable on the dark menu, and vice versa. */
-:root[data-theme="dark"] .palette-chip.is-quiet {
-  color: #7cbaff;
+.palette-chip.is-vscode {
+  color: var(--chip-vscode);
 }
-:root[data-theme="dark"] .palette-chip.is-ferrous {
-  color: #ff917f;
+.palette-chip.is-nord {
+  color: var(--chip-nord);
 }
-:root[data-theme="dark"] .palette-chip.is-halide {
-  color: #15c1d0;
+.palette-chip.is-gruvbox {
+  color: var(--chip-gruvbox);
 }
-:root[data-theme="dark"] .palette-chip.is-vellum {
-  color: #b3a5fd;
+.palette-chip.is-dracula {
+  color: var(--chip-dracula);
 }
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .palette-chip.is-quiet {
-    color: #7cbaff;
-  }
-  :root:not([data-theme="light"]) .palette-chip.is-ferrous {
-    color: #ff917f;
-  }
-  :root:not([data-theme="light"]) .palette-chip.is-halide {
-    color: #15c1d0;
-  }
-  :root:not([data-theme="light"]) .palette-chip.is-vellum {
-    color: #b3a5fd;
-  }
+.palette-chip.is-solarized {
+  color: var(--chip-solarized);
 }
 
 /* The command menu, above the composer.
@@ -2265,6 +2600,48 @@
   /* High, not centred: the results grow downward and the field should not move. */
   padding-top: 12vh;
   background: rgb(0 0 0 / 28%);
+}
+
+/**
+ * How both dialogs arrive. Quick open and settings share it because they are the same
+ * object: a mode, in front of the work, holding the keyboard.
+ *
+ * Short, and the darkening does most of it. Both are opened by a chord -- Ctrl+P and
+ * Ctrl+, are among the most-pressed keys in the app -- so the field has to be typeable
+ * on the frame it appears. 120ms of backdrop and 150ms of a 3% scale is the most that
+ * can be spent before the chord feels like it missed; the card is drawn at full size the
+ * whole time and only settles the last three percent.
+ *
+ * Entrance only. Closing is instant, because a dialog that lingers after Escape is
+ * latency on the way out of something you have already finished with -- and "the exit is
+ * faster than the entrance" taken to its end is exactly this. It also keeps the dialog
+ * in the DOM the frame it is asked for, which is what the smoke test looks for.
+ */
+.quick-backdrop,
+.settings-backdrop {
+  opacity: 1;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+
+.quick-open,
+.settings {
+  transform-origin: center;
+  transform: scale(1);
+  transition: transform 150ms var(--ease-out);
+}
+
+@starting-style {
+  .quick-backdrop,
+  .settings-backdrop {
+    opacity: 0;
+  }
+
+  /* Never `scale(0)`. Nothing in the world appears out of nothing, and a dialog that
+     grows from a point reads as a notification rather than as a mode. */
+  .quick-open,
+  .settings {
+    transform: scale(0.97);
+  }
 }
 
 .quick-open {
@@ -2430,7 +2807,8 @@
   cursor: default;
   transition:
     background var(--t-fast) var(--ease),
-    color var(--t-fast) var(--ease);
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
 }
 
 .settings-choice:hover {

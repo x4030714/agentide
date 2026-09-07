@@ -322,6 +322,14 @@ function TerminalView({
     // width and every subsequent line is garbage.
     const observer = new ResizeObserver(() => {
       if (disposed || host.clientWidth === 0) return;
+      // Nothing is done unless the size *in cells* changed. A pane drag fires this on
+      // every pixel while the terminal only cares about whole rows and columns, so most
+      // of those observations have nothing to do -- and refitting to the size it already
+      // is writes the terminal's dimensions back, which is its own resize event and the
+      // shape of a loop. See `.term-host`'s `overflow` for the other half.
+      const proposed = fit.proposeDimensions();
+      if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return;
+      if (proposed.cols === term.cols && proposed.rows === term.rows) return;
       fit.fit();
       if (!attach && ready) void ptyResize(id, term.rows, term.cols);
     });

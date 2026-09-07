@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { windowChrome } from "./bridge";
-
 /**
  * Appearance, the way a Mac app does it: follow the system by default, with an explicit
  * override that wins in both directions.
@@ -23,13 +21,13 @@ function stored(): Appearance {
 }
 
 /**
- * Drives two attributes on the document element:
+ * Drives `data-theme` on the document element: the explicit override, absent while
+ * following the system, which is what lets `world.css` express "system dark unless light
+ * was chosen" in plain CSS.
  *
- * - `data-theme` — the explicit override, absent while following the system, which is
- *   what lets `world.css` express "system dark unless light was chosen" in plain CSS.
- * - `data-effect` — whether the window's translucency actually applied. This one is not
- *   cosmetic: the window is `transparent: true`, so if the blur fails we are clear glass
- *   over the desktop, not an opaque window. `off` swaps the surfaces to solid.
+ * `data-effect` — whether the window's translucency actually applied — used to be set
+ * here too. It moved to `useTransparency`, which is the hook that can change the answer:
+ * one attribute, one writer, and no race between a probe and a command that disagree.
  */
 export function useAppearance(): [Appearance, (next: Appearance) => void] {
   const [appearance, setAppearance] = useState<Appearance>(stored);
@@ -45,22 +43,6 @@ export function useAppearance(): [Appearance, (next: Appearance) => void] {
       /* A context that refuses storage still gets the choice for this session. */
     }
   }, [appearance]);
-
-  useEffect(() => {
-    let cancelled = false;
-    windowChrome
-      .effectActive()
-      .then((active) => {
-        if (!cancelled) document.documentElement.dataset.effect = active ? "on" : "off";
-      })
-      .catch(() => {
-        // Unknown means we cannot promise a backdrop, so assume none and paint solid.
-        if (!cancelled) document.documentElement.dataset.effect = "off";
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const set = useCallback((next: Appearance) => setAppearance(next), []);
   return [appearance, set];

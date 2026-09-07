@@ -176,6 +176,66 @@ export function IconSettings({ size = 13 }: { size?: number }) {
 }
 
 /**
+ * The activity bar's marks.
+ *
+ * A 20px box with the family's 1.5 stroke, so the rail reads at the same weight as the
+ * 12px icons rather than as a bolder set drawn larger — scaling a 12px glyph to 20 would
+ * scale its stroke with it.
+ */
+function RailGlyph({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+/** Explorer. Two sheets, the front one with a cut corner. */
+export const IconFiles = () => (
+  <RailGlyph>
+    <path d="M7 7.5v-4h5.5l3 3v7h-3.5" />
+    <path d="M3.5 7.5h5.5l3 3v7h-8.5z" />
+    <path d="M9 7.5v3h3" />
+  </RailGlyph>
+);
+
+/** Changes. A pencil: the queue is what the agent edited, waiting on you. */
+export const IconEdit = () => (
+  <RailGlyph>
+    <path d="M3.5 16.5l1-3.5 8.7-8.7 2.5 2.5-8.7 8.7z" />
+    <path d="M11.5 6l2.5 2.5" />
+  </RailGlyph>
+);
+
+/** Repository. The git branch mark: a trunk, a fork, and the head each one points at. */
+export const IconBranch = () => (
+  <RailGlyph>
+    <circle cx="6" cy="4.5" r="1.9" />
+    <circle cx="6" cy="15.5" r="1.9" />
+    <circle cx="14" cy="4.5" r="1.9" />
+    <path d="M6 6.4v7.2" />
+    <path d="M14 6.4v2.1c0 1.7-1.4 3.1-3.1 3.1H6" />
+  </RailGlyph>
+);
+
+/** Conversations. A speech bubble — the agent's own past turns. */
+export const IconChat = () => (
+  <RailGlyph>
+    <path d="M4.5 4h11A1.5 1.5 0 0 1 17 5.5v6a1.5 1.5 0 0 1-1.5 1.5H8l-3.5 3v-3A1.5 1.5 0 0 1 3 11.5v-6A1.5 1.5 0 0 1 4.5 4z" />
+  </RailGlyph>
+);
+
+/**
  * A mark per palette, drawn in the same family as everything else here.
  *
  * Each one names the palette's character rather than its colours: the colour is supplied
@@ -229,6 +289,51 @@ export function IconPalette({ id, size = 14 }: { id: string; size?: number }) {
         <svg {...common}>
           <path d="M3.2 1.9h5L11 4.7v7.4H3.2Z" />
           <path d="M8.1 1.9v2.9H11" />
+        </svg>
+      );
+
+    // A window with a sidebar. The shape it is named after, not its logo.
+    case "vscode":
+      return (
+        <svg {...common}>
+          <rect x="1.7" y="2.6" width="10.6" height="8.8" rx="1.1" />
+          <path d="M5.3 2.6v8.8" />
+        </svg>
+      );
+
+    // A peak with a snowline. The north.
+    case "nord":
+      return (
+        <svg {...common}>
+          <path d="M1.8 11.2 7 3l5.2 8.2Z" />
+          <path d="M5 7.9h4" />
+        </svg>
+      );
+
+    // A crate. The name says box, so the icon does too.
+    case "gruvbox":
+      return (
+        <svg {...common}>
+          <rect x="2" y="3.2" width="10" height="7.6" rx="1" />
+          <path d="M2 6.4h10M6 3.2v3.2" />
+        </svg>
+      );
+
+    // A drop. The one Dracula reference that is not a bat.
+    case "dracula":
+      return (
+        <svg {...common}>
+          <path d="M7 2.2c2.4 2.9 3.6 4.7 3.6 6.1a3.6 3.6 0 1 1-7.2 0c0-1.4 1.2-3.2 3.6-6.1Z" />
+        </svg>
+      );
+
+    // A sun on the horizon. Not the full disc: that is the appearance toggle's icon.
+    case "solarized":
+      return (
+        <svg {...common}>
+          <path d="M2 10.6h10" />
+          <path d="M4.2 10.6a2.8 2.8 0 0 1 5.6 0" />
+          <path d="M7 3.4v1.5M3.4 5.2l1 1M10.6 5.2l-1 1" />
         </svg>
       );
 

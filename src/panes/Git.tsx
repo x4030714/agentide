@@ -282,6 +282,9 @@ export function GitPane({ root, changes, revision, onOpenFile }: GitProps) {
   return (
     <div className="pane git">
       <div className="pane-header">
+        {/* The other two states above name the view; this one has to as well, because the
+            header is the sidebar's title and a branch button alone does not say where you are. */}
+        <span className="legend">Repository</span>
         <button type="button" className="ghost-button branch-button" onClick={() => void openBranches()}>
           {status?.detached ? `detached @ ${status.head ?? "?"}` : (status?.branch ?? "…")}
         </button>

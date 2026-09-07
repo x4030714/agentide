@@ -11,7 +11,16 @@ import { useEffect, useState } from "react";
  * attribute, so the app with no preferences set renders exactly the design the rest of
  * the codebase was built against.
  */
-export type Palette = "quiet" | "ferrous" | "halide" | "vellum";
+export type Palette =
+  | "quiet"
+  | "ferrous"
+  | "halide"
+  | "vellum"
+  | "vscode"
+  | "nord"
+  | "gruvbox"
+  | "dracula"
+  | "solarized";
 
 export interface PaletteOption {
   id: Palette;
@@ -25,6 +34,17 @@ export const PALETTES: PaletteOption[] = [
   { id: "ferrous", label: "Ferrous", note: "Warm graphite and copper. The workshop end." },
   { id: "halide", label: "Halide", note: "Cold cyan on near-black. A darkroom." },
   { id: "vellum", label: "Vellum", note: "Warm paper and ink. The quietest of them." },
+  {
+    id: "vscode",
+    label: "VS Code",
+    note: "Dark+ greys and its blue. Opaque, not glass.",
+  },
+  // The four below take their hues from well-known editor themes and solve them here, so
+  // each is that theme's character at this app's contrast floor rather than a port of it.
+  { id: "nord", label: "Nord", note: "Cold blue-grey, in Nord's spirit. Solved, not copied." },
+  { id: "gruvbox", label: "Gruvbox", note: "Warm retro amber, in Gruvbox's spirit." },
+  { id: "dracula", label: "Dracula", note: "Near-black, purple and pink, Dracula's way." },
+  { id: "solarized", label: "Solarized", note: "Teal and amber, tinted in both modes." },
 ];
 
 const KEY = "agentide.palette";

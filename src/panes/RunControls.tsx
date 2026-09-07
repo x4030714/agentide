@@ -1,5 +1,6 @@
 import { EDIT_MODES, MODE_HELP, MODE_LABEL } from "../lib/editmode";
 import type { EditMode } from "../lib/editmode";
+import { modelLabel, modelMenu } from "../lib/model-menu";
 import { PROMPT_HELP, PROMPT_LABEL, PROMPT_MODES } from "../lib/promptmode";
 import type { PromptMode } from "../lib/promptmode";
 import type { EffortLevel, ModelInfo } from "../lib/protocol";
@@ -14,16 +15,14 @@ import type { McpServerRow } from "../lib/transcript";
  * real answer, not a missing one. Neither is invented here.
  */
 
-/**
- * Shown until the SDK publishes its catalogue, which only happens once a turn has begun.
- * Provisional and labelled as such — offering nothing would make the control useless
- * before the first prompt, and offering a fabricated list would be worse.
- */
-const PROVISIONAL_MODELS: ModelInfo[] = [
-  { value: "claude-opus-5", displayName: "Opus 5", description: "" },
-  { value: "claude-sonnet-5", displayName: "Sonnet 5", description: "" },
-  { value: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5", description: "" },
-];
+/** One row of the menu. The grouping and the wording live in `model-menu.ts`. */
+function modelOption(entry: ModelInfo) {
+  return (
+    <option key={entry.value} value={entry.value} title={entry.description || undefined}>
+      {modelLabel(entry)}
+    </option>
+  );
+}
 
 const ALL_EFFORTS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -80,9 +79,8 @@ export function RunControls({
   mcpServers,
   disabled,
 }: RunControlsProps) {
-  const known = models.length > 0;
-  const list = known ? models : PROVISIONAL_MODELS;
-  const selected = list.find((entry) => entry.value === model);
+  const { known, catalogue, pinned, all } = modelMenu(models);
+  const selected = all.find((entry) => entry.value === model);
 
   /**
    * Only the levels this model actually has. The SDK silently downgrades an unsupported
@@ -148,11 +146,18 @@ export function RunControls({
           title={known ? selected?.description : "provisional list until the first turn"}
         >
           <option value="">default</option>
-          {list.map((entry) => (
-            <option key={entry.value} value={entry.value}>
-              {entry.displayName}
-            </option>
-          ))}
+          {known ? (
+            <>
+              <optgroup label="This installation">{catalogue.map(modelOption)}</optgroup>
+              {pinned.length > 0 && (
+                <optgroup label="Pinned versions">{pinned.map(modelOption)}</optgroup>
+              )}
+            </>
+          ) : (
+            // One group before the first turn: there is nothing to contrast it against
+            // yet, and the note beside the control already says the list is provisional.
+            pinned.map(modelOption)
+          )}
         </select>
       </label>
 

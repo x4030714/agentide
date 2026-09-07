@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
@@ -8,6 +9,9 @@ import { errorMessage } from "./lib/protocol";
 import { answerIdeTool, HOST_TOOL_NAMES } from "./lib/ide-host";
 import { requestFocus, useKeybindings } from "./lib/keys";
 import { usePalette } from "./lib/palette";
+import { closeTab, NO_TABS, openTab, selectTab } from "./lib/tabs";
+import type { Tabs } from "./lib/tabs";
+import { useTransparency } from "./lib/transparency";
 import { useLsp } from "./lib/useLsp";
 import type {
   Checkpoint,
@@ -17,6 +21,8 @@ import type {
   WirePath,
   Workspace,
 } from "./lib/protocol";
+import { ActivityBar } from "./panes/ActivityBar";
+import type { SidebarView } from "./panes/ActivityBar";
 import { ChangesPane } from "./panes/Changes";
 import { EditorPane } from "./panes/Editor";
 import type { RevealTarget } from "./panes/Editor";
@@ -25,6 +31,7 @@ import { ConversationsPane } from "./panes/Conversations";
 import { GitPane } from "./panes/Git";
 import { QuickOpen } from "./panes/QuickOpen";
 import { Settings } from "./panes/Settings";
+import { StatusBar } from "./panes/StatusBar";
 import { TitleBar } from "./panes/TitleBar";
 import { TerminalPane } from "./panes/Terminal";
 import { TranscriptPane } from "./panes/Transcript";
@@ -35,16 +42,25 @@ const LAST_WORKSPACE_KEY = "agentide.lastWorkspace";
 
 export default function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [activePath, setActivePath] = useState<WirePath | null>(null);
+  const [tabs, setTabs] = useState<Tabs>(NO_TABS);
+  const activePath = tabs.active;
   const [changes, setChanges] = useState<FsEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [appearance, setAppearance] = useAppearance();
   const [palette, setPalette] = usePalette();
+  const [transparency, setTransparency] = useTransparency();
   /** The checkpoint the current turn started from, and what the review queue reads against. */
   const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
   const [reviewRevision, setReviewRevision] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
-  const [tab, setTab] = useState<"editor" | "changes" | "git" | "conversations">("editor");
+  /** Which view the sidebar shows. The activity bar sets it; nothing else does. */
+  const [view, setView] = useState<SidebarView>("explorer");
+  /**
+   * Whether the sidebar is put away. Mirrored from the panel rather than driving it:
+   * dragging the separator collapses it too, and the rail must dim its icon for that as
+   * much as for Ctrl+B.
+   */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   /**
    * Where the editor should put the cursor next. Carries a nonce because jumping twice to
    * the same line is a real thing to ask for -- go to definition, scroll away, go again --
@@ -59,18 +75,56 @@ export default function App() {
   const [resumed, setResumed] = useState<string | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /** The tree panel, so Ctrl+B can collapse it through the layout's own API. */
-  const treeRef = useRef<PanelImperativeHandle>(null);
+  /** The sidebar panel, so Ctrl+B and the rail can collapse it through the layout's own API. */
+  const sidebarRef = useRef<PanelImperativeHandle>(null);
+
+  /** Show a view, bringing the sidebar back if it was put away. */
+  const showView = useCallback((next: SidebarView) => {
+    setView(next);
+    sidebarRef.current?.expand();
+  }, []);
 
   /**
-   * Go-to-definition landing in another file. The tab switch is part of the answer: a
-   * jump that silently changes the editor behind the Changes tab looks like nothing
-   * happened.
+   * The rail's own click. The active icon puts the sidebar away and brings it back, which
+   * is what every editor with an activity bar does; any other icon switches to it.
    */
+  const selectView = useCallback(
+    (next: SidebarView) => {
+      const panel = sidebarRef.current;
+      if (next === view && panel && !panel.isCollapsed()) panel.collapse();
+      else showView(next);
+    },
+    [view, showView],
+  );
+
+  /** Open a file in a tab, or focus the tab it is already in. */
+  const openFile = useCallback((path: WirePath) => {
+    setTabs((previous) => openTab(previous, path));
+  }, []);
+
+  /**
+   * A file the agent has just edited.
+   *
+   * Opened behind whatever you are reading. The editor following the agent is worth
+   * having, and before tabs it could only do that by replacing your file -- which made
+   * the useful feature the fastest way to lose your place.
+   */
+  const openEdited = useCallback((path: WirePath) => {
+    setTabs((previous) => openTab(previous, path, true));
+  }, []);
+
+  const selectFile = useCallback((path: WirePath) => {
+    setTabs((previous) => selectTab(previous, path));
+  }, []);
+
+  const closeFile = useCallback((path: WirePath) => {
+    setTabs((previous) => closeTab(previous, path));
+  }, []);
+
+  /** Go-to-definition landing in another file. The editor is always on screen, so it lands. */
   const openAt = useCallback(
     (path: WirePath, line?: number, column?: number, endLine?: number, endColumn?: number) => {
-      setActivePath(path);
-      setTab("editor");
+      setTabs((previous) => openTab(previous, path));
       setReveal((previous) => ({
         path,
         line,
@@ -127,7 +181,7 @@ export default function App() {
     try {
       const opened = await openWorkspace(path, setChanges);
       setWorkspace(opened);
-      setActivePath(null);
+      setTabs(NO_TABS);
       setChanges([]);
       // Conversations are per-workspace, so the one being continued cannot survive a move.
       setResumed(null);
@@ -178,9 +232,9 @@ export default function App() {
         {
           key: "b",
           ctrl: true,
-          describe: "Show or hide the file tree",
+          describe: "Show or hide the sidebar",
           run: () => {
-            const panel = treeRef.current;
+            const panel = sidebarRef.current;
             if (!panel) return;
             // Asked of the layout rather than tracked separately: dragging the
             // separator collapses it too, and two sources of truth would disagree.
@@ -200,8 +254,13 @@ export default function App() {
           key: "Digit1",
           ctrl: true,
           whileTyping: true,
-          describe: "Focus the file tree",
-          run: () => requestFocus("tree"),
+          describe: "Show the file tree and focus it",
+          run: () => {
+            // A hidden view cannot take focus, and both the switch and the expand are
+            // state changes -- so they have to land before the request, not after it.
+            flushSync(() => showView("explorer"));
+            requestFocus("tree");
+          },
         },
         {
           key: "Digit2",
@@ -215,10 +274,7 @@ export default function App() {
           ctrl: true,
           whileTyping: true,
           describe: "Focus the editor",
-          run: () => {
-            setTab("editor");
-            requestFocus("editor");
-          },
+          run: () => requestFocus("editor"),
         },
         {
           key: "Digit4",
@@ -228,7 +284,7 @@ export default function App() {
           run: () => requestFocus("terminal"),
         },
       ],
-      [],
+      [showView],
     ),
   );
 
@@ -240,16 +296,15 @@ export default function App() {
         onAppearance={setAppearance}
         palette={palette}
         onPalette={setPalette}
+        transparency={transparency}
+        onTransparency={setTransparency}
         onSettings={() => setSettingsOpen(true)}
       />
       {error && <p className="note is-error app-error">{error}</p>}
       {quickOpen && (
         <QuickOpen
           root={workspace?.root ?? null}
-          onOpen={(path) => {
-            setActivePath(path);
-            setTab("editor");
-          }}
+          onOpen={openFile}
           onClose={() => setQuickOpen(false)}
         />
       )}
@@ -260,6 +315,8 @@ export default function App() {
           onAppearance={setAppearance}
           palette={palette}
           onPalette={setPalette}
+          transparency={transparency}
+          onTransparency={setTransparency}
           onImported={(id) => {
             // The imported conversation belongs in the transcript, which is where it is
             // continued -- setting it as resumed makes that pane replay it. Sending the
@@ -275,140 +332,123 @@ export default function App() {
       )}
 
       {/**
-       * The agent leads and the editor is the surface it acts on, so the transcript is
-       * the widest pane and is read before the editor. A narrow index sits left of it.
+       * The frame, left to right: the icon rail, the view it selects, the transcript, and
+       * the work column.
        *
-       * Putting the agent in a slim right-hand column would be the arrangement every
-       * agentic editor already ships, which is the one this build exists to refuse.
+       * The transcript is a permanent column and not a view on the rail, which is the one
+       * place this parts company with the editor it borrows its shape from. The agent
+       * leads and the editor is the surface it acts on; a transcript you have to summon
+       * is a transcript you consult, which is the arrangement every agentic editor
+       * already ships and the one this build exists to refuse.
        */}
-      <Group orientation="horizontal" className="workbench">
-        <Panel id="tree" defaultSize="14" minSize="10" collapsible panelRef={treeRef}>
-          <FileTree
-            root={workspace?.root ?? null}
-            activePath={activePath}
-            changes={changes}
-            onOpenFile={setActivePath}
-            onOpenFolder={() => void openFolder()}
-          />
-        </Panel>
-        <Separator className="separator vertical" />
-        {/**
-         * The agent leads by reading order, not by out-measuring the editor. An earlier
-         * split gave the transcript 45% and left the editor ~79 columns — under
-         * rustfmt's default max_width of 100, so real Rust and C++ files scrolled
-         * sideways at the shipped default. Reading-order primacy already carries
-         * "agent leads"; taking columns off the primary language to restate it does not.
-         */}
-        <Panel id="transcript" defaultSize="37" minSize="20" collapsible>
-          <TranscriptPane
-            root={workspace?.root ?? null}
-            onTurnStart={onTurnStart}
-            onTurnEnd={onTurnEnd}
-            resumeConversation={resumed}
-            onNewConversation={() => setResumed(null)}
-            onAgentEdit={openAt}
-            onToolCall={onToolCall}
-            hostTools={HOST_TOOL_NAMES}
-          />
-        </Panel>
-        <Separator className="separator vertical" />
-        <Panel id="work" defaultSize="49" minSize="22">
-          <Group orientation="vertical">
-            <Panel id="editor" defaultSize="72" minSize="30">
-              {/**
-               * One column, two jobs: the file you are reading and the changes waiting
-               * on you. Tabbed rather than split, because reviewing a diff and editing
-               * the same file at once is a thing nobody does.
-               */}
-              <div className="tabbed">
-                <div className="tabs" role="tablist">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === "editor"}
-                    className={`tab${tab === "editor" ? " is-on" : ""}`}
-                    onClick={() => setTab("editor")}
-                  >
-                    Editor
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === "changes"}
-                    className={`tab${tab === "changes" ? " is-on" : ""}`}
-                    onClick={() => setTab("changes")}
-                  >
-                    Changes
-                    {changeCount > 0 && <span className="tab-count">{changeCount}</span>}
-                  </button>
-                  {/* Distinct from Changes on purpose: that tab is the agent's turn
-                      waiting on review, this one is the repository's own state. */}
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === "git"}
-                    className={`tab${tab === "git" ? " is-on" : ""}`}
-                    onClick={() => setTab("git")}
-                  >
-                    Repository
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === "conversations"}
-                    className={`tab${tab === "conversations" ? " is-on" : ""}`}
-                    onClick={() => setTab("conversations")}
-                  >
-                    Conversations
-                  </button>
-                </div>
-                <div className="tab-body">
-                  {/* Both stay mounted: switching tabs must not drop the editor's
-                      undo stack or re-fetch a diff you were halfway through reading. */}
-                  <div className="tab-panel" hidden={tab !== "editor"}>
-                    <EditorPane
-                      path={activePath}
-                      changes={changes}
-                      reveal={reveal}
-                      lsp={lsp}
-                    />
-                  </div>
-                  <div className="tab-panel" hidden={tab !== "changes"}>
-                    <ChangesPane
-                      checkpoint={checkpoint}
-                      revision={reviewRevision}
-                      onCountChange={setChangeCount}
-                    />
-                  </div>
-                  <div className="tab-panel" hidden={tab !== "conversations"}>
-                    <ConversationsPane
-                      root={workspace?.root ?? null}
-                      revision={reviewRevision}
-                      resumedId={resumed}
-                      onResume={setResumed}
-                    />
-                  </div>
-                  <div className="tab-panel" hidden={tab !== "git"}>
-                    <GitPane
-                      root={workspace?.root ?? null}
-                      changes={changes}
-                      revision={reviewRevision}
-                      onOpenFile={(path) => {
-                        setActivePath(path as WirePath);
-                        setTab("editor");
-                      }}
-                    />
-                  </div>
-                </div>
+      <div className="workbench">
+        <ActivityBar
+          view={view}
+          collapsed={sidebarCollapsed}
+          changeCount={changeCount}
+          onSelect={selectView}
+          onSettings={() => setSettingsOpen(true)}
+        />
+        <Group orientation="horizontal" className="workbench-panels">
+          <Panel
+            id="sidebar"
+            defaultSize="16"
+            minSize="10"
+            collapsible
+            panelRef={sidebarRef}
+            onResize={(size) => setSidebarCollapsed(size.asPercentage <= 0)}
+          >
+            {/**
+             * All four views stay mounted. Switching must not drop the tree's expanded
+             * folders or re-fetch a diff you were halfway through reading -- and the tree
+             * stops measuring itself while it is hidden, so a view nobody is looking at
+             * costs no rows. See `measure` in FileTree.
+             */}
+            <div className="sidebar">
+              <div className="sidebar-view" hidden={view !== "explorer"}>
+                <FileTree
+                  root={workspace?.root ?? null}
+                  activePath={activePath}
+                  changes={changes}
+                  onOpenFile={openFile}
+                  onOpenFolder={() => void openFolder()}
+                />
               </div>
-            </Panel>
-            <Separator className="separator horizontal" />
-            <Panel id="terminal" defaultSize="28" minSize="8" collapsible>
-              <TerminalPane root={workspace?.root ?? null} />
-            </Panel>
-          </Group>
-        </Panel>
-      </Group>
+              <div className="sidebar-view" hidden={view !== "changes"}>
+                <ChangesPane
+                  checkpoint={checkpoint}
+                  revision={reviewRevision}
+                  onCountChange={setChangeCount}
+                />
+              </div>
+              {/* Distinct from Changes on purpose: that view is the agent's turn waiting
+                  on review, this one is the repository's own state. */}
+              <div className="sidebar-view" hidden={view !== "git"}>
+                <GitPane
+                  root={workspace?.root ?? null}
+                  changes={changes}
+                  revision={reviewRevision}
+                  onOpenFile={(path) => openFile(path as WirePath)}
+                />
+              </div>
+              <div className="sidebar-view" hidden={view !== "conversations"}>
+                <ConversationsPane
+                  root={workspace?.root ?? null}
+                  revision={reviewRevision}
+                  resumedId={resumed}
+                  onResume={setResumed}
+                />
+              </div>
+            </div>
+          </Panel>
+          <Separator className="separator vertical" />
+          {/**
+           * The agent leads by reading order, not by out-measuring the editor. An earlier
+           * split gave the transcript 45% and left the editor ~79 columns — under
+           * rustfmt's default max_width of 100, so real Rust and C++ files scrolled
+           * sideways at the shipped default. Reading-order primacy already carries
+           * "agent leads"; taking columns off the primary language to restate it does not.
+           */}
+          <Panel id="transcript" defaultSize="35" minSize="20" collapsible>
+            <TranscriptPane
+              root={workspace?.root ?? null}
+              onTurnStart={onTurnStart}
+              onTurnEnd={onTurnEnd}
+              resumeConversation={resumed}
+              onNewConversation={() => setResumed(null)}
+              onAgentEdit={openEdited}
+              onToolCall={onToolCall}
+              hostTools={HOST_TOOL_NAMES}
+            />
+          </Panel>
+          <Separator className="separator vertical" />
+          <Panel id="work" defaultSize="49" minSize="22">
+            <Group orientation="vertical">
+              <Panel id="editor" defaultSize="72" minSize="30">
+                <EditorPane
+                  tabs={tabs.open}
+                  path={activePath}
+                  changes={changes}
+                  reveal={reveal}
+                  lsp={lsp}
+                  onSelect={selectFile}
+                  onClose={closeFile}
+                />
+              </Panel>
+              <Separator className="separator horizontal" />
+              <Panel id="terminal" defaultSize="28" minSize="8" collapsible>
+                <TerminalPane root={workspace?.root ?? null} />
+              </Panel>
+            </Group>
+          </Panel>
+        </Group>
+      </div>
+      <StatusBar
+        root={workspace?.root ?? null}
+        changes={changes}
+        revision={reviewRevision}
+        servers={lsp.servers}
+      />
     </div>
   );
 }

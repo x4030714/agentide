@@ -15,6 +15,7 @@ import type { Workspace } from "../lib/protocol";
 import type { Appearance } from "../lib/appearance";
 import { PALETTES } from "../lib/palette";
 import type { Palette } from "../lib/palette";
+import type { Transparency } from "../lib/transparency";
 
 /**
  * The window's own title bar, drawn by us because the OS frame is gone.
@@ -34,6 +35,8 @@ export function TitleBar({
   onAppearance,
   palette,
   onPalette,
+  transparency,
+  onTransparency,
   onSettings,
 }: {
   workspace: Workspace | null;
@@ -41,6 +44,8 @@ export function TitleBar({
   onAppearance: (next: Appearance) => void;
   palette: Palette;
   onPalette: (next: Palette) => void;
+  transparency: Transparency;
+  onTransparency: (next: Transparency) => void;
   onSettings: () => void;
 }) {
   const [maximized, setMaximized] = useState(false);
@@ -96,8 +101,8 @@ export function TitleBar({
       </span>
 
       <div className="titlebar-actions">
-        {/* Not a cycling button like appearance: four options with names need a list,
-            and a button that cycles through unnamed palettes is a guessing game. */}
+        {/* Not a cycling button like appearance: nine named options need a list, and a
+            button that cycles through unnamed palettes is a guessing game. */}
         <div className="palette-picker" onPointerDown={(event) => event.stopPropagation()}>
           <button
             type="button"
@@ -130,6 +135,25 @@ export function TitleBar({
                   <span className="palette-note">{option.note}</span>
                 </button>
               ))}
+              {/* The window's own glass, in the menu that already decides how the app
+                  looks. It is not a palette, hence the rule above it -- but a third icon
+                  in the title bar for one switch would cost more chrome than it saves. */}
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={transparency === "solid"}
+                className={`palette-option palette-solid${
+                  transparency === "solid" ? " is-on" : ""
+                }`}
+                onClick={() => {
+                  onTransparency(transparency === "solid" ? "glass" : "solid");
+                  setPickerOpen(false);
+                }}
+              >
+                <span className="palette-chip" />
+                <span className="palette-label">Solid background</span>
+                <span className="palette-note">No blur, no translucency. Flat panes.</span>
+              </button>
             </div>
           )}
         </div>
