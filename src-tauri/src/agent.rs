@@ -621,6 +621,10 @@ pub async fn agent_start(
         .spawn()
         .map_err(|err| IpcError::from_io(&err, "cannot start the agent host"))?;
 
+    // This one carries the most: the host starts the Claude CLI, which starts an MCP
+    // server per configured entry, and all of them join the job through their parent.
+    crate::reaper::adopt(child.id());
+
     // `spawn` succeeded, so all three pipes exist.
     let stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");

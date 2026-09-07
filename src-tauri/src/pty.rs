@@ -248,6 +248,13 @@ fn spawn(
             format!("cannot start {} in a terminal: {err:#}", argv[0]),
         )
     })?;
+    // A shell, and everything the person or the agent runs inside it -- a dev server, a
+    // watcher, a build. `process_id` is None once the child has already exited, which is
+    // not a case worth reporting: there is nothing left to outlive anything.
+    if let Some(pid) = child.process_id() {
+        crate::reaper::adopt(pid);
+    }
+
     // Nothing else spawns into this pty, and on Unix a slave left open is a pty that
     // never reports EOF.
     drop(pair.slave);

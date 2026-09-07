@@ -9,6 +9,7 @@ mod ipc;
 mod lsp;
 mod memory;
 mod pty;
+mod reaper;
 mod window;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,6 +23,9 @@ pub fn run() {
         .manage(lsp::LspState::default())
         .manage(window::ChromeState::default())
         .setup(|app| {
+            // Before anything is spawned, because a child started first cannot be taken
+            // into the job afterwards without a race worth avoiding.
+            reaper::init();
             // The window is frameless and transparent; this is what makes it translucent
             // and what keeps the frontend's title bar in step with the maximized state.
             window::setup(app.handle());
@@ -81,6 +85,7 @@ pub fn run() {
             window::window_close,
             window::window_is_maximized,
             window::window_effect_active,
+            window::window_set_backdrop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

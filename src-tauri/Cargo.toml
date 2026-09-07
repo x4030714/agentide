@@ -39,4 +39,16 @@ uuid = { version = "1", features = ["v4"] }
 [target.'cfg(windows)'.dependencies]
 window-vibrancy = "0.6"
 windows-version = "0.1"
-
+# Rounding the window is ours to do: Windows 10 rounds nothing itself, and the window
+# has no per-pixel alpha (WS_EX_LAYERED is unset), so the radius the frontend draws is
+# composited against an opaque surface and the corner comes back square. Clipping the
+# window region is the one route that does not depend on DWM. Already in the tree via
+# window-vibrancy; only the features are new.
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  # CreateJobObjectW takes SECURITY_ATTRIBUTES, which lives behind this.
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }

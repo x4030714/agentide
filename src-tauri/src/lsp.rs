@@ -430,6 +430,10 @@ fn start(
         }
     })?;
 
+    // The orphan that cost the most: a rust-analyzer left by a killed app was still
+    // holding a gigabyte the following evening.
+    crate::reaper::adopt(child.id());
+
     // `spawn` succeeded, so all three pipes exist.
     let stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
