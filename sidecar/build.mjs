@@ -1,5 +1,5 @@
 /**
- * Bundle the sidecar to `dist/main.mjs`.
+ * Bundle the sidecar to `dist/main.mjs`, and the `agentide` command to `dist/cli.mjs`.
  *
  * Not a single-file executable. The agent SDK ships a native `claude` binary in a
  * platform package and resolves it from disk at runtime, so a `--compile`-style build
@@ -14,13 +14,7 @@
 
 import { build } from "esbuild";
 
-await build({
-  entryPoints: ["src/main.ts"],
-  // `.mjs`, not `.js`: the packaged copy sits beside the executable with no
-  // `package.json` next to it, so `"type": "module"` does not reach it and Node reads a
-  // `.js` ESM bundle as CommonJS and dies on the first `import`. The extension carries
-  // the format wherever the file ends up.
-  outfile: "dist/main.mjs",
+const shared = {
   bundle: true,
   platform: "node",
   format: "esm",
@@ -28,4 +22,24 @@ await build({
   sourcemap: true,
   external: ["@anthropic-ai/claude-agent-sdk", "zod"],
   logLevel: "info",
+};
+
+// `.mjs`, not `.js`: the packaged copy sits beside the executable with no `package.json`
+// next to it, so `"type": "module"` does not reach it and Node reads a `.js` ESM bundle as
+// CommonJS and dies on the first `import`. The extension carries the format wherever the
+// file ends up.
+await build({ ...shared, entryPoints: ["src/main.ts"], outfile: "dist/main.mjs" });
+
+/**
+ * The `agentide` command.
+ *
+ * A shebang because this is a `bin` entry: npm writes a launcher that execs the file, and
+ * without one the POSIX shim has nothing to hand it to. Windows uses its own `.cmd` shim
+ * and ignores the line, so it costs nothing there.
+ */
+await build({
+  ...shared,
+  entryPoints: ["src/cli.ts"],
+  outfile: "dist/cli.mjs",
+  banner: { js: "#!/usr/bin/env node" },
 });
