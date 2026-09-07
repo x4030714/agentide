@@ -3,7 +3,8 @@
 A desktop IDE where the coding agent works over the semantic model rather than over text.
 Tauri 2 + Rust core, React 19 + Vite frontend, Monaco editor, and the Claude Agent SDK in
 a Node sidecar. `PRODUCT.md` is the product truth; the plan lives in
-`~/.claude/plans/virtual-brewing-hoare.md`.
+`~/.claude/plans/virtual-brewing-hoare.md`, and `PRIORITY.md` is the short list of what to
+build next.
 
 ## Layout
 
@@ -82,6 +83,37 @@ ever reaching `canUseTool`. Remove that rule and writes go silent rather than st
 The format is markdown with YAML frontmatter and `[[wikilinks]]`, which is what Obsidian
 reads -- the vault is a vault because of what the SDK already writes, not because of
 anything here. Obsidian does not need to be installed.
+
+**A fix is recorded from an observed transition, never from the model saying it fixed
+something.** `src/lib/lessons.ts` remembers which `ide_run` commands exited non-zero, and
+when the *same* command later exits zero it appends a prompt to that tool result asking for
+the symptom, the cause, the fix and the tell. Self-reported success is the failure mode
+this project keeps paying for -- a change that "works" because `cargo check` passed and
+`tsc` was never run -- so the trigger is a fact about the machine rather than a claim.
+
+Three things about it are load-bearing. `recordRun` is called before `ideRun`'s non-zero
+early return, or failures are never recorded and no transition can ever be seen. The
+command is keyed on its exact text, whitespace aside, because pairing `cargo test --lib`
+with a later `cargo test -p other` would assert a fix that was never demonstrated. And the
+prompt says when *not* to write a note: most fixes are a typo, and a vault of those costs
+prompt tokens on every later turn while burying the notes that matter -- which is the
+"Speed and tokens" rule below, applied to memory.
+
+**Everything spawned must be adopted into the job, or it outlives a kill.**
+`src-tauri/src/reaper.rs` creates a Windows job object with `KILL_ON_JOB_CLOSE` and every
+long-lived child is handed to it: the agent host (`agent.rs`), each language server
+(`lsp.rs`), each terminal shell (`pty.rs`). Grandchildren join through their parent, which
+is what covers the Claude CLI and every MCP server it starts -- nothing here knows those
+exist. Add a spawn without `reaper::adopt` and it is an orphan again.
+
+The exit handler in `lib.rs` is not a substitute and never was: the case that matters is
+taskkill, or the OS reclaiming memory, and neither runs our code. Two rules keep this
+working -- the job handle must stay non-inheritable, because a copy living in a child
+would keep the job alive after we died and it would then kill nothing; and the kill-on-close
+limit must be set, because a job without it holds the children *and* stops them joining a
+job that would. Verified by hard-killing the app with no `/T` and confirming every child
+died with it; that is the only test that proves it, since an exit handler passes every
+gentler one.
 
 **A tool declared but not answered is broken forever, silently.** The sidecar declares
 `ide_*` tools and the frontend answers them from `HOST_TOOL_NAMES`. `ide-tool-names.test.ts`

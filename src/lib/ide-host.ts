@@ -7,6 +7,7 @@ import {
 } from "./agent-shell";
 import { readFile, writeFile } from "./bridge";
 import { HOST_TOOL_NAMES } from "./ide-tool-names";
+import { lessonPrompt, recordRun } from "./lessons";
 import type { Json } from "./lsp-client";
 import type { LspWorkspace } from "./lsp-monaco";
 // The same inverse the editor uses; see `uriToPath` on why nothing compares URI strings.
@@ -540,6 +541,9 @@ async function ideRun(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   const took = `${(result.ms / 1000).toFixed(1)}s`;
 
   if (result.timedOut) {
+    // Recorded as a failure: a killed command did not do its job, and if the same one
+    // later finishes, that is exactly the transition worth learning from.
+    recordRun(command, null, result.output);
     // An error, not a success with a note: a command that was killed did not do its job,
     // and a model told otherwise will build on output that stops mid-way.
     return toolError(
@@ -551,11 +555,16 @@ async function ideRun(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
     );
   }
 
+  // Before the early return below, so a failure is remembered as well as a pass.
+  const lesson = recordRun(command, result.exitCode, result.output);
+
   const head = `exit ${result.exitCode ?? "?"} in ${took}`;
   const body = result.output || "(no output)";
-  return result.exitCode === 0
-    ? toolOk(`${head}\n${body}`)
-    : toolError(`${head}\n${body}`);
+  if (result.exitCode !== 0) return toolError(`${head}\n${body}`);
+  // Appended to the output rather than sent as its own message: the model is already
+  // reading this result, and the moment it learns the command passes is the moment it
+  // still knows why. See `lessons.ts`.
+  return toolOk(lesson ? `${head}\n${body}\n\n${lessonPrompt(lesson)}` : `${head}\n${body}`);
 }
 
 /**
