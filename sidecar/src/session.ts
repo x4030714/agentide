@@ -6,7 +6,9 @@
  * is reached, plus ~1.8s for each external server -- so calling it per prompt made the
  * sixth turn pay exactly what the first one did, none of it model time. In
  * streaming-input mode one call stays alive and takes its prompts from an async iterable,
- * and that cost is paid once.
+ * and that cost is paid once. The other side of that bargain is that a session now owns a
+ * process for as long as it lives, which is why one hands over to the next -- see
+ * `started`.
  *
  * The conversation is still ours to carry. The SDK's own session id is learned from the
  * first message it produces and fed back as `resume`, because the query has to be rebuilt
@@ -125,11 +127,43 @@ interface LiveQuery {
   ide: McpServerConfig;
 }
 
+/** The turn `prompt()` is waiting on. At most one per session: `#chain` serializes them. */
+interface Pending {
+  /**
+   * The query it runs on, or null while it is still being prepared. A turn is recorded
+   * before the config is read and the query retuned, so a Stop in that window has
+   * something to cancel; there is simply nothing to send an interrupt to yet.
+   */
+  live: LiveQuery | null;
+  settle: (outcome: Outcome) => void;
+}
+
+/**
+ * How a query is started. There is one implementation, the SDK's; the indirection exists
+ * so the tests can drive a whole session -- interrupts, retirement, a CLI that dies
+ * mid-turn -- without spawning one. Every bug this file has had lived in that sequencing
+ * rather than in a value, and none of it is reachable through a real CLI on demand.
+ */
+export type StartQuery = typeof query;
+
+/**
+ * The sessions that have started a query, and therefore own a CLI.
+ *
+ * Nothing in the protocol says a conversation is over: "New" in the transcript pane
+ * allocates a fresh session id and prompts with it, and the pane shows one conversation
+ * at a time. So the first prompt of a session takes over from the one before it.
+ * Otherwise every press of New would leave a resident CLI behind, plus every external MCP
+ * server that CLI spawned -- five presses, five process trees, until the app is restarted.
+ */
+const started = new Set<Session>();
+
 export class Session {
   readonly #link: HostLink;
   readonly #sessionId: string;
   /** Shared with every session: the catalogue belongs to the process, not the turn. */
   readonly #models: ModelCatalogue;
+  /** How `#build` reaches the SDK; see `StartQuery`. */
+  readonly #start: StartQuery;
   /** Turns run one at a time; a prompt arriving mid-turn queues behind this. */
   #chain: Promise<void> = Promise.resolve();
   /** The SDK's session id, learned from its messages and replayed as `resume`. */
@@ -139,20 +173,29 @@ export class Session {
   /** The query these turns run on, or null when the next prompt has to build one. */
   #live: LiveQuery | null = null;
   /** The turn waiting for its `result`. At most one: `#chain` serializes them. */
-  #pending: { live: LiveQuery; settle: (outcome: Outcome) => void } | null = null;
+  #pending: Pending | null = null;
   /** Set by `interrupt`, cleared when the turn it applies to reports `done`. */
   #interrupted = false;
   /** Set by `interrupt` and `dispose`; makes queued prompts finish without running. */
   #cancelled = false;
+  /** Set by `dispose`. Unlike `#cancelled` this is final: the session is over. */
+  #disposed = false;
 
-  constructor(link: HostLink, sessionId: string, models: ModelCatalogue) {
+  constructor(
+    link: HostLink,
+    sessionId: string,
+    models: ModelCatalogue,
+    start: StartQuery = query,
+  ) {
     this.#link = link;
     this.#sessionId = sessionId;
     this.#models = models;
+    this.#start = start;
   }
 
   /** Queue a turn. Resolves when it has finished and its `done` has been sent. */
   prompt(cwd: string, text: string, options?: PromptOptions): Promise<void> {
+    this.#claim();
     this.#chain = this.#chain.then(() => this.#runTurn(cwd, text, options));
     return this.#chain;
   }
@@ -173,39 +216,77 @@ export class Session {
     // whether a query exists. Interrupting an idle one would abort nothing and put a
     // working session at risk to do it.
     if (!pending) return;
-    try {
-      await pending.live.query.interrupt();
-    } catch (error) {
-      // The turn may have ended between the check and the call; that is the outcome we
-      // wanted anyway.
-      warn(`interrupt on ${this.#sessionId} failed: ${describe(error)}`);
+
+    const live = pending.live;
+    if (!live) {
+      // Stopped while the turn was still assembling its query. There is nothing to send
+      // an interrupt to, so the turn ends here and `#runTurn` finds it settled before it
+      // pushes the prompt -- which is the whole point of recording it that early.
+      this.#pending = null;
+      pending.settle({ reason: "interrupted" });
+      return;
     }
 
+    // Armed before the request rather than after it. `Query.request()` sets no timer of
+    // its own and settles only on a matching control response, a failed write or
+    // `cleanup()`, so a CLI that is alive and simply never answers leaves the await below
+    // hanging -- and registering afterwards means the watchdog for exactly that case is
+    // never registered at all. The turn then never ends and the pane keeps Stop, New and
+    // the composer disabled until the app restarts.
     const timer = setTimeout(() => {
       if (this.#pending !== pending) return;
       // See INTERRUPT_GRACE_MS. The query is not answering for this turn, so it is not
       // trusted with the next one either.
       warn(`the interrupt on ${this.#sessionId} did not end the turn; dropping the query`);
-      this.#settle(pending.live, { reason: "interrupted" });
-      this.#retire(pending.live);
+      this.#settle(live, { reason: "interrupted" });
+      this.#retire(live);
     }, INTERRUPT_GRACE_MS);
     // A watchdog must not be the reason the process stays alive.
     timer.unref();
+
+    try {
+      await live.query.interrupt();
+    } catch (error) {
+      // The turn may have ended between the check and the call; that is the outcome we
+      // wanted anyway.
+      warn(`interrupt on ${this.#sessionId} failed: ${describe(error)}`);
+    }
   }
 
-  /** Tear down without reporting anything. Used when the host goes away. */
+  /**
+   * Tear down without reporting anything. Used when the host goes away, and when a newer
+   * conversation takes this session's place.
+   */
   dispose(): void {
     this.#cancelled = true;
+    this.#disposed = true;
+    started.delete(this);
+    // Nothing is left to answer what this session asked, and the SDK would otherwise wait
+    // out the fifteen-minute backstop for a reply that is not coming.
+    this.#link.failSession(this.#sessionId, "the conversation was closed");
     if (this.#live) this.#retire(this.#live);
   }
 
+  /**
+   * Take over from the session that was running before this one; see `started`.
+   *
+   * On the first prompt rather than in the constructor, because a session that is
+   * constructed and never prompted has no CLI to hand over.
+   */
+  #claim(): void {
+    if (this.#disposed || started.has(this)) return;
+    for (const previous of started) previous.dispose();
+    started.add(this);
+  }
+
   async #runTurn(cwd: string, text: string, options?: PromptOptions): Promise<void> {
+    if (this.#disposed) return;
     if (this.#cancelled) {
       // Queued behind a turn that was interrupted; report it rather than silently
       // dropping a prompt the user typed.
       this.#cancelled = false;
       this.#interrupted = false;
-      this.#link.send({ t: "done", sessionId: this.#sessionId, reason: "interrupted" });
+      this.#done("interrupted");
       return;
     }
 
@@ -222,6 +303,19 @@ export class Session {
       this.#resumed = options.resumeConversation;
       this.#resumeId = options.resumeConversation;
     }
+
+    let settle!: (outcome: Outcome) => void;
+    const finished = new Promise<Outcome>((resolve) => {
+      settle = resolve;
+    });
+    // In flight from here, before the awaits below rather than after them. Stop is
+    // enabled the moment the prompt is submitted, and everything between here and the
+    // push takes real time -- reading the MCP config, and `setMcpServers` waiting on the
+    // CLI to connect a newly ungated server. A turn that is not recorded yet is a Stop
+    // that is swallowed: the prompt goes in afterwards, the model runs the whole turn and
+    // lands its edits, and only then is the turn reported as interrupted.
+    const pending: Pending = { live: null, settle };
+    this.#pending = pending;
 
     let outcome: Outcome;
     try {
@@ -245,17 +339,19 @@ export class Session {
       // out of band, and this turn neither waits for it nor fails with it.
       this.#models.publish(live.query);
 
-      outcome = await new Promise<Outcome>((resolve) => {
-        // Recorded before the prompt goes in, so a result cannot arrive with nobody
-        // listed as waiting for it.
-        this.#pending = { live, settle: resolve };
+      // Unless a Stop already ended it while the query was being prepared. The query is
+      // kept -- it is built and idle and the next prompt can have it -- but the text this
+      // turn was carrying must not reach the model after the user cancelled it.
+      if (this.#pending === pending) {
+        pending.live = live;
         live.queue.push(userMessage(text));
-      });
+      }
+      outcome = await finished;
     } catch (thrown) {
       // Reaching the query is inside the try because a turn whose CLI never started has
       // to report `done` like any other; without it the composer stays disabled on a
       // turn that is never coming back.
-      this.#pending = null;
+      if (this.#pending === pending) this.#pending = null;
       outcome = { reason: "error", error: describe(thrown) };
     }
 
@@ -265,9 +361,26 @@ export class Session {
       // it, so say so rather than reporting whatever the SDK called it.
       reason = "interrupted";
       error = undefined;
+      // Swept again, and not only in `interrupt()`: the CLI keeps running until the
+      // interrupt lands, and anything it asked for in that window was registered after
+      // the first sweep. Left pending, a permission card stays open and answerable for
+      // fifteen minutes with no turn behind it.
+      this.#link.failSession(this.#sessionId, "the turn was interrupted");
     }
     this.#interrupted = false;
     this.#cancelled = false;
+    this.#done(reason, error);
+  }
+
+  /**
+   * Report the end of a turn.
+   *
+   * Silent once the session is disposed. The transcript pane ends the turn it is showing
+   * on any `done` it receives, whatever session id the message carries, so a late report
+   * from a conversation the user has left would close the turn running in front of them.
+   */
+  #done(reason: DoneReason, error?: string): void {
+    if (this.#disposed) return;
     this.#link.send({ t: "done", sessionId: this.#sessionId, reason, error });
   }
 
@@ -297,6 +410,11 @@ export class Session {
       this.#retire(live);
       return this.#build(shape, external);
     }
+    // The CLI can exit inside the await above, and the consumer loop retires the query
+    // when it does. Handing that one back would push the prompt into a closed queue whose
+    // stream has already returned: the turn would wait for a result nobody is going to
+    // produce, and the composer would stay disabled with nothing to recover it.
+    if (this.#live !== live) return this.#build(shape, external);
     return live;
   }
 
@@ -307,7 +425,7 @@ export class Session {
     // next one is not a state this has any reason to explore.
     const ide = createIdeServer(this.#link, this.#sessionId);
     const queue = new PromptQueue();
-    const running = query({
+    const running = this.#start({
       prompt: queue.stream(),
       options: this.#options(shape, { ...external, [IDE_SERVER_NAME]: ide }),
     });
@@ -371,6 +489,12 @@ export class Session {
   async #consume(live: LiveQuery): Promise<void> {
     try {
       for await (const message of live.query) {
+        // A retired query goes on delivering what it had buffered -- the SDK's stream
+        // shifts a queued message before it looks at the closed flag -- and by then those
+        // messages belong to a conversation that has ended. Forwarded, they draw rows in
+        // whatever turn is running now, and a buffered `result` closes that turn early
+        // and suppresses the real boundary when it arrives.
+        if (this.#live !== live) continue;
         this.#remember(live, message);
         this.#link.send({
           t: "event",
@@ -415,6 +539,11 @@ export class Session {
       warn(`closing the query on ${this.#sessionId} failed: ${describe(error)}`);
     }
     if (this.#live === live) this.#live = null;
+    // A turn still waiting on this query is waiting for a message that cannot arrive: the
+    // queue is closed, so even its prompt would no longer be read. Every path that gives
+    // up on a query deliberately settles first and finds nothing left here; this is for
+    // the ones that dropped it without knowing a turn was on it.
+    this.#settle(live, { reason: "error", error: "the agent process was closed" });
   }
 
   /**

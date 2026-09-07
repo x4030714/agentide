@@ -1,10 +1,12 @@
 /**
  * The rule that decides whether a turn keeps the running CLI or spawns a new one.
  *
- * This is the only part of the session that can be tested without a real query, and it is
- * the part worth pinning: a field on the wrong side of the line either costs ~2.5s of
- * spawn on every turn, or runs the turn with an option the person already changed. Each
- * test below is one field and which of those two it would be.
+ * A field on the wrong side of the line either costs ~2.5s of spawn on every turn, or
+ * runs the turn with an option the person already changed. Each test below is one field
+ * and which of those two it would be.
+ *
+ * The sequencing around this rule -- what happens when a query dies, is interrupted, or is
+ * taken over by a newer conversation -- is in `session-lifecycle.test.ts`.
  */
 
 import assert from "node:assert/strict";
