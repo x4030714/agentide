@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { HostLink } from "./host.ts";
 import { ModelCatalogue } from "./models.ts";
 import { LineDecoder, parseHostMessage, type HostMessage } from "./protocol.ts";
+import { loadProviders, publicProviders } from "./provider-config.ts";
 import { Session } from "./session.ts";
 
 const sessions = new Map<string, Session>();
@@ -144,6 +145,11 @@ function main(): void {
   });
 
   link.send({ t: "ready", pid: process.pid, sdkVersion: sdkVersion() });
+
+  // Before any turn, unlike the model catalogue: providers are a file, not something only
+  // a live query can be asked for. Sending them here is what lets the picker offer a local
+  // model on the first prompt rather than the second.
+  link.send({ t: "providers", providers: publicProviders(loadProviders()) });
 }
 
 main();

@@ -29,6 +29,7 @@ import type { RevealTarget } from "./panes/Editor";
 import { FileTree } from "./panes/FileTree";
 import { ConversationsPane } from "./panes/Conversations";
 import { GitPane } from "./panes/Git";
+import { LocalModelsView } from "./panes/LocalModelsView";
 import { QuickOpen } from "./panes/QuickOpen";
 import { Settings } from "./panes/Settings";
 import { StatusBar } from "./panes/StatusBar";
@@ -399,6 +400,19 @@ export default function App() {
                   onResume={setResumed}
                 />
               </div>
+              {/**
+               * Mounted only when it is the view being shown, unlike the four above.
+               *
+               * The others are cheap and benefit from staying alive -- the tree keeps its
+               * scroll, the transcript its history. This one polls a directory once a
+               * second to draw its progress bars, and doing that for the whole session
+               * because it was opened once is a cost for nothing.
+               */}
+              {view === "models" && (
+                <div className="sidebar-view">
+                  <LocalModelsView root={workspace?.root ?? null} />
+                </div>
+              )}
             </div>
           </Panel>
           <Separator className="separator vertical" />

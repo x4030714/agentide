@@ -3,7 +3,7 @@ import type { EditMode } from "../lib/editmode";
 import { modelLabel, modelMenu } from "../lib/model-menu";
 import { PROMPT_HELP, PROMPT_LABEL, PROMPT_MODES } from "../lib/promptmode";
 import type { PromptMode } from "../lib/promptmode";
-import type { EffortLevel, ModelInfo } from "../lib/protocol";
+import type { EffortLevel, ModelInfo, ProviderInfo } from "../lib/protocol";
 import { MCP_CLOSED } from "../lib/transcript";
 import type { McpServerRow } from "../lib/transcript";
 
@@ -56,6 +56,8 @@ interface RunControlsProps {
   /** False when neither system.md exists, so Tuned can say it has nothing to add. */
   tunedAvailable: boolean;
   models: ModelInfo[];
+  /** The backends `providers.json` names. Empty means none configured, not "not yet known". */
+  providers: ProviderInfo[];
   model: string | null;
   effort: EffortLevel | null;
   onModel: (model: string | null) => void;
@@ -72,6 +74,7 @@ export function RunControls({
   onPromptMode,
   tunedAvailable,
   models,
+  providers,
   model,
   effort,
   onModel,
@@ -79,7 +82,7 @@ export function RunControls({
   mcpServers,
   disabled,
 }: RunControlsProps) {
-  const { known, catalogue, pinned, all } = modelMenu(models);
+  const { known, catalogue, pinned, providers: backends, all } = modelMenu(models, providers);
   const selected = all.find((entry) => entry.value === model);
 
   /**
@@ -152,11 +155,25 @@ export function RunControls({
               {pinned.length > 0 && (
                 <optgroup label="Pinned versions">{pinned.map(modelOption)}</optgroup>
               )}
+              {backends.map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.items.map(modelOption)}
+                </optgroup>
+              ))}
             </>
           ) : (
             // One group before the first turn: there is nothing to contrast it against
             // yet, and the note beside the control already says the list is provisional.
-            pinned.map(modelOption)
+            // The configured backends are not provisional and get their own groups either
+            // way -- they came from a file that was read, not from a query nobody has run.
+            <>
+              {pinned.map(modelOption)}
+              {backends.map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.items.map(modelOption)}
+                </optgroup>
+              ))}
+            </>
           )}
         </select>
       </label>

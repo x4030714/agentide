@@ -82,6 +82,16 @@ export const PromptOptionsSchema = z.strictObject({
    */
   resumeConversation: z.string().optional(),
   /**
+   * Which backend runs this turn: a key from `~/.agentide/providers.json`, or omitted for
+   * Anthropic's own.
+   *
+   * Sent per prompt beside `model` because it is chosen the same way and at the same
+   * moment. Unlike `model` it cannot be applied to a running query -- it becomes
+   * environment variables the CLI reads once at startup -- so a change rebuilds the query.
+   * See `queryFingerprint`.
+   */
+  provider: z.string().optional(),
+  /**
    * Emit `stream_event` messages so the transcript can render text as it arrives. Off by
    * default: it multiplies event volume, and a UI that only renders complete assistant
    * messages should not pay for it.
@@ -155,6 +165,32 @@ export const ModelInfoSchema = z.strictObject({
 });
 export type ModelInfo = z.infer<typeof ModelInfoSchema>;
 
+/**
+ * A configured backend, as the host is allowed to see it.
+ *
+ * Deliberately not the whole entry: `baseUrl` and `token` stay in the sidecar. The host
+ * needs to draw the models, know what command brings the backend up, and say where it
+ * listens -- none of which requires the credential. A key that never crosses this boundary
+ * cannot be read out of the webview.
+ */
+export const ProviderInfoSchema = z.strictObject({
+  /** The key to send back as `PromptOptions.provider`. */
+  key: z.string(),
+  models: z.array(
+    z.strictObject({
+      id: z.string(),
+      name: z.string(),
+      supportsEffort: z.boolean(),
+    }),
+  ),
+  /** The command that starts it, when the entry gives one. */
+  start: z.string().optional(),
+  host: z.string(),
+  port: z.number().int(),
+  note: z.string().optional(),
+});
+export type ProviderInfo = z.infer<typeof ProviderInfoSchema>;
+
 // ---------------------------------------------------------------------------
 // host -> sidecar
 // ---------------------------------------------------------------------------
@@ -210,6 +246,12 @@ export const SidecarMessageSchema = z.discriminatedUnion("t", [
    * before one has started. Not tied to a session -- it describes the installation.
    */
   z.strictObject({ t: z.literal("models"), models: z.array(ModelInfoSchema) }),
+  /**
+   * The backends `providers.json` names. Sent at startup and refreshed each turn, because
+   * the file is re-read each turn and a picker that only learned them once would go stale
+   * the moment one was added.
+   */
+  z.strictObject({ t: z.literal("providers"), providers: z.array(ProviderInfoSchema) }),
   z.strictObject({ t: z.literal("commands"), commands: z.array(SlashCommandSchema) }),
   /**
    * The external MCP servers this turn was built without, because the application each

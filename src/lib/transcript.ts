@@ -24,6 +24,7 @@ import type {
   ConversationEntry,
   JsonObject,
   ModelInfo,
+  ProviderInfo,
   SlashCommand,
 } from "./protocol";
 
@@ -258,6 +259,11 @@ export interface TranscriptState {
    */
   models: ModelInfo[];
   /**
+   * The backends `providers.json` names. Unlike `models` these arrive at startup, so an
+   * empty list here really does mean "none configured" rather than "not known yet".
+   */
+  providers: ProviderInfo[];
+  /**
    * The two halves the MCP strip is built from, kept unmerged. See `mergeMcp`.
    *
    * `started` is undefined until an init message arrives, which is what keeps
@@ -316,6 +322,7 @@ export function initialState(): TranscriptState {
     thinking: null,
     turnStartedAt: 0,
     models: [],
+    providers: [],
     commands: [],
     mcp: { gated: [] },
   };
@@ -565,6 +572,7 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
         ...fresh,
         status: state.status === "exited" ? "exited" : "ready",
         models: state.models,
+        providers: state.providers,
         commands: state.commands,
         meta: { ...fresh.meta, pid: state.meta.pid, sdkVersion: state.meta.sdkVersion },
       };
@@ -612,6 +620,9 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
 
     case "models":
       return { ...state, models: action.models };
+
+    case "providers":
+      return { ...state, providers: action.providers };
 
     case "commands":
       return { ...state, commands: action.commands };

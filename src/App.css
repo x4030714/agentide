@@ -1027,13 +1027,25 @@
  * it can count on -- without wrapping, narrowing the pane silently cut the Effort control
  * off the end instead of moving it to a second line.
  */
+/**
+ * One line, always. See `.control-note` for why that is the rule.
+ *
+ * `nowrap` rather than `wrap`: this row's contents change with the model — Effort is only
+ * drawn for a model that takes one — and a row that reflows moves everything above it as
+ * you change the selection.
+ */
 .run-controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px 12px;
   flex: 0 0 auto;
   padding: 6px 12px 2px;
+}
+
+/* The controls keep their size; only the note gives way. */
+.run-controls > .control {
+  flex: 0 0 auto;
 }
 
 .control {
@@ -1068,6 +1080,33 @@
   border-color: var(--border);
 }
 
+/**
+ * The dropped-open list, which is drawn by the browser and inherits nothing.
+ *
+ * A `<select>`'s popup is not part of the page's box tree, so none of the styling above
+ * reaches it: on a dark theme the options come out dark only because the control declares
+ * a colour scheme, and `<optgroup>` headings come out as the platform default — a pale grey
+ * band with near-black text, which against this palette reads as a broken row rather than a
+ * heading. These three lines are the whole of what a select will accept.
+ *
+ * What keeps the popup itself from being a white menu under a dark control is the
+ * `color-scheme: light dark` already on `:root` in `world.css` — it inherits, and it
+ * follows the appearance setting on its own. Declaring a fixed one here would look right in
+ * dark and wrong in light, which is the trade this palette exists to avoid.
+ */
+.control-select optgroup {
+  color: var(--ink-dim);
+  background-color: var(--chrome);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.control-select option {
+  color: var(--ink);
+  background-color: var(--sunken);
+  font-weight: 400;
+}
+
 .control-select:disabled {
   color: var(--ink-dim);
 }
@@ -1081,7 +1120,20 @@
  * Takes the rest of the line when there is room and drops to its own when there is not.
  * `margin-left: auto` alone would push it off the edge in a narrow pane.
  */
+/**
+ * At the end of the row, and the only thing in it allowed to shrink.
+ *
+ * The strip must be exactly one line high whatever is in it. The Effort control appears
+ * only for models that support it, so when it came and went the note wrapped or unwrapped,
+ * the row gained or lost a line, and everything above it jumped. Giving the note its own
+ * line fixed the jump and made the strip permanently taller, which was worse.
+ *
+ * So the row never wraps (see `.run-controls`) and this absorbs the difference by
+ * truncating instead. It is the only thing here that can afford to: every other control is
+ * a control, and this is a remark.
+ */
 .control-note {
+  flex: 0 1 auto;
   margin-left: auto;
   min-width: 0;
   font-size: 11px;
@@ -1384,6 +1436,163 @@
 }
 
 /**
+ * Settings, as a list of sections beside one panel.
+ *
+ * It was one long scroll, which worked at three short sections and stopped working the
+ * moment Local models added six model rows: reaching Memory meant scrolling past all of
+ * them every time. The nav is the index; only one panel is drawn.
+ */
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 10px 8px;
+  border-right: 1px solid var(--hairline);
+}
+
+.settings-tab {
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-control);
+  cursor: default;
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.settings-tab:hover {
+  color: var(--ink);
+  background: var(--sunken);
+}
+
+.settings-tab:active {
+  transform: scale(0.97);
+}
+
+.settings-tab.is-on {
+  color: var(--ink);
+  background: var(--sunken);
+  font-weight: 500;
+}
+
+/* The panel scrolls, not the dialog: the nav stays put while a long section moves. */
+.settings-panel {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+
+/**
+ * The local-model list.
+ *
+ * Every model is shown whatever the machine can hold, with the fit said plainly rather
+ * than by hiding rows: a card that cannot run the best one today is a thing worth knowing,
+ * and a list that silently omits half of itself reads as a shorter list, not a smaller
+ * machine. The one that does not fit is dimmed, not removed.
+ */
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.model-row {
+  padding: 10px 12px;
+  background: var(--sunken);
+  border-radius: var(--r-panel);
+  transition: opacity var(--t-base) var(--ease);
+}
+
+/* Dimmed, and still readable: this is information, not a disabled control. */
+.model-row.is-too-big {
+  opacity: 0.55;
+}
+
+/* Wraps, because this now lives in the sidebar and not in a dialog: at 260px the name and
+   the fit badge do not share a line, and a badge squeezed to three characters says less
+   than one on its own row. */
+.model-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.model-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.model-size {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.model-fit {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  border-radius: var(--r-chip);
+  background: var(--elevated);
+  color: var(--ink-dim);
+}
+
+/* Only the good news is coloured. Everything else is a fact, not a warning. */
+.model-fit.is-vram {
+  color: var(--sym);
+  background: var(--sym-fill);
+}
+
+.model-note {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+/**
+ * The bar is measured from the file on disk rather than parsed out of curl, so a resumed
+ * download starts where it actually is instead of at zero.
+ */
+.model-progress {
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  background: var(--elevated);
+  border-radius: 2px;
+}
+
+.model-bar {
+  display: block;
+  height: 100%;
+  background: var(--sym);
+  /* Linear: this tracks a real quantity, and easing it would make it lie between frames. */
+  transition: width 1s linear;
+}
+
+.model-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.model-ready {
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+/**
  * The editor's open files.
  *
  * Deliberately the terminal's tab vocabulary rather than a second one: same height, same
@@ -1484,7 +1693,7 @@
 
 .tab-close:hover {
   color: var(--ink);
-  background: var(--raised);
+  background: var(--elevated);
 }
 
 /* The editor's own footer: which file this is, how big, and what just happened to it.
@@ -2749,9 +2958,13 @@
 }
 
 .settings-body {
+  display: grid;
+  /* The nav is fixed and the panel takes the rest; `minmax(0, 1fr)` so a long model name
+     scrolls inside the panel instead of widening the dialog. */
+  grid-template-columns: 150px minmax(0, 1fr);
   min-height: 0;
-  overflow-y: auto;
-  padding: 4px 14px 14px;
+  /* The panel scrolls, not this: the nav has to stay put while a long section moves. */
+  overflow: hidden;
 }
 
 .settings-section + .settings-section {

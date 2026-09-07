@@ -38,6 +38,7 @@
           ],
           "maxTurns": 12,
           "includePartialMessages": true,
+          "provider": "qwen-local",
           "systemPromptAppend": "Match rustfmt's max_width of 100.\nDo not add a dependency without asking."
         }
       }
@@ -172,6 +173,47 @@
       "message": {
         "t": "models",
         "models": []
+      }
+    },
+    {
+      "name": "providers, one launched locally and one only pointed at",
+      "message": {
+        "t": "providers",
+        "providers": [
+          {
+            "key": "qwen-local",
+            "models": [
+              {
+                "id": "qwen3-coder-30b-q4_k_m",
+                "name": "Qwen3 Coder 30B",
+                "supportsEffort": false
+              }
+            ],
+            "start": "\"llama-server\" -m \"D:/models/qwen3-coder-30b-q4_k_m.gguf\" -c 65536 --port 8080 --host 127.0.0.1",
+            "host": "127.0.0.1",
+            "port": 8080,
+            "note": "needs 64K context; below 32K the tool descriptions eat the window"
+          },
+          {
+            "key": "gateway",
+            "models": [
+              {
+                "id": "nemotron-4-340b",
+                "name": "Nemotron 340B",
+                "supportsEffort": false
+              }
+            ],
+            "host": "gateway.example",
+            "port": 443
+          }
+        ]
+      }
+    },
+    {
+      "name": "providers, none configured",
+      "message": {
+        "t": "providers",
+        "providers": []
       }
     },
     {

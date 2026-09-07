@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { PromptOptions } from "./protocol.ts";
+import type { Provider } from "./provider-config.ts";
 import { queryFingerprint, type QueryShape } from "./session.ts";
 
 /** A turn's shape, with one thing about it changed. */
@@ -24,6 +25,7 @@ function shape(change: Partial<QueryShape> = {}, options: Partial<PromptOptions>
       autoMemoryEnabled: true,
       autoMemoryDirectory: "C:/Users/dev/agentide-vault",
     },
+    provider: null,
     ...change,
     options: {
       model: "claude-opus-5",
@@ -121,6 +123,62 @@ test("turning on partial messages rebuilds", () => {
   assert.notEqual(
     queryFingerprint(shape()),
     queryFingerprint(shape({}, { includePartialMessages: true })),
+  );
+});
+
+/** A configured backend, as `provider-config.ts` resolves one. */
+function backend(change: Partial<Provider> = {}): Provider {
+  return {
+    key: "qwen-local",
+    baseUrl: "http://127.0.0.1:8080",
+    token: "agentide",
+    host: "127.0.0.1",
+    port: 8080,
+    models: [{ id: "qwen3-coder-30b", name: "Qwen3 Coder 30B", supportsEffort: false }],
+    detached: false,
+    ...change,
+  };
+}
+
+test("moving to a local backend rebuilds, because the CLI reads its URL once at startup", () => {
+  assert.notEqual(queryFingerprint(shape()), queryFingerprint(shape({ provider: backend() })));
+});
+
+test("moving back to Anthropic rebuilds too", () => {
+  assert.notEqual(
+    queryFingerprint(shape({ provider: backend() })),
+    queryFingerprint(shape({ provider: null })),
+  );
+});
+
+test("the same backend twice keeps the query", () => {
+  assert.equal(
+    queryFingerprint(shape({ provider: backend() })),
+    queryFingerprint(shape({ provider: backend() })),
+  );
+});
+
+test("editing a provider's URL rebuilds, even under the same name", () => {
+  // Compared by value, not by key: a query kept here would go on talking to the old
+  // address while the picker showed the new one.
+  assert.notEqual(
+    queryFingerprint(shape({ provider: backend() })),
+    queryFingerprint(shape({ provider: backend({ baseUrl: "http://127.0.0.1:1234" }) })),
+  );
+});
+
+test("rotating the token rebuilds, since it is read at startup as well", () => {
+  assert.notEqual(
+    queryFingerprint(shape({ provider: backend() })),
+    queryFingerprint(shape({ provider: backend({ token: "sk-new" }) })),
+  );
+});
+
+test("a different model on the same backend is still a setter", () => {
+  // `setModel` reaches a live query; the backend is what does not.
+  assert.equal(
+    queryFingerprint(shape({ provider: backend() })),
+    queryFingerprint(shape({ provider: backend() }, { model: "qwen3-coder-7b" })),
   );
 });
 

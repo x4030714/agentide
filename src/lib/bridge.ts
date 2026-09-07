@@ -533,6 +533,16 @@ export async function conversationImport(id: string, fromDir: string): Promise<s
  * written to. It also comes back as a `WirePath`, which is what makes it comparable
  * against the paths the model types.
  */
+/**
+ * Video memory in whole gigabytes, or null when there is no NVIDIA GPU to ask.
+ *
+ * Used to say which local models fit before one is downloaded. Absent is not an error:
+ * llama.cpp runs on the CPU, and the list says what that costs rather than refusing.
+ */
+export async function gpuVramGb(): Promise<number | null> {
+  return invoke<number | null>("gpu_vram_gb");
+}
+
 export async function memoryVault(): Promise<MemoryVault> {
   return invoke<MemoryVault>("memory_vault");
 }

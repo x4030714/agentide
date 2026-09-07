@@ -8,8 +8,8 @@
 
 import { describe, expect, test } from "vitest";
 
-import { modelLabel, modelMenu, PINNED_MODELS } from "./model-menu";
-import type { ModelInfo } from "./protocol";
+import { decodeModel, modelLabel, modelMenu, PINNED_MODELS, providerValue } from "./model-menu";
+import type { ModelInfo, ProviderInfo } from "./protocol";
 
 /** The shape the SDK publishes: aliases, and a default row of its own. */
 const CATALOGUE: ModelInfo[] = [
@@ -83,6 +83,96 @@ describe("once the catalogue arrives", () => {
     expect(menu.known).toBe(true);
     expect(menu.catalogue).toEqual([]);
     expect(menu.pinned).toEqual(PINNED_MODELS);
+  });
+});
+
+describe("configured backends", () => {
+  const qwen: ProviderInfo = {
+    key: "qwen-local",
+    models: [{ id: "qwen3-coder-30b", name: "Qwen3 Coder 30B", supportsEffort: false }],
+    start: "llama-server -m qwen3.gguf --port 8080",
+    host: "127.0.0.1",
+    port: 8080,
+  };
+
+  test("appear as their own group, under the Anthropic ones", () => {
+    const menu = modelMenu(CATALOGUE, [qwen]);
+    expect(menu.providers).toHaveLength(1);
+    expect(menu.providers[0]?.items[0]?.displayName).toBe("Qwen3 Coder 30B");
+  });
+
+  test("appear before the first turn too, because they came from a file", () => {
+    // The Anthropic list is provisional until a query has been run. A backend is not: it
+    // was read off disk, so it is as true now as it will ever be.
+    const menu = modelMenu([], [qwen]);
+    expect(menu.known).toBe(false);
+    expect(menu.providers).toHaveLength(1);
+    expect(menu.all.map((entry) => entry.value)).toContain("qwen-local::qwen3-coder-30b");
+  });
+
+  test("carry the backend and the model in one value", () => {
+    // Two providers can both offer `qwen3-coder-30b` and mean different files, so a model
+    // id alone cannot say which one was picked.
+    const menu = modelMenu(CATALOGUE, [qwen]);
+    expect(menu.providers[0]?.items[0]?.value).toBe("qwen-local::qwen3-coder-30b");
+  });
+
+  test("say where they are, so two backends are distinguishable", () => {
+    expect(modelMenu(CATALOGUE, [qwen]).providers[0]?.items[0]?.description).toBe(
+      "qwen-local · 127.0.0.1:8080",
+    );
+  });
+
+  test("the group label is the key alone, however long the note is", () => {
+    // A native optgroup label does not wrap, so a sentence there stretches the menu to the
+    // width of the sentence and draws as a grey band with the text lost inside it.
+    const menu = modelMenu(CATALOGUE, [
+      { ...qwen, note: "older, small, and reliable at tool calls — the safe first try" },
+    ]);
+    expect(menu.providers[0]?.label).toBe("qwen-local");
+  });
+
+  test("the note becomes the option's tooltip instead", () => {
+    const menu = modelMenu(CATALOGUE, [{ ...qwen, note: "needs 64K context" }]);
+    expect(menu.providers[0]?.items[0]?.description).toBe("needs 64K context · 127.0.0.1:8080");
+  });
+
+  test("effort follows what the provider declared", () => {
+    // Almost always false: effort is an Anthropic concept, and RunControls hides the
+    // control entirely rather than offering one the backend ignores.
+    expect(modelMenu(CATALOGUE, [qwen]).providers[0]?.items[0]?.supportsEffort).toBe(false);
+  });
+
+  test("none configured is simply no groups", () => {
+    expect(modelMenu(CATALOGUE, []).providers).toEqual([]);
+  });
+});
+
+describe("decoding a selection", () => {
+  test("an Anthropic model has no provider", () => {
+    expect(decodeModel("claude-opus-5")).toEqual({ model: "claude-opus-5" });
+  });
+
+  test("a backend's model carries both halves", () => {
+    expect(decodeModel("qwen-local::qwen3-coder-30b")).toEqual({
+      provider: "qwen-local",
+      model: "qwen3-coder-30b",
+    });
+  });
+
+  test("the default is neither", () => {
+    // Which is exactly what an absent `provider` and an absent `model` mean on the wire,
+    // so it travels unchanged.
+    expect(decodeModel(null)).toEqual({});
+    expect(decodeModel("")).toEqual({});
+  });
+
+  test("a model id containing a colon still round-trips", () => {
+    // `qwen3:30b` is how several runtimes name a tag, and one colon is not the separator.
+    expect(decodeModel(providerValue("local", "qwen3:30b"))).toEqual({
+      provider: "local",
+      model: "qwen3:30b",
+    });
   });
 });
 

@@ -16,7 +16,7 @@ Decided by the user before init, recorded here as product truth:
 - **Agent:** `@anthropic-ai/claude-agent-sdk` running in a bundled Node **sidecar** process, spoken to over newline-delimited JSON on stdio. The SDK is a Node library and cannot run inside the Rust core; the sidecar is the resolution.
 - **Terminal:** `portable-pty` (ConPTY) + xterm.js.
 - **Git:** the git CLI against a separate `.agentide/checkpoints.git` for agent checkpoints; `git2` for panel reads.
-- **Model and effort:** selectable per turn; unset means the SDK default. The model list comes from the SDK's own `supportedModels()`.
+- **Model and effort:** selectable per turn; unset means the SDK default. The model list comes from the SDK's own `supportedModels()`, plus any backend named in `~/.agentide/providers.json` — a local llama.cpp or an OpenAI-compatible gateway, reached by pointing the CLI's `ANTHROPIC_BASE_URL` at it. Effort is Anthropic-only and is not offered for those.
 
 Full architecture and phasing: `C:\Users\tung\.claude\plans\virtual-brewing-hoare.md`.
 

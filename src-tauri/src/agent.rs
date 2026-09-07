@@ -36,7 +36,8 @@ use tauri::{AppHandle, Manager, State};
 use crate::fs::WorkspaceState;
 use crate::ipc::{
     AgentEvent, DoneReason, ErrorCode, GatedServer, IpcError, JsonMap, ModelInfo,
-    PermissionDecision, PromptOptions, ReplySource, SlashCommand, ToolResult, WirePath,
+    PermissionDecision, PromptOptions, ProviderInfo, ReplySource, SlashCommand, ToolResult,
+    WirePath,
 };
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,11 @@ enum SidecarMessage {
     /// Sent with the models, for the same reason: both describe the installation.
     #[serde(rename_all = "camelCase")]
     Commands { commands: Vec<SlashCommand> },
+    /// The backends `providers.json` names. Sent at startup, so the picker is useful
+    /// before any turn has run, and again each turn because the file is re-read each
+    /// turn. Carries no credential: see [`ProviderInfo`].
+    #[serde(rename_all = "camelCase")]
+    Providers { providers: Vec<ProviderInfo> },
     /// The external MCP servers the sidecar held back this turn, because the application
     /// each one drives is not open. Sent every turn, empty list included.
     #[serde(rename_all = "camelCase")]
@@ -361,6 +367,9 @@ impl Router {
             }
             SidecarMessage::Models { models } => {
                 self.emit(AgentEvent::Models { models });
+            }
+            SidecarMessage::Providers { providers } => {
+                self.emit(AgentEvent::Providers { providers });
             }
             SidecarMessage::Commands { commands } => {
                 self.emit(AgentEvent::Commands { commands });
@@ -1116,12 +1125,21 @@ mod tests {
         stdin.write_all(b"\n").expect("write failed");
         stdin.flush().expect("flush failed");
 
+        // Read until the pong rather than a fixed count. The sidecar volunteers what it
+        // knows at startup -- `ready`, then the configured providers -- and a loop that
+        // stopped after two messages would consume those and report the answer missing.
         let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
         let mut seen = Vec::new();
-        for _ in 0..2 {
+        for _ in 0..8 {
             let mut line = String::new();
             stdout.read_line(&mut line).expect("read failed");
-            seen.push(serde_json::from_str::<SidecarMessage>(line.trim()).expect("parse failed"));
+            let message =
+                serde_json::from_str::<SidecarMessage>(line.trim()).expect("parse failed");
+            let answered = matches!(&message, SidecarMessage::Pong { id } if id == "smoke");
+            seen.push(message);
+            if answered {
+                break;
+            }
         }
 
         // Closing stdin is the shutdown signal; the sidecar must take it.
@@ -1133,10 +1151,16 @@ mod tests {
             "the first message must be `ready`, got {:?}",
             seen[0]
         );
-        match &seen[1] {
-            SidecarMessage::Pong { id } => assert_eq!(id, "smoke"),
-            other => panic!("expected a pong, got {other:?}"),
-        }
+        // Somewhere after it, not immediately after it. The sidecar volunteers what it
+        // knows at startup — the configured providers today, more later — and pinning the
+        // pong to index 1 made this test fail every time it learned to say something new,
+        // which is a false alarm about the thing it is not testing.
+        assert!(
+            seen.iter().any(
+                |message| matches!(message, SidecarMessage::Pong { id } if id == "smoke")
+            ),
+            "no pong came back over the real stdio; got {seen:?}"
+        );
         assert!(status.success(), "the sidecar did not exit cleanly");
     }
 }

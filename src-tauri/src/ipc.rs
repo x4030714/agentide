@@ -385,6 +385,11 @@ pub struct PromptOptions {
     /// Sent per prompt, because picking one is something the user does mid-session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_conversation: Option<String>,
+    /// Which backend runs this turn: a key from `~/.agentide/providers.json`, or `None`
+    /// for Anthropic's own. The core only carries it; the sidecar resolves it, because
+    /// that is where the file's secrets are expanded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,6 +438,35 @@ pub struct GatedServer {
     pub name: String,
     pub host: String,
     pub port: u16,
+}
+
+/// One model a configured backend offers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModel {
+    pub id: String,
+    pub name: String,
+    pub supports_effort: bool,
+}
+
+/// A backend from `~/.agentide/providers.json`, as the host is allowed to see it.
+///
+/// The base URL and the token are absent on purpose: they stay in the sidecar, which is
+/// the only process that reads the file's secrets. The host needs the models, the command
+/// that starts the backend, and where it listens — none of which is the credential.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderInfo {
+    /// The key to send back as [`PromptOptions::provider`].
+    pub key: String,
+    pub models: Vec<ProviderModel>,
+    /// The command that starts it, when the entry gives one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    pub host: String,
+    pub port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -521,6 +555,12 @@ pub enum AgentEvent {
     /// same reason: both describe the installation, and both need a live query to read.
     #[serde(rename_all = "camelCase")]
     Commands { commands: Vec<SlashCommand> },
+    /// The backends `~/.agentide/providers.json` names. Unlike the models, these need no
+    /// live query — they are a file — so they arrive at startup and the picker can offer
+    /// a local model before the first turn. Re-sent each turn, because the file is
+    /// re-read each turn. Carries no credential: see [`ProviderInfo`].
+    #[serde(rename_all = "camelCase")]
+    Providers { providers: Vec<ProviderInfo> },
     /// The external MCP servers this turn was built without, because the application
     /// each one drives is not open. Arrives at the start of every turn, empty list
     /// included -- the empty list is what clears the previous turn's chips. Held back

@@ -99,6 +99,43 @@ prompt says when *not* to write a note: most fixes are a typo, and a vault of th
 prompt tokens on every later turn while burying the notes that matter -- which is the
 "Speed and tokens" rule below, applied to memory.
 
+**A turn can run on something other than Anthropic, and that is three env vars.**
+Claude Code speaks exactly one wire protocol, so `sidecar/src/provider-config.ts` reads
+`~/.agentide/providers.json` and `session.ts` turns an entry into `ANTHROPIC_BASE_URL` and
+`ANTHROPIC_AUTH_TOKEN` on the CLI's environment. llama.cpp and LM Studio speak that
+protocol natively; anything else needs LiteLLM in front, which is also the route to a
+hosted Qwen or Nemotron. An entry is usually a `.gguf` and a port, and the `llama-server`
+command is built from it.
+
+Four things hold it together and each is a way to break it silently. `Options.env`
+**replaces** the subprocess environment, so it is spread over `process.env` -- dropping
+`PATH` or an existing Claude login to set two variables is not a trade worth making. The
+provider is in `queryFingerprint` **by value**, because the CLI reads those variables once
+at startup and there is no setter: a live query kept across a provider change would answer
+from the old backend while the picker showed the new one. `port` is required, because with
+`ANTHROPIC_BASE_URL` set and nothing listening Claude Code does **not** fall back to the
+cloud -- it fails the turn with an error naming neither the provider nor the port. And the
+base URL and token never cross into the webview: `publicProviders` names the fields that
+may, so a field added later is excluded until someone decides otherwise.
+
+Two rules elsewhere in this file stop applying off Anthropic. There is no prompt caching,
+so the whole prefix is reprocessed every single turn. And effort is an Anthropic concept:
+provider models declare `supportsEffort: false` and `RunControls` then draws no effort
+control at all, rather than one that is quietly ignored.
+
+**The prefix is far bigger than the ~3.1k this file used to claim, and locally that is
+fatal rather than merely costly.** Measured: a turn whose entire message was "hi" sent
+**41,476 tokens** — the `claude_code` preset, `system.md`, thirteen `ide_*` descriptions,
+and every tool of every configured MCP server, which was 51 tools on the machine it was
+measured on. Anthropic caches that and it disappears; llama.cpp refuses the request with
+`exceeds the available context size` and every turn fails identically whatever you ask.
+
+Two consequences. `contextFor` in `src/lib/local-models.ts` has a 64k floor that holds even
+when the card has no room for it, because slow beats a window that refuses the request. And
+the MCP servers are now the dominant term in the prompt for a local model: switching off
+the ones a session does not need (`disabled: true` in `mcp.json`) is worth more locally
+than any wording change, which is the opposite of the trade on Anthropic.
+
 **Everything spawned must be adopted into the job, or it outlives a kill.**
 `src-tauri/src/reaper.rs` creates a Windows job object with `KILL_ON_JOB_CLOSE` and every
 long-lived child is handed to it: the agent host (`agent.rs`), each language server
@@ -181,7 +218,10 @@ questions, never by giving the model less to think with.
 - **The prefix is cached; keep it identical.** Our own prose is ~3.1k tokens in every
   prompt (13 tool descriptions ~1636, the server instructions ~222, `system.md`
   ~1245), and after the first turn it costs almost nothing -- as long as it does not
-  change. Anything that varies the tool list between turns reprices the whole prefix.
+  change. **On a local backend none of that holds**: there is no prompt caching, so the
+  whole prefix is reprocessed every turn and it is compute rather than money. That makes
+  the tool list worth *less* there, not more -- which is an argument for measuring on the
+  backend you actually run, not for trimming descriptions on the one you do not. Anything that varies the tool list between turns reprices the whole prefix.
   A server that connects on one turn and misses the 5s cap on the next does exactly
   that, silently: `uvx blender-mcp` measured 4854ms. Prefer a server that is reliably
   fast or reliably off to one that flaps.

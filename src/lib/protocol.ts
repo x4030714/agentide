@@ -216,6 +216,11 @@ export interface PromptOptions {
    * Sent per prompt, because picking one is something the user does mid-session.
    */
   resumeConversation?: string;
+  /**
+   * Which backend runs this turn: a key from `~/.agentide/providers.json`, or omitted for
+   * Anthropic's own. Chosen in the same menu as `model`, and set with it.
+   */
+  provider?: string;
 }
 
 export type PermissionDecision = "allow" | "deny";
@@ -252,6 +257,32 @@ export interface GatedServer {
   name: string;
   host: string;
   port: number;
+}
+
+/** One model a configured backend offers. */
+export interface ProviderModel {
+  /** Sent back as `PromptOptions.model`, so exactly what the backend calls it. */
+  id: string;
+  name: string;
+  supportsEffort: boolean;
+}
+
+/**
+ * A backend from `~/.agentide/providers.json`, as the host is allowed to see it.
+ *
+ * No base URL and no token: those stay in the sidecar, which is the only process that
+ * reads the file's secrets. What is here is what the picker and the launcher need — the
+ * models, the command that starts it, and where it listens.
+ */
+export interface ProviderInfo {
+  /** Sent back as `PromptOptions.provider`. */
+  key: string;
+  models: ProviderModel[];
+  /** The command that starts it, when this is a backend agentide launches. */
+  start?: string;
+  host: string;
+  port: number;
+  note?: string;
 }
 
 export interface ModelInfo {
@@ -317,6 +348,13 @@ export type AgentEvent =
    * to show before the first prompt has been sent. Not tied to a session.
    */
   | { t: "models"; models: ModelInfo[] }
+  /**
+   * The backends `~/.agentide/providers.json` names. Unlike the models these need no
+   * live query -- they are a file -- so they arrive at startup and the picker can offer a
+   * local model on the first prompt. Re-sent each turn, because the file is re-read each
+   * turn. Carries no credential; see `ProviderInfo`.
+   */
+  | { t: "providers"; providers: ProviderInfo[] }
   | { t: "commands"; commands: SlashCommand[] }
   /**
    * The external MCP servers this turn was built without: their gate was closed, so

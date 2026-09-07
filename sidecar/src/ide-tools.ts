@@ -82,7 +82,7 @@ async function callHost(
  * session id, which is what lets the host attribute a `tool_call` to the transcript that
  * caused it and cancel it when that session is interrupted.
  */
-export function createIdeServer(link: HostLink, sessionId: string) {
+export function createIdeServer(link: HostLink, sessionId: string, answers?: readonly string[]) {
   const proxy = (name: string, args: JsonObject) => callHost(link, sessionId, name, args);
 
   const ideOpen = tool(
@@ -541,7 +541,7 @@ export function createIdeServer(link: HostLink, sessionId: string) {
      * app exists rather than an optional extra.
      */
     alwaysLoad: true,
-    tools: [
+    tools: keep(answers, [
       ideOpen,
       ideSelection,
       ideOpenEditors,
@@ -557,8 +557,26 @@ export function createIdeServer(link: HostLink, sessionId: string) {
       ideCodeActions,
       ideTerminalRead,
       ideTerminalStop,
-    ],
+    ]),
   });
+}
+
+/**
+ * Only the tools the host in front of this server can actually answer.
+ *
+ * `undefined` means all of them, which is the desktop app: it answers every one. A
+ * headless host -- the CLI -- has no editor to open a file in and no language server to
+ * ask, and a tool it cannot answer must not be declared. This project has already paid
+ * for the other arrangement once: a tool the model can see and call, that always fails,
+ * is broken forever and silently, and it costs its description in every prompt on the way.
+ */
+function keep<T extends { name: string }>(
+  answers: readonly string[] | undefined,
+  tools: T[],
+): T[] {
+  if (!answers) return tools;
+  const allowed = new Set(answers);
+  return tools.filter((entry) => allowed.has(entry.name));
 }
 
 /**
@@ -571,8 +589,9 @@ export function createIdeServer(link: HostLink, sessionId: string) {
  * prompting: a dialog that is always answered "Allow" teaches the habit of allowing
  * without reading, and then the prompts that matter get the same reflex.
  */
-export function ideToolNames(): string[] {
-  return IDE_TOOL_NAMES.map((name) => `mcp__${IDE_SERVER_NAME}__${name}`);
+export function ideToolNames(answers?: readonly string[]): string[] {
+  const names = answers ? IDE_TOOL_NAMES.filter((name) => answers.includes(name)) : IDE_TOOL_NAMES;
+  return names.map((name) => `mcp__${IDE_SERVER_NAME}__${name}`);
 }
 
 /** Tool names this server exposes, for the host's routing table. Keep in sync above. */

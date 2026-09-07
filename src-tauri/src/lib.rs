@@ -5,6 +5,7 @@ mod checkpoints;
 mod conversations;
 mod fs;
 mod git;
+mod hardware;
 mod ipc;
 mod lsp;
 mod memory;
@@ -83,6 +84,7 @@ pub fn run() {
             window::window_minimize,
             window::window_toggle_maximize,
             window::window_close,
+            hardware::gpu_vram_gb,
             window::window_is_maximized,
             window::window_effect_active,
             window::window_set_backdrop,

@@ -16,7 +16,7 @@
  * rules in it -- see the tests.
  */
 
-import type { ModelInfo } from "./protocol";
+import type { ModelInfo, ProviderInfo } from "./protocol";
 
 /**
  * Version-pinned ids, offered before the catalogue exists and kept afterwards.
@@ -32,6 +32,22 @@ export const PINNED_MODELS: ModelInfo[] = [
   { value: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5", description: "" },
 ];
 
+/**
+ * How a provider's model is spelled in the menu, so one `<select>` can carry both halves
+ * of the choice.
+ *
+ * A model id has no meaning without the backend that serves it -- two providers can both
+ * offer `qwen3-coder-30b` and mean different files -- so the value has to name both. `::`
+ * because neither a provider key nor a model id may contain it.
+ */
+const SEPARATOR = "::";
+
+/** One group of the menu, in the order it is drawn. */
+export interface ModelGroup {
+  label: string;
+  items: ModelInfo[];
+}
+
 export interface ModelMenu {
   /** False until a turn has run and the SDK has published its catalogue. */
   known: boolean;
@@ -39,8 +55,28 @@ export interface ModelMenu {
   catalogue: ModelInfo[];
   /** The pinned ids the catalogue does not already offer. */
   pinned: ModelInfo[];
+  /** One group per configured backend, drawn under the Anthropic ones. */
+  providers: ModelGroup[];
   /** Everything selectable, for resolving whichever id is currently chosen. */
   all: ModelInfo[];
+}
+
+/** The menu value that names a provider's model. */
+export function providerValue(providerKey: string, modelId: string): string {
+  return `${providerKey}${SEPARATOR}${modelId}`;
+}
+
+/**
+ * Split a menu value back into the two things a prompt needs.
+ *
+ * An Anthropic model has no provider, which is what `undefined` means here -- and is
+ * exactly what `PromptOptions.provider` being absent means, so it travels unchanged.
+ */
+export function decodeModel(value: string | null): { provider?: string; model?: string } {
+  if (!value) return {};
+  const cut = value.indexOf(SEPARATOR);
+  if (cut < 0) return { model: value };
+  return { provider: value.slice(0, cut), model: value.slice(cut + SEPARATOR.length) };
 }
 
 /**
@@ -53,19 +89,57 @@ function isDefaultRow(entry: ModelInfo): boolean {
   return entry.value === "" || entry.value === "default";
 }
 
-export function modelMenu(models: ModelInfo[]): ModelMenu {
+export function modelMenu(models: ModelInfo[], providers: ProviderInfo[] = []): ModelMenu {
+  /**
+   * A backend's models, as menu rows.
+   *
+   * `supportsEffort` is carried through as the provider declared it -- almost always
+   * false, because effort is an Anthropic concept. `RunControls` reads that same field to
+   * decide whether to draw the effort control at all, so a local model simply does not
+   * offer one rather than offering one that is ignored.
+   */
+  const groups: ModelGroup[] = providers.map((provider) => ({
+    // The key alone. A native `<optgroup>` label does not wrap, so a sentence here stretches
+    // the menu to the width of the sentence and draws as a grey band with the text lost in
+    // it -- which is what putting the provider's note in the label did.
+    label: provider.key,
+    items: provider.models.map((model) => ({
+      value: providerValue(provider.key, model.id),
+      displayName: model.name,
+      // The note belongs here, where it becomes the option's tooltip rather than a heading.
+      description: provider.note
+        ? `${provider.note} · ${provider.host}:${provider.port}`
+        : `${provider.key} · ${provider.host}:${provider.port}`,
+      supportsEffort: model.supportsEffort,
+    })),
+  }));
+  const fromProviders = groups.flatMap((group) => group.items);
+
   const known = models.length > 0;
   if (!known) {
-    // Nothing to contrast the pinned ids against yet, so they are the whole menu. The
-    // control says beside itself that the list is provisional until the first turn.
-    return { known, catalogue: [], pinned: PINNED_MODELS, all: PINNED_MODELS };
+    // Nothing to contrast the pinned ids against yet, so they are the whole Anthropic
+    // half. The configured backends are not provisional, though -- they came from a file
+    // that was read, so they are as true now as they will ever be.
+    return {
+      known,
+      catalogue: [],
+      pinned: PINNED_MODELS,
+      providers: groups,
+      all: [...PINNED_MODELS, ...fromProviders],
+    };
   }
 
   const catalogue = models.filter((entry) => !isDefaultRow(entry));
   const pinned = PINNED_MODELS.filter(
     (entry) => !catalogue.some((offered) => offered.value === entry.value),
   );
-  return { known, catalogue, pinned, all: [...catalogue, ...pinned] };
+  return {
+    known,
+    catalogue,
+    pinned,
+    providers: groups,
+    all: [...catalogue, ...pinned, ...fromProviders],
+  };
 }
 
 /**

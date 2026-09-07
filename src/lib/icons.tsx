@@ -236,6 +236,18 @@ export const IconChat = () => (
 );
 
 /**
+ * Local models. A chip: the weights run on hardware in this machine, which is the whole
+ * distinction the view exists to draw.
+ */
+export const IconChip = () => (
+  <RailGlyph>
+    <rect x="6" y="6" width="8" height="8" rx="1" />
+    <path d="M8.5 3.5v2.5M11.5 3.5v2.5M8.5 14v2.5M11.5 14v2.5" />
+    <path d="M3.5 8.5h2.5M3.5 11.5h2.5M14 8.5h2.5M14 11.5h2.5" />
+  </RailGlyph>
+);
+
+/**
  * A mark per palette, drawn in the same family as everything else here.
  *
  * Each one names the palette's character rather than its colours: the colour is supplied

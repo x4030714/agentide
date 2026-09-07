@@ -31,14 +31,13 @@
  * with it.
  */
 
-import { readFileSync } from "node:fs";
-import { Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
+import { expandVars, isOff, issues, listening, readJson, warn } from "./config-file.ts";
 import { IDE_SERVER_NAME } from "./ide-tools.ts";
 import type { GatedServer } from "./protocol.ts";
 
@@ -215,23 +214,8 @@ interface Gated {
  * `null` is a disabled entry: present, and deliberately off. See `loadMcpServers`.
  */
 function readConfig(path: string): Record<string, Gated | null> {
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch (error) {
-    // Absent is not a problem worth a line of stderr; anything else is, because a
-    // permission error on a file the person wrote looks identical to it not existing.
-    if (!isMissing(error)) warn(`could not read ${path}: ${describe(error)}`);
-    return {};
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    warn(`${path} is not valid JSON (${describe(error)}); its MCP servers were skipped`);
-    return {};
-  }
+  const parsed = readJson(path, "MCP servers");
+  if (parsed === null) return {};
 
   const file = FileSchema.safeParse(parsed);
   if (!file.success) {
@@ -264,7 +248,7 @@ function readConfig(path: string): Record<string, Gated | null> {
 
     const gate = entry.data.requires;
     const config = strip(entry.data);
-    const resolved = expand(config);
+    const resolved = expandVars(config);
     if ("missing" in resolved) {
       // Named, never valued: this is the path a token travels, and a warning that helpfully
       // printed the variable's contents would put it in the log the person pastes into a
@@ -276,10 +260,10 @@ function readConfig(path: string): Record<string, Gated | null> {
       continue;
     }
     servers[name] =
-      resolved.config === null
+      resolved.value === null
         ? null
         : {
-            config: resolved.config,
+            config: resolved.value,
             // Localhost by default: every one of these is a bridge inside an application
             // on this machine, and a `requires` pointing somewhere else would be asking a
             // different question than "is the app open".
@@ -287,62 +271,6 @@ function readConfig(path: string): Record<string, Gated | null> {
           };
   }
   return servers;
-}
-
-/**
- * `${VAR}` in any string of a config, replaced from this process's environment.
- *
- * Done here rather than left to the SDK, because whether the SDK expands it for servers
- * passed through the `mcpServers` option -- as opposed to ones it reads from a file
- * itself -- could not be established from its types or its binary. The failure mode if it
- * does not is the worst kind: the header goes out with a literal `${GITHUB_TOKEN}`, the
- * server answers 401, and the person reads that as a bad token and reissues it. Expanding
- * here makes the answer the same either way, since there is no `${...}` left to disagree
- * about.
- *
- * A variable that is not set fails the whole entry instead of expanding to an empty
- * string. An `Authorization: Bearer ` with nothing after it is a server that is
- * configured, connects, and refuses everything -- which reads as broken tooling rather
- * than as a missing token.
- *
- * `null` is passed through untouched: a disabled entry has nothing to resolve.
- */
-function expand<T extends McpServerConfig | null>(
-  config: T,
-): { config: T } | { missing: string[] } {
-  if (config === null) return { config };
-  const missing = new Set<string>();
-  const walk = (value: unknown): unknown => {
-    if (typeof value === "string") {
-      return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (whole, name: string) => {
-        const found = process.env[name];
-        if (found === undefined) {
-          missing.add(`\${${name}}`);
-          return whole;
-        }
-        return found;
-      });
-    }
-    if (Array.isArray(value)) return value.map(walk);
-    if (value && typeof value === "object") {
-      return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).map(([key, inner]) => [key, walk(inner)]),
-      );
-    }
-    return value;
-  };
-  const resolved = walk(config) as T;
-  return missing.size > 0 ? { missing: [...missing] } : { config: resolved };
-}
-
-/**
- * An entry that says only that it is off.
- *
- * Deliberately loose: anything with `disabled: true` counts, whatever else it carries or
- * fails to carry. An off switch that first has to be a valid server is not an off switch.
- */
-function isOff(value: unknown): boolean {
-  return (value as { disabled?: unknown } | null)?.disabled === true;
 }
 
 /** Whether a name may be used at all. Only one is reserved, and for one reason. */
@@ -366,34 +294,6 @@ function strip(entry: ServerEntry): McpServerConfig | null {
 }
 
 /**
- * Whether a `requires` gate is open: is anything accepting connections there.
- *
- * A TCP connect rather than a process lookup. Asking Windows for the process list means
- * spawning a program and reading its output, which is a good fraction of a second on the
- * path to the first token, on every turn, to answer a question a refused connection
- * answers in under a millisecond. The refusal is also the more accurate answer -- see the
- * note on `requires`.
- *
- * The timeout is short and counts as closed. A port that neither accepts nor refuses is
- * being dropped by a firewall, and a server that would hang on connect is not one to hand
- * to the turn.
- */
-function listening(port: number, host: string, timeoutMs = 250): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = new Socket();
-    const settle = (open: boolean) => {
-      socket.destroy();
-      resolve(open);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once("connect", () => settle(true));
-    socket.once("timeout", () => settle(false));
-    socket.once("error", () => settle(false));
-    socket.connect(port, host);
-  });
-}
-
-/**
  * Which transport an entry claims to be, so the error names the field that is wrong
  * rather than every field of all three shapes at once.
  */
@@ -402,26 +302,4 @@ function schemaFor(value: unknown) {
   if (type === "sse") return SseSchema;
   if (type === "http") return HttpSchema;
   return StdioSchema;
-}
-
-/** A zod failure as one line: `field: reason`, joined. */
-function issues(error: z.ZodError): string {
-  return error.issues
-    .map((issue) => (issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message))
-    .join("; ");
-}
-
-function isMissing(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  // ENOTDIR is the same answer as ENOENT here: `.agentide` exists as a file, so there is
-  // no config, and saying so every turn would be noise.
-  return code === "ENOENT" || code === "ENOTDIR";
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function warn(text: string): void {
-  process.stderr.write(`[agent-host] ${text}\n`);
 }

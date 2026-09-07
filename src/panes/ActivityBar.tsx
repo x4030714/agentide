@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 
-import { IconBranch, IconChat, IconEdit, IconFiles, IconSettings } from "../lib/icons";
+import { IconBranch, IconChat, IconChip, IconEdit, IconFiles, IconSettings } from "../lib/icons";
 
 /**
  * The icon rail on the far left: which view the sidebar is showing, and the way to the
@@ -17,7 +17,7 @@ import { IconBranch, IconChat, IconEdit, IconFiles, IconSettings } from "../lib/
  */
 
 /** Which view the sidebar is showing. The rail is the only thing that sets it. */
-export type SidebarView = "explorer" | "changes" | "git" | "conversations";
+export type SidebarView = "explorer" | "changes" | "git" | "conversations" | "models";
 
 interface ViewSpec {
   id: SidebarView;
@@ -31,6 +31,9 @@ const VIEWS: ViewSpec[] = [
   { id: "changes", label: "Changes", icon: <IconEdit /> },
   { id: "git", label: "Repository", icon: <IconBranch /> },
   { id: "conversations", label: "Conversations", icon: <IconChat /> },
+  // Below Conversations, and last: this is the one you open to set something up rather
+  // than one you work in, so it sits at the end of the views rather than among them.
+  { id: "models", label: "Local models", icon: <IconChip /> },
 ];
 
 interface ActivityBarProps {

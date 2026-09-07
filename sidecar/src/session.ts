@@ -30,6 +30,14 @@ import { HostLink } from "./host.ts";
 import { createIdeServer, IDE_SERVER_NAME, ideToolNames } from "./ide-tools.ts";
 import { loadMcpServers } from "./mcp-config.ts";
 import { loadMemoryConfig, memorySettings } from "./memory-config.ts";
+import {
+  findProvider,
+  loadProviders,
+  providerEnv,
+  publicProviders,
+  waitForProvider,
+  type Provider,
+} from "./provider-config.ts";
 import { ModelCatalogue } from "./models.ts";
 import { createPermissionHandler } from "./permissions.ts";
 import type { DoneReason, JsonObject, PromptOptions } from "./protocol.ts";
@@ -55,6 +63,16 @@ const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
 const INTERRUPT_GRACE_MS = 5_000;
 
 /**
+ * How long a backend agentide started has to answer before the turn gives up on it.
+ *
+ * A 30B model is tens of gigabytes read off disk and laid out in memory; two minutes is
+ * generous for that and still short enough that a backend which will never come up -- a
+ * missing engine, a bad model path -- reports rather than hangs. The person is watching it
+ * happen in a terminal tab either way, which is the point of launching it there.
+ */
+const PROVIDER_LOAD_MS = 120_000;
+
+/**
  * Everything a query is built from that it cannot be told about afterwards.
  *
  * `options` is the whole `PromptOptions` on purpose: the fields a live query *can* be
@@ -67,6 +85,14 @@ export interface QueryShape {
   conversation: string | undefined;
   /** The inline settings block -- the memory configuration -- or null when it is off. */
   settings: Record<string, unknown> | null;
+  /**
+   * The backend this turn runs against, resolved from `providers.json`, or null for
+   * Anthropic's own.
+   *
+   * Held as the resolved provider rather than its key, because the key alone cannot be
+   * compared: editing a provider's URL without renaming it has to rebuild the query too.
+   */
+  provider: Provider | null;
   options?: PromptOptions;
 }
 
@@ -102,6 +128,15 @@ export function queryFingerprint(shape: QueryShape): string {
     options?.maxTurns ?? null,
     options?.includePartialMessages ?? null,
     shape.settings,
+    // The backend, by value. It becomes `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`
+    // in the CLI's environment, which the CLI reads once as it starts -- there is no
+    // setter, so a live query cannot be moved between backends. Keeping one across a
+    // change would run the turn against the old model while the picker showed the new
+    // one, which is the exact failure this list exists to prevent. The token is included
+    // because rotating a key must also rebuild; it never leaves this process.
+    shape.provider
+      ? [shape.provider.key, shape.provider.baseUrl, shape.provider.token]
+      : null,
   ]);
 }
 
@@ -164,6 +199,15 @@ export class Session {
   readonly #models: ModelCatalogue;
   /** How `#build` reaches the SDK; see `StartQuery`. */
   readonly #start: StartQuery;
+  /**
+   * The `ide_*` tools the host on the other end can answer, or undefined for all of them.
+   *
+   * Passed to `createIdeServer` so the model is only shown tools that work. The desktop
+   * app answers every one; the CLI has no editor and no language server, and declaring
+   * those anyway would cost their descriptions in every prompt to offer the model a dozen
+   * ways to fail.
+   */
+  readonly #answers: readonly string[] | undefined;
   /** Turns run one at a time; a prompt arriving mid-turn queues behind this. */
   #chain: Promise<void> = Promise.resolve();
   /** The SDK's session id, learned from its messages and replayed as `resume`. */
@@ -186,11 +230,13 @@ export class Session {
     sessionId: string,
     models: ModelCatalogue,
     start: StartQuery = query,
+    answers?: readonly string[],
   ) {
     this.#link = link;
     this.#sessionId = sessionId;
     this.#models = models;
     this.#start = start;
+    this.#answers = answers;
   }
 
   /** Queue a turn. Resolves when it has finished and its `done` has been sent. */
@@ -279,6 +325,99 @@ export class Session {
     started.add(this);
   }
 
+  /**
+   * Build the query and ask what this installation offers, without running a turn.
+   *
+   * For the terminal, where `/` is a menu of every command the installation has: that list
+   * comes from `supportedCommands()`, which needs a live `Query` -- `WarmQuery` does not
+   * expose it -- so before this existed the menu held only the six commands the CLI wrote
+   * itself until the user had spent a turn. A menu that is wrong until you stop needing it
+   * is worse than no menu.
+   *
+   * It costs the CLI spawn the first turn would have paid anyway, and no tokens: nothing
+   * is pushed onto the queue, so the model is never called. The desktop app does not use
+   * this -- it has a window to draw while the first turn runs, and starting a CLI for a
+   * session the user may never prompt is a process per press of New.
+   */
+  warm(cwd: string, options?: PromptOptions): Promise<void> {
+    this.#claim();
+    this.#chain = this.#chain.then(async () => {
+      if (this.#disposed || this.#cancelled) return;
+      try {
+        await this.#prepare(cwd, options);
+      } catch (error) {
+        // A failure here is not a failed turn: the next prompt prepares again and reports
+        // properly. Saying it out loud anyway, because a menu that stays short otherwise
+        // looks like the feature rather than the backend.
+        warn(`could not read what this installation offers: ${describe(error)}`);
+      }
+    });
+    return this.#chain;
+  }
+
+  /**
+   * Everything a turn needs before its text goes in: config, provider, and a query.
+   *
+   * Shared with `warm`, which is the reason it is a method rather than the top of
+   * `#runTurn`. Both must build the *same* shape -- a warm-up that differed by one field
+   * would be retired by the first prompt through `queryFingerprint`, and the spawn it
+   * saved would be paid twice.
+   */
+  async #prepare(cwd: string, options?: PromptOptions): Promise<LiveQuery> {
+    // Before the query, not inside it: a server whose application is closed is not
+    // started at all, which saves its spawn and keeps a row of failures out of the
+    // prompt. The checks run in parallel and are a localhost connect each.
+    const external = await loadMcpServers(cwd);
+    const memory = loadMemoryConfig();
+    // Re-read per turn like the others, so an edit to `providers.json` lands on the next
+    // prompt. Resolved here rather than in the host: this is where `${VAR}` is expanded,
+    // and a token has no business crossing into the webview to be sent back.
+    const providers = loadProviders();
+    // Sent every turn, not only at startup: the file is re-read every turn, so a backend
+    // added while the app was open reaches the picker on the next prompt.
+    this.#link.send({ t: "providers", providers: publicProviders(providers) });
+    const provider = findProvider(providers, options?.provider);
+    if (options?.provider && !provider) {
+      // Named and not found is a refusal, not a fallback. Quietly running on Anthropic
+      // because a key was misspelled is the silent success this project keeps paying
+      // for -- and it would be billed.
+      throw new Error(`no provider named "${options.provider}" in ~/.agentide/providers.json`);
+    }
+    if (provider) {
+      // How long depends on who is bringing it up. A backend agentide launches is
+      // loading a file off disk -- tens of seconds for a 30B -- and the host has already
+      // started it by the time this runs, so waiting is waiting for something real. One
+      // it does not launch is either up or the person's to start, and making them sit
+      // through a minute of silence to be told so is the worse answer.
+      const grace = provider.start ? PROVIDER_LOAD_MS : 0;
+      if (!(await waitForProvider(provider, grace))) {
+        // Claude Code does not fall back to the cloud when `ANTHROPIC_BASE_URL` is set
+        // and dead; it fails the turn with an error naming neither the provider nor the
+        // port. This is that error, said usefully, before the turn is spent.
+        throw new Error(
+          `${provider.key} is not answering on ${provider.host}:${provider.port}` +
+            (provider.start ? ` -- it was started but did not come up` : ` -- start it first`),
+        );
+      }
+    }
+    // Sent every turn, held-back list empty or not: the empty list is what clears the
+    // chips the last turn left in the strip. A server the loader skipped never reaches
+    // the SDK's init message, so this is the only report that it was configured at all.
+    this.#link.send({ t: "mcp_gated", sessionId: this.#sessionId, servers: external.gated });
+    const shape: QueryShape = {
+      cwd,
+      conversation: this.#resumeId,
+      settings: memorySettings(memory),
+      provider,
+      options,
+    };
+    const live = await this.#ensureQuery(shape, external.servers);
+    // The only handle the model list can be asked through. Fire and forget: it resolves
+    // out of band, and no turn waits for it or fails with it.
+    this.#models.publish(live.query);
+    return live;
+  }
+
   async #runTurn(cwd: string, text: string, options?: PromptOptions): Promise<void> {
     if (this.#disposed) return;
     if (this.#cancelled) {
@@ -319,25 +458,7 @@ export class Session {
 
     let outcome: Outcome;
     try {
-      // Before the query, not inside it: a server whose application is closed is not
-      // started at all, which saves its spawn and keeps a row of failures out of the
-      // prompt. The checks run in parallel and are a localhost connect each.
-      const external = await loadMcpServers(cwd);
-      const memory = loadMemoryConfig();
-      // Sent every turn, held-back list empty or not: the empty list is what clears the
-      // chips the last turn left in the strip. A server the loader skipped never reaches
-      // the SDK's init message, so this is the only report that it was configured at all.
-      this.#link.send({ t: "mcp_gated", sessionId: this.#sessionId, servers: external.gated });
-      const shape: QueryShape = {
-        cwd,
-        conversation: this.#resumeId,
-        settings: memorySettings(memory),
-        options,
-      };
-      const live = await this.#ensureQuery(shape, external.servers);
-      // The only handle the model list can be asked through. Fire and forget: it resolves
-      // out of band, and this turn neither waits for it nor fails with it.
-      this.#models.publish(live.query);
+      const live = await this.#prepare(cwd, options);
 
       // Unless a Stop already ended it while the query was being prepared. The query is
       // kept -- it is built and idle and the next prompt can have it -- but the text this
@@ -423,7 +544,7 @@ export class Session {
     // One `agentide` server per query, not per session: the SDK connects the instance it
     // is handed when the query is constructed, and handing a closed query's server to the
     // next one is not a state this has any reason to explore.
-    const ide = createIdeServer(this.#link, this.#sessionId);
+    const ide = createIdeServer(this.#link, this.#sessionId, this.#answers);
     const queue = new PromptQueue();
     const running = this.#start({
       prompt: queue.stream(),
@@ -567,7 +688,7 @@ export class Session {
       // The IDE tools are added rather than replacing what the host asked for:
       // `allowedTools` is an auto-approve list, not a restriction, so this widens nothing
       // else. See `ideToolNames` for why these do not need a prompt.
-      allowedTools: [...(options?.allowedTools ?? []), ...ideToolNames()],
+      allowedTools: [...(options?.allowedTools ?? []), ...ideToolNames(this.#answers)],
       /**
        * `Bash` is taken away, and `ide_run` replaces it.
        *
@@ -613,9 +734,22 @@ export class Session {
           ? { append: options.systemPromptAppend }
           : {}),
       },
-      // Deliberately no `env`: setting it *replaces* the subprocess environment, and this
-      // process was started with the user's, which is where ANTHROPIC_API_KEY or an
-      // existing Claude Code login lives. The sidecar never reads or forwards a key.
+      /**
+       * The backend, when the turn asked for one that is not Anthropic's.
+       *
+       * Spread over `process.env`, never in place of it. Setting `env` *replaces* the
+       * subprocess environment -- the SDK's own doc says so and says to spread -- and this
+       * process was started with the user's, which is where `PATH`, `ANTHROPIC_API_KEY`
+       * or an existing Claude Code login lives. Two variables are not worth losing those.
+       *
+       * Omitted entirely for an Anthropic turn, so the CLI is left exactly as it was
+       * before providers existed rather than being handed an environment that merely
+       * happens to match. The sidecar still never reads or forwards a key of its own; the
+       * token here came from `providers.json`, which is the file that says to.
+       */
+      ...(shape.provider
+        ? { env: { ...process.env, ...providerEnv(shape.provider) } }
+        : {}),
       /**
        * The agent's memory, and who may write to it.
        *

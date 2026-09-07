@@ -41,6 +41,9 @@ import {
   reduce,
 } from "../lib/transcript";
 import { Markdown } from "./Markdown";
+import { decodeModel } from "../lib/model-menu";
+import { mergeProviders, settleProviders, usePendingProviders } from "../lib/pending-providers";
+import { ensureProvider } from "../lib/provider";
 import { RunControls } from "./RunControls";
 import type { Activity, Row } from "../lib/transcript";
 
@@ -155,6 +158,18 @@ export function TranscriptPane({
   onNewConversation,
 }: TranscriptProps) {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
+  /**
+   * What the sidecar has read, plus anything Settings has written since it last looked.
+   * See `pending-providers.ts`; the extra entries drop out on the first turn.
+   */
+  const pendingProviders = usePendingProviders();
+  const providers = mergeProviders(state.providers, pendingProviders);
+  // Once the sidecar has read an entry for itself, stop holding a copy of it. In an effect
+  // rather than in the merge: a render that wrote to the store would be reading and writing
+  // the same state, which React may do twice.
+  useEffect(() => {
+    settleProviders(state.providers);
+  }, [state.providers]);
   const [sessionId, setSessionId] = useState(newSessionId);
 
   const [draft, setDraft] = useState("");
@@ -333,9 +348,31 @@ export function TranscriptPane({
         // Read now, not at mount: the file is meant to be iterated on, and a cached
         // copy would make editing it silently do nothing until a restart.
         const append = promptMode === "tuned" ? await readTunedPrompt(root) : null;
+        // One menu value carries both halves of the choice; see `model-menu.ts`.
+        const chosen = decodeModel(model);
+        if (chosen.provider) {
+          // Started here rather than in the sidecar so it lands in a terminal tab: a 30B
+          // model takes tens of seconds to load, and that wait is only tolerable when you
+          // can see it happening. The sidecar still holds the gate and will refuse the
+          // turn if the backend never answers.
+          const backend = state.providers.find((entry) => entry.key === chosen.provider);
+          if (backend) {
+            const start = await ensureProvider(backend, root);
+            if (start.started) {
+              dispatch({
+                t: "local_notice",
+                tone: "info",
+                text: `starting ${backend.key} — loading the model, see the ${start.id} terminal tab`,
+              });
+            } else if ("error" in start) {
+              dispatch({ t: "local_notice", tone: "warn", text: start.error });
+            }
+          }
+        }
         await agentPrompt(sessionId, text, {
           ...modeOptions(mode),
-          ...(model ? { model } : {}),
+          ...(chosen.model ? { model: chosen.model } : {}),
+          ...(chosen.provider ? { provider: chosen.provider } : {}),
           ...(effort ? { effort } : {}),
           ...(append ? { systemPromptAppend: append } : {}),
           ...(resumeConversation ? { resumeConversation } : {}),
@@ -344,7 +381,7 @@ export function TranscriptPane({
         dispatch({ t: "exited", code: null, message: errorMessage(err), pending: [] });
       }
     })();
-  }, [draft, running, state.status, sessionId, model, effort, mode, promptMode, root, resumeConversation, onTurnStart]);
+  }, [draft, running, state.status, state.providers, sessionId, model, effort, mode, promptMode, root, resumeConversation, onTurnStart]);
 
   /**
    * Start over: a new session id, an empty transcript, nothing resumed.
@@ -461,6 +498,7 @@ export function TranscriptPane({
         onPromptMode={setPromptMode}
         tunedAvailable={tunedAvailable}
         models={state.models}
+        providers={providers}
         model={model}
         effort={effort}
         onModel={setModel}

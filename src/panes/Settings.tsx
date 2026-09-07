@@ -39,6 +39,15 @@ interface SettingsProps {
   onClose: () => void;
 }
 
+/** The sections, in the order they are worth reaching. */
+const SECTIONS = [
+  { id: "appearance", label: "Appearance" },
+  { id: "memory", label: "Memory" },
+  { id: "import", label: "Import" },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]["id"];
+
 const APPEARANCES: Array<{ id: Appearance; label: string }> = [
   { id: "system", label: "System" },
   { id: "light", label: "Light" },
@@ -77,6 +86,12 @@ export function Settings({
   onImported,
   onClose,
 }: SettingsProps) {
+  /**
+   * Which section is showing. Not remembered across opens: Settings is opened to change
+   * one thing, and landing on wherever you were last is landing somewhere arbitrary.
+   */
+  const [section, setSection] = useState<SectionId>("appearance");
+
   useEffect(() => {
     // On the window rather than on the dialog: there are a dozen focusable controls in
     // here, and Escape has to work from all of them, including from none of them.
@@ -104,6 +119,29 @@ export function Settings({
         </header>
 
         <div className="settings-body">
+          {/**
+           * A list of sections rather than one long scroll.
+           *
+           * Three sections was already more than a screen, and reaching Import meant
+           * scrolling past the whole of Memory. One panel at a time, and the nav says what
+           * else is here without showing it.
+           */}
+          <nav className="settings-nav" aria-label="Settings sections">
+            {SECTIONS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                className={`settings-tab${entry.id === section ? " is-on" : ""}`}
+                aria-pressed={entry.id === section}
+                onClick={() => setSection(entry.id)}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="settings-panel">
+          {section === "appearance" && (
           <section className="settings-section">
             <h2 className="settings-legend">Appearance</h2>
             <div className="settings-row">
@@ -160,10 +198,11 @@ export function Settings({
               </div>
             </div>
           </section>
+          )}
 
-          <MemorySection />
-
-          <ImportSection root={root} onImported={onImported} />
+          {section === "memory" && <MemorySection />}
+          {section === "import" && <ImportSection root={root} onImported={onImported} />}
+          </div>
         </div>
       </div>
     </div>
