@@ -10,9 +10,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { modelRows, pickModel } from "./cli-models.ts";
+import { CLOUD, modelRows, pickModel, pickProvider, providerRows } from "./cli-picks.ts";
 import { theme, width } from "./cli-theme.ts";
-import type { ModelInfo } from "./protocol.ts";
+import type { ModelInfo, ProviderInfo } from "./protocol.ts";
 
 /** What `supportedModels()` reports, trimmed to the fields a picker uses. */
 const MODELS: ModelInfo[] = [
@@ -106,6 +106,63 @@ test("no row runs off the terminal", () => {
     { value: "x", displayName: "X", description: "a very long description ".repeat(20) },
   ];
   for (const row of modelRows(wordy, "x", theme({ isTTY: true }, {}), 70)) {
+    assert.ok(width(row) <= 70, `${width(row)} columns: ${row}`);
+  }
+});
+
+// --- backends ------------------------------------------------------------------------
+
+const PROVIDERS: ProviderInfo[] = [
+  { key: "qwen-local", models: [{ id: "q", name: "Qwen", supportsEffort: false }], host: "127.0.0.1", port: 8080, start: "llama-server …" },
+  { key: "gemma-local", models: [{ id: "g", name: "Gemma", supportsEffort: false }], host: "127.0.0.1", port: 8081 },
+];
+
+test("a backend that is not configured is refused, and named", () => {
+  // The same failure as the model typo, one layer further away: this used to be taken as
+  // written and only refused once the turn reached `session.ts`.
+  const { chosen, suggestion } = pickProvider("qwen", PROVIDERS);
+  assert.equal(chosen, undefined);
+  assert.equal(suggestion === CLOUD ? CLOUD : suggestion?.key, "qwen-local");
+});
+
+test("a configured backend is taken by its key", () => {
+  const { chosen } = pickProvider("gemma-local", PROVIDERS);
+  assert.equal(chosen === CLOUD ? CLOUD : chosen?.key, "gemma-local");
+});
+
+test("the cloud can be named, by more than one word", () => {
+  // Going back is the one thing a picker without this row cannot do, and nobody agrees on
+  // what it is called.
+  for (const word of ["anthropic", "cloud", "none", "off"]) {
+    assert.equal(pickProvider(word, PROVIDERS).chosen, CLOUD, word);
+  }
+});
+
+test("the cloud is the first row, and marked when nothing is set", () => {
+  const rows = providerRows(PROVIDERS, undefined, theme({ isTTY: true }, {}));
+  assert.equal(rows.length, PROVIDERS.length + 1);
+  assert.ok(rows[0]?.includes("anthropic"));
+  assert.ok(rows[0]?.includes("›"), "no backend set means the cloud is running");
+});
+
+test("exactly one backend is marked, and it is the running one", () => {
+  const rows = providerRows(PROVIDERS, "gemma-local", theme({ isTTY: true }, {}));
+  const marked = rows.filter((row) => row.includes("›"));
+  assert.equal(marked.length, 1);
+  assert.ok(marked[0]?.includes("gemma-local"));
+});
+
+test("a backend row says where it listens", () => {
+  // The port is the whole of whether a turn will work: with `ANTHROPIC_BASE_URL` set and
+  // nothing listening, Claude Code fails the turn rather than falling back to the cloud.
+  assert.ok(providerRows(PROVIDERS, undefined)[1]?.includes("127.0.0.1:8080"));
+});
+
+test("no backend row runs off the terminal", () => {
+  const wordy: ProviderInfo[] = [
+    { key: "k", models: [], host: "127.0.0.1", port: 8080, note: "a very long note ".repeat(20) },
+  ];
+  for (const row of providerRows(wordy, "k", theme({ isTTY: true }, {}), 70)) {
     assert.ok(width(row) <= 70, `${width(row)} columns: ${row}`);
   }
 });

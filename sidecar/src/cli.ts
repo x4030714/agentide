@@ -33,13 +33,20 @@ import { HostLink } from "./host.ts";
 import { ModelCatalogue } from "./models.ts";
 import { allCommands, complete, format, lookup } from "./cli-commands.ts";
 import { ago, listConversations } from "./conversations.ts";
-import { modelRows, pickModel } from "./cli-models.ts";
+import { CLOUD, modelRows, pickModel, pickProvider, providerRows } from "./cli-picks.ts";
 import type { PastConversation } from "./conversations.ts";
 import { accept, MENU_HEIGHT, menuFor, move, rows } from "./cli-menu.ts";
 import { pad, theme, width as visibleWidth } from "./cli-theme.ts";
 import type { Theme } from "./cli-theme.ts";
 import type { Menu } from "./cli-menu.ts";
-import type { JsonObject, ModelInfo, SidecarMessage, SlashCommand, ToolResult } from "./protocol.ts";
+import type {
+  JsonObject,
+  ModelInfo,
+  ProviderInfo,
+  SidecarMessage,
+  SlashCommand,
+  ToolResult,
+} from "./protocol.ts";
 import { Session } from "./session.ts";
 
 /**
@@ -179,8 +186,10 @@ async function main(): Promise<void> {
   let failed = false;
   /** What the installation offers, once the warm-up has asked it. See `cli-commands.ts`. */
   let agentCommands: SlashCommand[] = [];
-  /** The models it can run, from the same warm-up. See `cli-models.ts`. */
+  /** The models it can run, from the same warm-up. See `cli-picks.ts`. */
   let agentModels: ModelInfo[] = [];
+  /** The backends `providers.json` configures, re-sent on every turn as the file is re-read. */
+  let agentProviders: ProviderInfo[] = [];
   /**
    * Redraw an open menu. Replaced by `repl` once there is one to redraw.
    *
@@ -231,6 +240,12 @@ async function main(): Promise<void> {
         // it does when skills are discovered in a subdirectory.
         agentCommands = message.commands;
         menuHook.refresh();
+        return;
+      }
+      case "providers": {
+        // Sent on every turn, not once: `providers.json` is re-read each time, so a
+        // backend added while this was open reaches the list on the next prompt.
+        agentProviders = message.providers;
         return;
       }
       case "models": {
@@ -317,7 +332,7 @@ async function main(): Promise<void> {
   // until a turn has been spent. It costs the CLI spawn that turn would have paid anyway.
   void session.warm(options.cwd, promptOptions());
 
-  await repl(turn, options, session, () => agentCommands, menuHook, () => agentModels);
+  await repl(turn, options, session, () => agentCommands, menuHook, () => agentModels, () => agentProviders);
 }
 
 /**
@@ -336,6 +351,7 @@ async function repl(
   known: () => SlashCommand[],
   menuHook: { refresh: () => void },
   models: () => ModelInfo[],
+  providers: () => ProviderInfo[],
 ): Promise<void> {
   const rl = createInterface({
     input: process.stdin,
@@ -364,7 +380,7 @@ async function repl(
       const { exact, matches } = lookup(text, commands);
       if (exact?.name === "exit") break;
       if (exact && "local" in exact) {
-        await handleLocal(exact.name, text, options, recent, models());
+        await handleLocal(exact.name, text, options, recent, models(), providers());
         menu.open();
         continue;
       }
@@ -765,6 +781,63 @@ function attachMenu(
 }
 
 /**
+ * `/provider` lists the backends; `/provider 2` or `/provider qwen-local` picks one.
+ *
+ * A key that is not in `providers.json` is refused here for the same reason a bad model
+ * name is. It used to be taken as written, and the turn then reached `session.ts`, which
+ * refuses it properly -- but only after the prompt was sent, which is a turn spent finding
+ * out that a name was misspelled.
+ *
+ * `anthropic` is a row rather than a special case, because going back to the cloud is the
+ * one thing a picker without it cannot do: `/provider` on its own lists, so there would be
+ * no way left to say it.
+ */
+function chooseProvider(
+  argument: string,
+  options: Options,
+  providers: readonly ProviderInfo[],
+): void {
+  if (!argument) {
+    process.stdout.write(
+      `${providerRows(providers, options.provider, paint, process.stdout.columns || 100).join("\n")}\n`,
+    );
+    process.stdout.write(paint.dim("  /provider <n> or /provider <key> to switch\n"));
+    return;
+  }
+
+  const rows = [CLOUD, ...providers.map((provider) => provider.key)];
+  const picked = Number(argument);
+  const named = Number.isInteger(picked) ? rows[picked - 1] : undefined;
+  if (Number.isInteger(picked) && !named) {
+    process.stdout.write(paint.dim(`  there is no ${picked}; the list has ${rows.length}\n`));
+    return;
+  }
+
+  if (named) return void switchTo(named, options);
+
+  const { chosen, suggestion } = pickProvider(argument, providers);
+  if (chosen) return void switchTo(chosen === CLOUD ? CLOUD : chosen.key, options);
+  const near = suggestion
+    ? ` Did you mean ${paint.accent(suggestion === CLOUD ? CLOUD : suggestion.key)}?`
+    : "";
+  process.stdout.write(
+    `  ${paint.danger(`"${argument}" is not a backend in ~/.agentide/providers.json.`)}${near}\n`,
+  );
+  process.stdout.write(paint.dim("  /provider on its own lists them\n"));
+}
+
+/** Set the backend, or clear it, which is what choosing the cloud means. */
+function switchTo(key: string, options: Options): void {
+  if (key === CLOUD) {
+    delete options.provider;
+    process.stdout.write(`  next turns run on ${paint.accent(CLOUD)}\n`);
+    return;
+  }
+  options.provider = key;
+  process.stdout.write(`  next turns run on ${paint.accent(key)}\n`);
+}
+
+/**
  * `/model` with nothing after it lists; `/model 3` or `/model opus` picks one.
  *
  * A name that is not a model is refused here rather than sent. It used to be taken as
@@ -913,6 +986,7 @@ async function handleLocal(
   options: Options,
   recent: PastConversation[],
   models: readonly ModelInfo[],
+  providers: readonly ProviderInfo[],
 ): Promise<void> {
   const argument = input.replace(/^\/\S+\s*/, "").trim();
   switch (name) {
@@ -926,9 +1000,7 @@ async function handleLocal(
       chooseModel(argument, options, models);
       return;
     case "provider":
-      if (!argument) return void process.stdout.write(`  ${options.provider ?? "anthropic"}\n`);
-      options.provider = argument;
-      process.stdout.write(`  next turns run on ${argument}\n`);
+      chooseProvider(argument, options, providers);
       return;
     case "cwd":
       if (argument) options.cwd = resolve(options.cwd, argument).replace(/\\/g, "/");
