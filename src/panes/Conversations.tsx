@@ -16,17 +16,8 @@ interface ConversationsProps {
 }
 
 /**
- * Every conversation this workspace has had.
- *
- * These are the agent SDK's own transcripts, read straight off disk. That is what makes
- * the list honest about what can be continued: an entry here exists because the SDK can
- * resume it, not because this app remembered something about it. Nothing is written back
- * for the same reason -- a transcript this app edited is one the SDK could no longer
- * resume, which would turn the list into a museum.
- *
- * The live transcript stays where it is. Reading an old conversation next to a running
- * one is the common case, and moving the running one out of the way to look something up
- * would be the wrong trade.
+ * Every conversation this workspace has had, read straight off the agent SDK's own transcripts:
+ * an entry exists because the SDK can resume it. Never written back, or it could not.
  */
 export function ConversationsPane({ root, revision, resumedId, onResume }: ConversationsProps) {
   const [items, setItems] = useState<ConversationSummary[]>([]);

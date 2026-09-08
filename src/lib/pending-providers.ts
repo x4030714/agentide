@@ -1,22 +1,5 @@
-/**
- * A backend that exists on disk but that the sidecar has not read yet.
- *
- * `providers.json` is read by the sidecar at startup and again at the start of every turn,
- * which is right for a file meant to be edited by hand -- an edit lands on the next prompt
- * rather than the next restart. It is wrong for the one case where agentide writes the file
- * itself: pressing "Use local model" told you to pick the model from the Model menu, and
- * the menu could not show it, because nothing had asked the sidecar to look again.
- *
- * Rather than add a message asking it to, the frontend remembers what it just wrote. It
- * already knows the half the picker needs -- the key and the models -- and deliberately not
- * the half it must never hold, the base URL and the token. So this store carries exactly
- * what `publicProviders` would have sent, and the merge drops an entry as soon as the real
- * list contains it.
- *
- * A subscription rather than a prop for the same reason `cursor.ts` is one: the writer is
- * in Settings and the reader is above the composer, and threading it between them would
- * mean lifting state through the whole app to bridge one gap that closes on its own.
- */
+/** A backend written to `providers.json` that the sidecar has not re-read yet, so the Model
+ * menu can show it before the next turn. Holds the key and models, never the URL or token. */
 
 import { useSyncExternalStore } from "react";
 
@@ -29,24 +12,15 @@ function announce(): void {
   for (const listener of listeners) listener();
 }
 
-/**
- * Remember a provider that has just been written to `providers.json`.
- *
- * Replaces any entry under the same key: pressing the button twice for one model must not
- * put it in the menu twice.
- */
+/** Remember a provider just written to `providers.json`. Replaces any entry under the same
+ * key: pressing the button twice for one model must not put it in the menu twice. */
 export function publishPendingProvider(provider: ProviderInfo): void {
   pending = [...pending.filter((entry) => entry.key !== provider.key), provider];
   announce();
 }
 
-/**
- * Everything the sidecar has told us, plus anything written since it last looked.
- *
- * The sidecar's list wins on a collision -- it read the file, this only remembers what was
- * meant to be in it -- and an entry that has arrived there is dropped from the pending set,
- * so this empties itself over the first turn rather than growing for the session.
- */
+/** The sidecar's list plus anything written since it last looked. The sidecar wins on a
+ * collision, and an arrived entry is dropped, so this empties itself over the first turn. */
 export function mergeProviders(
   known: ProviderInfo[],
   waiting: ProviderInfo[],
@@ -57,13 +31,8 @@ export function mergeProviders(
   return unseen.length > 0 ? [...known, ...unseen] : known;
 }
 
-/**
- * Forget the entries the sidecar has since read for itself.
- *
- * Called when a real list arrives rather than during the merge: a merge that mutated the
- * store would be a render reading and writing the same state, which React is entitled to
- * do twice.
- */
+/** Forget the entries the sidecar has since read for itself. Called when a real list arrives,
+ * not during the merge: a merge that mutated the store is a render React may run twice. */
 export function settleProviders(known: ProviderInfo[]): void {
   if (pending.length === 0) return;
   const seen = new Set(known.map((entry) => entry.key));

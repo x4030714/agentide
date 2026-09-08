@@ -1,20 +1,5 @@
-/**
- * Colour for the terminal, and the rule for when there is none.
- *
- * Three ways to have no colour and all of them matter: piped output (a log full of escape
- * codes is unreadable and ungreppable), `NO_COLOR` set (the convention, and someone who
- * set it means it), and a terminal that reports no support. `FORCE_COLOR` overrides the
- * lot, because that is what it is for -- driving this from a test harness or a pty that
- * lies about itself.
- *
- * Truecolor for the accent, with a 256-colour fallback. The accent is Claude's terracotta
- * rather than one of the sixteen ANSI names on purpose: those are whatever the user's
- * theme redefined them to be, and "red" in one scheme is pink in another.
- *
- * Nothing here picks a background. The terminal already has one, it may be light or dark,
- * and a palette that assumes either is unreadable on the other -- so the selected row in
- * the menu is reverse video, which is by definition the user's own two colours swapped.
- */
+/** Colour for the terminal, and when there is none: piped output, `NO_COLOR`, or a terminal
+ * that says no. `FORCE_COLOR` overrides all three, which is what it is for. */
 
 /** Claude's terracotta, as truecolor and as the nearest xterm-256 index. */
 const ACCENT_RGB = "\u001b[38;2;215;119;87m";
@@ -33,7 +18,7 @@ export interface Theme {
   dim(text: string): string;
   bold(text: string): string;
   danger(text: string): string;
-  /** The selected row of a menu: the user's own colours, swapped. */
+  /** The selected row: the user's own two colours swapped, since the background is unknown. */
   selected(text: string): string;
 }
 
@@ -46,12 +31,7 @@ const PLAIN: Theme = {
   selected: (text) => text,
 };
 
-/**
- * Whether to colour at all, and how far.
- *
- * `COLORTERM` is the only reliable signal for truecolor; without it this stays on the
- * 256-colour ramp, which every terminal worth colouring has had for twenty years.
- */
+/** `COLORTERM` is the only reliable truecolor signal; without it, stay on the 256-colour ramp. */
 function depth(stream: { isTTY?: boolean }, env: NodeJS.ProcessEnv): 0 | 8 | 24 {
   if (env.FORCE_COLOR && env.FORCE_COLOR !== "0") {
     return env.COLORTERM === "truecolor" || env.COLORTERM === "24bit" ? 24 : 8;
@@ -81,13 +61,8 @@ export function theme(
   };
 }
 
-/**
- * The width a string occupies, ignoring the escapes that occupy none.
- *
- * Every alignment in the CLI is `padEnd` on a coloured string, and `String.length` counts
- * the escape bytes -- so a coloured column is short by exactly the length of its own
- * colour. This is the one place that is worked out.
- */
+/** Visible width. `String.length` counts the escape bytes, so a `padEnd` on a coloured string
+ * comes out short by the length of its own colour. Worked out here, once. */
 export function width(text: string): number {
   // eslint-disable-next-line no-control-regex
   return text.replace(/\u001b\[[0-9;]*m/g, "").length;

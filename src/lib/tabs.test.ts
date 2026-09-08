@@ -1,10 +1,5 @@
-/**
- * The tab list's rules.
- *
- * Each case is a way a tab strip is annoying to use rather than a way it crashes: tabs
- * that reorder under the pointer, an agent's edit stealing the file you were reading, a
- * close that drops you somewhere unrelated.
- */
+/** The tab list's rules. Each case is a way a tab strip is annoying to use rather than a way
+ * it crashes: reordering under the pointer, a stolen view, a close that drops you elsewhere. */
 
 import { describe, expect, test } from "vitest";
 

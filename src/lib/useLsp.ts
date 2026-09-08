@@ -14,22 +14,13 @@ export interface Lsp {
   servers: ServerRow[];
   /** Call after writing a file: rust-analyzer's type errors only arrive on save. */
   didSave: (path: WirePath, text: string) => void;
-  /**
-   * The attached workspace, or `null` when none is. A getter rather than the value, so a
-   * consumer holding this does not re-render on every server state change, and cannot
-   * hold a workspace that has since been disposed.
-   */
+  /** The attached workspace, or `null` when none is. A getter, so a holder neither
+   * re-renders on every server state change nor keeps one that has been disposed. */
   workspace: () => LspWorkspace | null;
 }
 
-/**
- * Language servers for the open workspace, tied to its lifetime.
- *
- * Servers start lazily — opening a `.rs` file starts rust-analyzer, and a workspace with
- * no Rust in it never pays for one. Closing or switching workspace shuts them down, which
- * matters more than usual here: rust-analyzer holds a `cargo` process and hundreds of
- * megabytes, and leaking one per folder switch would be felt within a session.
- */
+/** Language servers for the open workspace, tied to its lifetime. They start lazily, and
+ * shut down on switch: a leaked rust-analyzer holds `cargo` and hundreds of megabytes. */
 export function useLsp(
   root: WirePath | null,
   openFile: (path: WirePath, line?: number, column?: number) => void,

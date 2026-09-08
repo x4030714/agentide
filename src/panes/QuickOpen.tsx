@@ -12,13 +12,8 @@ interface QuickOpenProps {
 }
 
 /**
- * Open a file by typing part of its name.
- *
- * The tree is for browsing a project you do not know; this is for reaching a file in a
- * project you do. It reads the whole file list once per opening rather than caching across
- * openings: a workspace changes under you -- the agent creates files, a branch switch
- * rewrites half of them -- and a palette offering a file that no longer exists is worse
- * than one that takes a moment.
+ * Open a file by typing part of its name. Re-reads the list on every opening rather than
+ * caching: the agent and branch switches move files, and offering a dead one is worse.
  */
 export function QuickOpen({ root, onOpen, onClose }: QuickOpenProps) {
   const [files, setFiles] = useState<WirePath[] | null>(null);

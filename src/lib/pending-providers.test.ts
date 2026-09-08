@@ -1,11 +1,5 @@
-/**
- * The gap between writing `providers.json` and the sidecar reading it.
- *
- * This exists because of a real report: "Use local model" wrote the entry, told the user to
- * pick the model from the Model menu, and the menu did not have it -- the sidecar had read
- * the file at startup, before the entry existed, and reads it again only at the start of a
- * turn. Every case here is about that window opening and closing correctly.
- */
+/** The gap between writing `providers.json` and the sidecar reading it. From a real report:
+ * "Use local model" wrote the entry, and the Model menu it pointed at did not have it. */
 
 import { beforeEach, describe, expect, test } from "vitest";
 

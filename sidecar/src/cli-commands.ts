@@ -1,19 +1,5 @@
-/**
- * What `/` offers in the interactive CLI.
- *
- * Two sources, one list. The CLI has a handful of its own -- leaving, changing the model --
- * and the Claude Code installation publishes the rest through `supportedCommands()`, which
- * needs a live query and so only arrives once a turn has run. That is worth saying out loud
- * in the listing rather than presenting a short list as though it were the whole one.
- *
- * `/` on its own lists everything; `/mo` lists what matches. The same text both opens the
- * menu and searches it, which is the point: there is no separate mode to enter or leave,
- * and a name typed in full is simply a match of one.
- *
- * Pure, and here rather than in `cli.ts`, because the matching has rules worth a test:
- * an alias has to find its command, a prefix has to beat a substring, and an exact name
- * has to win outright or `/exit` would open a menu instead of leaving.
- */
+/** What `/` offers: the CLI's own commands plus the installation's, which only arrive once a
+ * turn has run. An exact name wins outright, or `/exit` would open a menu instead of leaving. */
 
 import type { SlashCommand } from "./protocol.ts";
 
@@ -35,8 +21,7 @@ export const LOCAL_COMMANDS: LocalCommand[] = [
 
 /** Every command that can be typed right now, the CLI's own first. */
 export function allCommands(fromAgent: readonly SlashCommand[]): SlashCommand[] {
-  // The CLI's own first, and its names win a collision: `/model` here changes what the
-  // next turn runs on, which is the answer someone typing it in this program wants.
+// The CLI's own win a collision: `/model` here changes what the next turn runs on.
   const mine = new Set(LOCAL_COMMANDS.map((command) => command.name));
   return [...LOCAL_COMMANDS, ...fromAgent.filter((command) => !mine.has(command.name))];
 }
@@ -46,14 +31,8 @@ function named(command: SlashCommand, name: string): boolean {
   return command.name === name || (command.aliases ?? []).includes(name);
 }
 
-/**
- * What `/text` should do.
- *
- * `exact` means run it. Otherwise `matches` is what to show -- everything for a bare `/`,
- * and the search results for anything else. A search that finds nothing is not an error:
- * the installation may know a command this list has not heard of, since the agent's own
- * set only arrives after the first turn.
- */
+/** `exact` means run it; `matches` is what to show. Finding nothing is not an error -- the
+ * installation may know a command this list has not heard of yet. */
 export interface Lookup {
   exact: SlashCommand | null;
   matches: SlashCommand[];
@@ -66,8 +45,7 @@ export function lookup(input: string, commands: readonly SlashCommand[]): Lookup
   const exact = commands.find((command) => named(command, typed)) ?? null;
   if (exact) return { exact, matches: [exact] };
 
-  // Prefix before substring: typing `/co` wants `/commit` above `/precommit`, and a list
-  // that buried the obvious answer would make the search worse than no search.
+// Prefix before substring: typing `/co` wants `/commit` above `/precommit`.
   const prefix = commands.filter((command) => command.name.startsWith(typed));
   const inside = commands.filter(
     (command) => !command.name.startsWith(typed) && command.name.includes(typed),
@@ -80,10 +58,8 @@ export const CALL_COLUMN = 26;
 
 /** One line per command, aligned, for the listing. */
 export function format(commands: readonly SlashCommand[], terminal = 100): string[] {
-  // Capped, not measured. A skill can carry an argument hint of eighty characters, and
-  // letting the widest entry set the column indents every other description off the far
-  // side of the terminal -- one command's verbosity should not cost the other ninety their
-  // legibility.
+// Capped, not measured. One skill's eighty-character argument hint would otherwise indent
+// every other description off the side of the terminal.
   const column = Math.min(
     CALL_COLUMN,
     commands.reduce((widest, command) => Math.max(widest, call(command).length), 0),
@@ -94,26 +70,15 @@ export function format(commands: readonly SlashCommand[], terminal = 100): strin
   );
 }
 
-/**
- * `/name <args>`, shortened from the right if it has to be.
- *
- * The hint is what gets cut, never the name: a name is how the command is typed and a
- * hint is a reminder of what follows it, so a hint too long to show is a hint worth
- * losing. Reading `/help` on a wrapped second row is not.
- */
+/** `/name <args>`, cut from the right. The hint is what gets cut, never the name: the name is
+ * how the command is typed, the hint is only a reminder of what follows. */
 export function call(command: SlashCommand, limit = Infinity): string {
   const full = `/${command.name}${command.argumentHint ? ` ${command.argumentHint}` : ""}`;
   return full.length <= limit ? full : `${full.slice(0, limit - 1).trimEnd()}…`;
 }
 
-/**
- * A description as one line that fits.
- *
- * Skill descriptions are written for a model, not a listing: hundreds of words, embedded
- * newlines, and a paragraph of trigger conditions. Printed whole they wrap across the
- * terminal and the list stops being a list. The first sentence is what a person scanning
- * for a command name actually reads.
- */
+/** A description as one line. Skill descriptions are written for a model -- hundreds of words
+ * with embedded newlines -- and printed whole they wrap until the list stops being a list. */
 export function oneLine(description: string, room: number): string {
   const flat = description.replace(/\s+/g, " ").trim();
   if (flat.length <= room) return flat;
@@ -123,12 +88,8 @@ export function oneLine(description: string, room: number): string {
   return `${(space > room / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
-/**
- * What readline completes on Tab.
- *
- * Only for input that has started with a slash: everything else typed here is a prompt,
- * and completing English words into command names would be worse than not completing.
- */
+/** What Tab completes. Only after a slash: everything else typed here is a prompt, and turning
+ * English words into command names is worse than not completing. */
 export function complete(
   line: string,
   commands: readonly SlashCommand[],

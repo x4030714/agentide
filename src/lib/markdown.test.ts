@@ -2,12 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { parseMarkdown, parseSpans } from "./markdown";
 
-/**
- * The cases that decide whether the transcript reads as prose or as punctuation.
- *
- * Weighted towards what an agent writing about *this* codebase produces: paths with
- * underscores, pointer types, arithmetic, and fences it sometimes forgets to close.
- */
+/** The cases that decide whether the transcript reads as prose or as punctuation, weighted
+ * to what an agent writing about this codebase produces: paths, pointers, unclosed fences. */
 describe("blocks", () => {
   it("reads a fenced block with its language", () => {
     const blocks = parseMarkdown("before\n\n```rust\nfn main() {}\n```\n\nafter");

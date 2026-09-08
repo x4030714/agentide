@@ -1,16 +1,7 @@
 import type { ITheme } from "@xterm/xterm";
 
-/**
- * The terminal's palette, derived from the app's semantic roles rather than picked.
- *
- * ANSI's sixteen colours already carry meaning that maps onto ours almost exactly — red
- * is a failure, green is an addition, yellow is a warning, blue is a name. Wiring them
- * to the same tokens the tree and the syntax theme use means a red in the terminal and
- * a red in the diff mean the same thing, which is the whole premise of the role system.
- *
- * The background is transparent on purpose: the pane behind it is translucent, and an
- * opaque terminal would punch a solid rectangle through the window.
- */
+/** The terminal's palette, derived from the app's semantic roles rather than picked: ANSI's
+ * red/green/yellow already mean what ours do, so a red here and a red in the diff agree. */
 
 interface Roles {
   ink: string;
@@ -63,11 +54,8 @@ function theme(role: Roles, dark: boolean): ITheme {
     cursorAccent: dark ? "#151819" : "#ffffff",
     selectionBackground: role.selection,
 
-    /**
-     * The normal eight are the roles at reading weight. `black` is not black and
-     * `white` is not white — they are the ends of our own ink ramp, because a program
-     * printing "black" on a dark terminal means "dim", not "invisible".
-     */
+    /** The normal eight are the roles at reading weight. `black` is the dim end of our ink
+     * ramp, not black — a program printing "black" on a dark terminal means dim. */
     black: dark ? "#3a4049" : "#c9ced6",
     red: role.error,
     green: role.xref,
@@ -93,10 +81,8 @@ export function terminalTheme(appearance: "light" | "dark"): ITheme {
   return appearance === "dark" ? theme(DARK, true) : theme(LIGHT, false);
 }
 
-/**
- * Shared with the editor so a column of output and a column of code line up. The font
- * stack is Iosevka for the same reason it is in Monaco: narrow, so more fits.
- */
+/** Shared with the editor so a column of output and a column of code line up. Iosevka for
+ * the same reason Monaco has it: narrow, so more fits. */
 export const TERMINAL_FONT = {
   fontFamily: '"Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace',
   fontSize: 13,

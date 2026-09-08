@@ -49,13 +49,8 @@ const DIFF_OPTIONS = {
 } as const;
 
 /**
- * Git has eight states; the world has four colour roles. This is the mapping, and it is
- * deliberately lossy: the bar answers "is this new, changed, gone or broken", which is
- * what you read a status list for. The exact state is in the row's tooltip for the rare
- * moment it matters.
- *
- * No letters. `A`/`M`/`D` is a legend you have to learn, and the review queue already
- * settled this question the other way.
+ * Eight git states onto four colour roles -- lossy on purpose; the tooltip has the exact one.
+ * No `A`/`M`/`D` letters: that is a legend you have to learn.
  */
 const TONE: Record<GitFile["state"], string> = {
   added: "added",
@@ -81,14 +76,8 @@ const LABEL: Record<GitFile["state"], string> = {
 };
 
 /**
- * The repository panel: what is staged, what is not, and the controls to move things
- * between the two and commit the result.
- *
- * Two things it deliberately does not do. It does not cache: git is the truth and it is
- * cheap to ask, and a panel showing a stale index is a panel that will make someone
- * commit the wrong thing. And it never forces anything -- when git refuses a switch
- * because it would discard work, the refusal is shown as git wrote it, naming the files,
- * rather than being turned into a button that overrides it.
+ * Staged, unstaged, and the controls between them. Never caches -- a stale index makes someone
+ * commit the wrong thing -- and never forces: git's refusal is shown as git wrote it.
  */
 export function GitPane({ root, changes, revision, onOpenFile }: GitProps) {
   const appearance = useResolvedAppearance();
@@ -124,8 +113,7 @@ export function GitPane({ root, changes, revision, onOpenFile }: GitProps) {
     void reload();
   }, [reload, revision]);
 
-  // The turn history lives beside the repository state because they answer the same
-  // question from two directions: what changed, and what can be put back.
+  // Turn history sits beside git state: what changed, and what can be put back.
   useEffect(() => {
     if (!root) {
       setHistory([]);
@@ -282,8 +270,7 @@ export function GitPane({ root, changes, revision, onOpenFile }: GitProps) {
   return (
     <div className="pane git">
       <div className="pane-header">
-        {/* The other two states above name the view; this one has to as well, because the
-            header is the sidebar's title and a branch button alone does not say where you are. */}
+        {/* The header is the sidebar's title -- a branch button alone does not say where you are. */}
         <span className="legend">Repository</span>
         <button type="button" className="ghost-button branch-button" onClick={() => void openBranches()}>
           {status?.detached ? `detached @ ${status.head ?? "?"}` : (status?.branch ?? "…")}
@@ -432,9 +419,8 @@ export function GitPane({ root, changes, revision, onOpenFile }: GitProps) {
                   className={`ghost-button${confirming === point.id ? " is-warn" : ""}`}
                   disabled={busy}
                   onClick={() => {
-                    // Two clicks, because this rewrites the working tree. The second one
-                    // is still undoable -- rewind takes its own checkpoint first -- but
-                    // that is a reason to allow it, not a reason to do it by accident.
+                    // Two clicks: this rewrites the working tree. Rewind checkpoints first, so it
+                    // is undoable -- a reason to allow it, not to do it by accident.
                     if (confirming !== point.id) {
                       setConfirming(point.id);
                       return;

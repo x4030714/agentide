@@ -5,15 +5,8 @@ import { uriToPath } from "./lsp-session";
 import { toFileUri } from "./protocol";
 import type { WirePath } from "./protocol";
 
-/**
- * The URI round trip, tested against Monaco's real `URI` rather than against a comment.
- *
- * A file's identity is spelled three ways at once: `toFileUri` builds one, Monaco stores
- * a normalised one on the model (`@monaco-editor/react` passes our string through
- * `Uri.parse`), and the language server echoes back a third. Any two of those disagreeing
- * means a diagnostic lands on no model, and the symptom — "diagnostics never appear" —
- * looks nothing like the cause. These tests pin all three to the same file.
- */
+/** The URI round trip against Monaco's real `URI`. A file's identity is spelled three ways
+ * — ours, Monaco's, the server's — and a mismatch lands diagnostics on no model at all. */
 
 const PATHS = [
   "C:/Users/tung/Desktop/agentide/src/main.rs",
@@ -31,9 +24,8 @@ describe("path <-> uri", () => {
   });
 
   it("survives Monaco's own normalisation", () => {
-    // This is the leg that actually matters: the editor hands `toFileUri(path)` to
-    // `Uri.parse`, and the model is keyed on whatever comes out. If we cannot get back to
-    // the same path from that, model lookup by path is broken.
+    // The leg that matters: the editor hands `toFileUri(path)` to `Uri.parse` and keys the
+    // model on the result. Fail here and model lookup by path is broken.
     for (const path of PATHS) {
       const monacoUri = URI.parse(toFileUri(path));
       expect(uriToPath(monacoUri.toString())).toBe(path);

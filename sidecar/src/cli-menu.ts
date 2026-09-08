@@ -1,16 +1,5 @@
-/**
- * The list that opens under the prompt while you type `/`.
- *
- * Not a listing printed on Enter. Pressing Enter to find out what you could have typed is
- * backwards -- by then you have already sent something -- so this draws as the line
- * changes and the arrows walk it. Typing narrows it, so the menu and the search are the
- * same thing rather than two modes.
- *
- * Pure, and separate from `cli.ts`, because the arithmetic is where this kind of thing
- * breaks: a window that scrolls one row late, a selection that survives a filter it no
- * longer matches, a highlight that points at the wrong entry after wrapping. None of that
- * is visible in a screenshot and all of it is a test.
- */
+/** The list that opens under the prompt while you type `/`. Pure and out of `cli.ts` because
+ * the arithmetic is what breaks: a window that scrolls late, a selection that outlives a filter. */
 
 import { CALL_COLUMN, call, lookup, oneLine } from "./cli-commands.ts";
 import { clip, pad, theme as plainTheme, width } from "./cli-theme.ts";
@@ -29,30 +18,19 @@ export interface Menu {
   top: number;
 }
 
-/**
- * The menu for a line, or null when there should not be one.
- *
- * Null for anything not starting with `/` -- most of what is typed here is a prompt --
- * and null when nothing matches, because an empty box under the cursor says the CLI is
- * broken where showing nothing says the search found nothing.
- */
+/** The menu for a line, or null when there should not be one. Null when nothing matches: an
+ * empty box under the cursor reads as broken where drawing nothing reads as no results. */
 export function menuFor(line: string, commands: readonly SlashCommand[]): Menu | null {
   if (!line.startsWith("/")) return null;
-  // The name only. `/model claude-opus-5` has stopped being a search the moment there is
-  // an argument, and a menu still open over it is in the way.
+// Name only. Once there is an argument this has stopped being a search and the menu is in the way.
   if (/^\/\S+\s/.test(line)) return null;
   const { matches } = lookup(line, commands);
   if (matches.length === 0) return null;
   return { matches, selected: 0, top: 0 };
 }
 
-/**
- * Move the selection, and the window with it if it has to.
- *
- * Wraps, because the fastest way to the last entry in a list of ninety is up. The window
- * follows the selection by the smallest amount that keeps it visible, which is what makes
- * holding a key feel like scrolling rather than paging.
- */
+/** Move the selection, and the window with it. Wraps, because the fastest way to the last of
+ * ninety entries is up; the window follows by the least that keeps the selection visible. */
 export function move(menu: Menu, delta: number, height = MENU_HEIGHT): Menu {
   const count = menu.matches.length;
   const selected = (menu.selected + delta + count) % count;
@@ -81,13 +59,8 @@ export interface Drawn {
   gutter?: string;
 }
 
-/**
- * The rows to draw, colour and footer included.
- *
- * Every row is padded to the same visible width before the selected one is inverted, so
- * the highlight reads as a bar across the list rather than as a ragged blob the length of
- * its own description. `pad` counts what is seen; `String.length` would count the colour.
- */
+/** The rows to draw. Each is padded to the same visible width before the selected one is
+ * inverted, so the highlight is a bar across the list rather than a ragged blob. */
 export function rows(menu: Menu, options: Drawn = {}): string[] {
   const paint = options.theme ?? plainTheme({ isTTY: false });
   const height = options.height ?? MENU_HEIGHT;
@@ -104,9 +77,8 @@ export function rows(menu: Menu, options: Drawn = {}): string[] {
     const chosen = menu.top + index === menu.selected;
     const name = pad(clip(call(command, column), column), column);
     const note = clip(oneLine(command.description, room), room);
-    // The selected row is inverted, and inverting text that already carries a colour
-    // produces whatever that colour is on a coloured ground -- often unreadable. So the
-    // highlighted row is painted once, plain, and the colours go on the others.
+// Inverting text that already carries a colour gives that colour on a coloured ground, often
+// unreadable. The selected row is painted plain; the colours go on the others.
     const body = chosen
       ? paint.selected(pad(` ${name}  ${note}`, inner))
       : `${paint.accent(name)}  ${paint.dim(note)}`;
@@ -115,25 +87,16 @@ export function rows(menu: Menu, options: Drawn = {}): string[] {
   return [...lines, `${gutter} ${paint.dim(footer(menu, height))}`];
 }
 
-/**
- * The line under the list.
- *
- * It says how many there are, because a window of eight over ninety commands otherwise
- * looks like the whole set -- which is the bug this feature was reported as.
- */
+/** The line under the list. It says how many there are: a window of eight over ninety commands
+ * otherwise looks like the whole set, which is the bug this feature was reported as. */
 function footer(menu: Menu, height: number): string {
   const count = menu.matches.length;
   const where = count > height ? `${menu.selected + 1}/${count}` : `${count}`;
   return `${where}  ↑↓ move · enter run · tab complete · esc close`;
 }
 
-/**
- * The line the selection should leave behind, and whether it is ready to send.
- *
- * A command that takes no argument runs on the same Enter that chose it; one that takes
- * an argument leaves a trailing space and waits, because sending `/model` alone would run
- * a command missing the only thing it needed.
- */
+/** The line the selection leaves behind, and whether it is ready to send. A command that takes
+ * an argument leaves a trailing space and waits rather than running without it. */
 export function accept(menu: Menu): { line: string; submit: boolean } {
   const command = selection(menu);
   return command.argumentHint

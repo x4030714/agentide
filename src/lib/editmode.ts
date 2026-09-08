@@ -1,12 +1,7 @@
 import type { PromptOptions } from "./protocol";
 
-/**
- * How much the agent is allowed to do without asking.
- *
- * One mechanism underneath all three: a checkpoint is taken before every turn whatever
- * the mode, so every edit is reversible either way. The mode only decides how much you
- * are interrupted on the way.
- */
+/** How much the agent may do without asking. A checkpoint is taken before every turn
+ * in all three modes, so the mode only decides how often you are interrupted. */
 export type EditMode = "strict" | "review" | "auto";
 
 export const EDIT_MODES: EditMode[] = ["strict", "review", "auto"];
@@ -23,15 +18,8 @@ export const MODE_HELP: Record<EditMode, string> = {
   auto: "No prompts. Rewind the turn if it goes wrong.",
 };
 
-/**
- * What the mode adds to a turn's options. Nothing else in the app sets these.
- *
- * All three are the SDK's own permission modes rather than a tool allowlist of our own.
- * `acceptEdits` in particular is exactly Review: file edits land without asking, and
- * everything else -- `Bash` above all -- still stops at a prompt. That distinction is
- * the one that matters, because a checkpoint can put a file back and cannot put back
- * `rm -rf` or a publish.
- */
+/** What the mode adds to a turn's options. SDK permission modes, not our own allowlist:
+ * `acceptEdits` still prompts for Bash, because a checkpoint cannot undo `rm -rf`. */
 export function modeOptions(mode: EditMode): PromptOptions {
   switch (mode) {
     case "strict":

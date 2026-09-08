@@ -18,16 +18,8 @@ import type { Palette } from "../lib/palette";
 import type { Transparency } from "../lib/transparency";
 
 /**
- * The window's own title bar, drawn by us because the OS frame is gone.
- *
- * `data-tauri-drag-region` makes the bar draggable; Tauri's injected script excludes
- * interactive descendants automatically, so the buttons do not need to opt out, and
- * double-click-to-maximize is handled for us. Aero Snap still works, because the drag
- * goes through `WM_NCLBUTTONDOWN(HTCAPTION)` rather than moving the window by hand.
- *
- * Appearance and palette also live in the settings overlay. They stay here because they
- * are the two settings that get changed for a reason as small as the sun going down, and
- * routing that through a dialog would cost two clicks to save one row of chrome.
+ * Our own title bar, since the OS frame is gone. `data-tauri-drag-region` keeps Aero Snap and
+ * double-click-to-maximize working, and excludes interactive descendants for us.
  */
 export function TitleBar({
   workspace,
@@ -101,8 +93,7 @@ export function TitleBar({
       </span>
 
       <div className="titlebar-actions">
-        {/* Not a cycling button like appearance: nine named options need a list, and a
-            button that cycles through unnamed palettes is a guessing game. */}
+        {/* A list, not a cycling button: cycling nine unnamed palettes is a guessing game. */}
         <div className="palette-picker" onPointerDown={(event) => event.stopPropagation()}>
           <button
             type="button"
@@ -135,9 +126,8 @@ export function TitleBar({
                   <span className="palette-note">{option.note}</span>
                 </button>
               ))}
-              {/* The window's own glass, in the menu that already decides how the app
-                  looks. It is not a palette, hence the rule above it -- but a third icon
-                  in the title bar for one switch would cost more chrome than it saves. */}
+              {/* Not a palette -- hence the rule above -- but a third title bar icon for one
+                  switch would cost more chrome than it saves. */}
               <button
                 type="button"
                 role="menuitemcheckbox"

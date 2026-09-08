@@ -5,28 +5,15 @@ import type { WirePath } from "../lib/protocol";
 import { LocalModels } from "./LocalModels";
 
 /**
- * The Local models view: its own place in the rail, under Conversations.
- *
- * It was a section in Settings, and it did not belong there. Settings is where you change
- * something in a second — a theme, a vault path — and this is a page you sit on while
- * gigabytes arrive, with progress bars that keep moving. Putting it in the rail also means
- * it can be left open beside the transcript while a download runs, which a modal cannot.
- *
- * Last in the rail rather than among the others because it is a thing you set up rather
- * than a thing you work in: the four above are indexes into the workspace, and this is not.
+ * Local models lives in the rail, not in Settings: it is a page you sit on while gigabytes
+ * arrive, and it can stay open beside the transcript while a download runs. A modal cannot.
  */
 interface LocalModelsViewProps {
   root: WirePath | null;
 }
 
 export function LocalModelsView({ root }: LocalModelsViewProps) {
-  /**
-   * The GPU, asked once here rather than inside the list.
-   *
-   * It decides which models are marked as fitting and how much context each is given, and
-   * it cannot change while the app is open — so it is read when the view opens and not on
-   * every render of a panel that redraws once a second.
-   */
+  /** The GPU, read once: it decides which models fit, and cannot change while the app is open. */
   const [vramGb, setVramGb] = useState<number | null>(null);
 
   useEffect(() => {

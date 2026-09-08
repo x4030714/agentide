@@ -1,32 +1,13 @@
-/**
- * The parts of reading an `~/.agentide/*.json` file that more than one config needs.
- *
- * Two files now follow the same rules -- `mcp.json` and `providers.json` -- and one of
- * those rules is about secrets, so it may not exist in two copies that can drift. A second
- * `${VAR}` expander that forgot to keep the value out of the warning would put a token in
- * the log the person pastes into a bug report, and nothing would fail until it did.
- *
- * Everything here was `mcp-config.ts`'s, moved rather than rewritten; its tests are what
- * say the move was faithful.
- */
+/** The parts of reading `~/.agentide/*.json` that both `mcp.json` and `providers.json` need.
+ * One copy because one rule is about secrets: a second `${VAR}` expander could log a token. */
 
 import { readFileSync } from "node:fs";
 import { Socket } from "node:net";
 
 import type { z } from "zod";
 
-/**
- * `${VAR}` in any string of a value, replaced from this process's environment.
- *
- * Done here rather than left to the SDK, because whether the SDK expands it for values
- * passed as options -- as opposed to ones it reads from a file itself -- could not be
- * established from its types or its binary. The failure mode if it does not is the worst
- * kind: the header goes out with a literal `${GITHUB_TOKEN}`, the server answers 401, and
- * the person reads that as a bad token and reissues it.
- *
- * Returns the names it could not resolve rather than a partly-expanded value. A config
- * that half worked is the one that produces that 401.
- */
+/** `${VAR}` from this process's environment. Not left to the SDK, which may not expand values
+ * passed as options: the header would ship a literal `${GITHUB_TOKEN}` and the 401 reads as a bad token. */
 export function expandVars<T>(value: T): { value: T } | { missing: string[] } {
   const missing = new Set<string>();
   const walk = (inner: unknown): unknown => {
@@ -52,18 +33,8 @@ export function expandVars<T>(value: T): { value: T } | { missing: string[] } {
   return missing.size > 0 ? { missing: [...missing] } : { value: resolved };
 }
 
-/**
- * Whether something is accepting connections there.
- *
- * A TCP connect rather than a process lookup. Asking Windows for the process list means
- * spawning a program and reading its output, which is a good fraction of a second on the
- * path to the first token, on every turn, to answer a question a refused connection
- * answers in under a millisecond.
- *
- * The timeout is short and counts as closed. A port that neither accepts nor refuses is
- * being dropped by a firewall, and a backend that would hang on connect is not one to hand
- * to the turn.
- */
+/** A TCP connect, not a process lookup: listing processes on Windows costs a good fraction of
+ * a second on the way to the first token, every turn. A timeout counts as closed. */
 export function listening(port: number, host: string, timeoutMs = 250): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new Socket();
@@ -79,13 +50,8 @@ export function listening(port: number, host: string, timeoutMs = 250): Promise<
   });
 }
 
-/**
- * Read and parse one config file. `null` means there is nothing usable here, said once.
- *
- * A file that is not there is the normal case and worth no output. Anything else is,
- * because a permission error on a file the person wrote looks identical to it not
- * existing, and the difference is the whole reason the feature seems not to work.
- */
+/** Read and parse one config file; `null` means nothing usable here. A missing file is silent,
+ * a permission error is not -- unreported it looks exactly like the file not existing. */
 export function readJson(path: string, what: string): unknown | null {
   let text: string;
   try {
@@ -102,12 +68,8 @@ export function readJson(path: string, what: string): unknown | null {
   }
 }
 
-/**
- * An entry that says only that it is off.
- *
- * Deliberately loose: anything with `disabled: true` counts, whatever else it carries or
- * fails to carry. An off switch that first has to be a valid entry is not an off switch.
- */
+/** Deliberately loose: anything with `disabled: true` counts. An off switch that first has to
+ * be a valid entry is not an off switch. */
 export function isOff(value: unknown): boolean {
   return (value as { disabled?: unknown } | null)?.disabled === true;
 }
@@ -123,8 +85,7 @@ export function issues(error: z.ZodError): string {
 
 export function isMissing(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
-  // ENOTDIR is the same answer as ENOENT here: `.agentide` exists as a file, so there is
-  // no config, and saying so every turn would be noise.
+// ENOTDIR is the same answer as ENOENT: `.agentide` exists as a file, so there is no config.
   return code === "ENOENT" || code === "ENOTDIR";
 }
 

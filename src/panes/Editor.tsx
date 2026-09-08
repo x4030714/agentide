@@ -15,9 +15,8 @@ import { baseName, errorMessage, parentOf, toFileUri } from "../lib/protocol";
 import type { FileContents, FsEvent, WirePath } from "../lib/protocol";
 
 /**
- * A place to put the cursor, from outside the editor -- go to definition, or a jump from
- * a diagnostic. The nonce distinguishes two requests for the same spot, which otherwise
- * look identical to an effect and so happen only once.
+ * A cursor placement asked for from outside the editor. The nonce separates two requests for
+ * the same spot, which an effect would otherwise see as one.
  */
 export interface RevealTarget {
   path: WirePath;
@@ -69,10 +68,8 @@ const EDITOR_OPTIONS: MonacoNs.IStandaloneEditorConstructionOptions = {
 };
 
 /**
- * The text editor. Owns loading, dirty state and saving for the active file.
- *
- * Monaco keeps one model per path, so switching files preserves unsaved edits; the
- * dirty set below mirrors that so the indicator survives a switch too.
+ * The text editor: loading, dirty state and saving. Monaco keeps one model per path, and the
+ * dirty set below mirrors that so the indicator survives a tab switch too.
  */
 export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose }: EditorPaneProps) {
   const [file, setFile] = useState<FileContents | null>(null);
@@ -85,18 +82,13 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
   const fileRef = useRef<FileContents | null>(null);
   const dirtyPaths = useRef(new Set<WirePath>());
   /**
-   * Where you were in each file: scroll position, cursor, folded regions.
-   *
-   * Monaco keeps the *text* per model on its own, so switching tabs never loses an edit.
-   * It does not keep where you were looking, and coming back to a file at line 1 when you
-   * left it at line 800 is most of what makes tabs feel broken. Keyed by model URI rather
-   * than by path, because that is what the editor reports at the moment of a switch.
+   * Scroll, cursor and folds per file: Monaco keeps the text but not where you were looking.
+   * Keyed by model URI, because that is what the editor reports at the moment of a switch.
    */
   const viewStates = useRef(new Map<string, MonacoNs.ICodeEditorViewState>());
   /** The nonce of the reveal already carried out, so a re-render does not repeat it. */
   const appliedReveal = useRef<number | null>(null);
-  // Set while we replace the text ourselves, so the change listener does not read it
-  // back as an edit by the user.
+  // Set while we replace the text, so the change listener does not read it back as a user edit.
   const applying = useRef(false);
 
   useEffect(() => {
@@ -130,15 +122,8 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
   }, [path]);
 
   /**
-   * A closed tab gives its model back.
-   *
-   * `keepCurrentModel` means nothing is disposed on a switch, which is what makes tabs
-   * work -- and it also means nothing is ever disposed at all unless someone does it here.
-   * A session that opens forty files would otherwise hold forty tokenised buffers for the
-   * rest of the day, on a machine that is already short of memory.
-   *
-   * The dirty flag goes with it: closing a file discards its unsaved edits, and leaving
-   * the path in `dirtyPaths` would mark a dot on it if it were opened again.
+   * A closed tab gives its model back. `keepCurrentModel` disposes nothing, so forty open files
+   * would mean forty tokenised buffers unless this runs. The dirty flag goes with it.
    */
   const openTabs = useRef<readonly WirePath[]>(tabs);
   useEffect(() => {
@@ -152,8 +137,7 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
     openTabs.current = tabs;
   }, [tabs]);
 
-  // `save` is bound to a keybinding that captures its handler once, so the LSP handle
-  // goes through a ref rather than into the dependency list.
+  // The keybinding captures its handler once, so the LSP handle goes through a ref.
   const lspRef = useRef(lsp);
   useEffect(() => {
     lspRef.current = lsp;
@@ -167,8 +151,7 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
       const text = editor.getValue();
       const stat = await writeFile(current.path, text, current.hadBom);
       dirtyPaths.current.delete(current.path);
-      // After the write, not before: a server that reruns `cargo check` on this needs the
-      // file on disk to be the file it is told about.
+      // After the write: a server rerunning `cargo check` needs disk to match what it was told.
       lspRef.current.didSave(current.path, text);
       setFile({ ...current, text, size: stat.size, modifiedMs: stat.modifiedMs });
       setDirty(false);
@@ -217,8 +200,7 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
         return;
       }
       applying.current = true;
-      // A full replace drops the undo stack, which is the honest outcome for an edit
-      // that did not come from this editor.
+      // A full replace drops the undo stack -- honest, for an edit this editor did not make.
       editor.setValue(next.text);
       applying.current = false;
       setFile(next);
@@ -241,20 +223,14 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
     instance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void saveRef.current();
     });
-    // The status bar reads the caret from a store, not from a prop. The listener lives
-    // on the editor, so it is disposed with it -- and it survives a file switch, which
-    // swaps the model under this same instance rather than mounting a new one.
+    // The status bar reads the caret from a store. The listener lives on the editor, so it is
+    // disposed with it and survives a file switch, which swaps the model under this instance.
     const position = instance.getPosition();
     publishCursor(position ? { line: position.lineNumber, column: position.column } : null);
 
     /**
-     * Remember where you are, throttled.
-     *
-     * The view state has to be captured *before* the model is swapped, and the swap gives
-     * no warning -- `onDidChangeModel` fires once the new model is already in. So it is
-     * recorded as you move instead. Throttled because scrolling fires continuously and
-     * this allocates; 150ms is far below the time it takes to switch a tab, so what gets
-     * restored is where you were, not where you were a moment before.
+     * View state must be captured before the model swaps, and `onDidChangeModel` fires too late
+     * -- so record it as you move. Throttled at 150ms, far below the time to switch a tab.
      */
     let lastSaved = 0;
     const remember = () => {
@@ -272,8 +248,7 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
       remember();
     });
     instance.onDidScrollChange(remember);
-    // The last position before a switch is the one worth keeping, and the throttle above
-    // may have skipped it.
+    // The throttle above may have skipped the last position before a switch.
     instance.onDidBlurEditorText(() => {
       lastSaved = 0;
       remember();
@@ -284,25 +259,18 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
       if (!uri) return;
       lastSaved = 0;
       const state = viewStates.current.get(uri);
-      // A file opened for the first time has none, and Monaco's own default -- the top of
-      // the file -- is the right answer there.
+      // A file opened for the first time has none, and Monaco's top-of-file default is right.
       if (state) instance.restoreViewState(state);
     });
   }
 
   useEffect(() => {
     const editor = editorRef.current;
-    // The file has to have finished loading: a reveal that arrives with the jump is for
-    // the file being opened by that same jump.
+    // Wait for the load: a reveal arriving with the jump is for the file that jump opens.
     if (!reveal || !editor || !file || file.path !== reveal.path) return;
     /**
-     * Once per request, and the nonce is what says which request.
-     *
-     * This effect also runs when `file` changes, which now includes coming back to a tab.
-     * Without this guard, returning to a file you once jumped into would replay that jump
-     * instead of leaving you where you actually were -- the last reveal into a file would
-     * become a permanent landing spot, and the saved view state would be overwritten a
-     * frame after it was restored.
+     * Once per nonce. This effect also runs on `file`, so without the guard returning to a tab
+     * would replay its last jump and overwrite the view state a frame after restoring it.
      */
     if (appliedReveal.current === reveal.nonce) return;
     appliedReveal.current = reveal.nonce;
@@ -313,8 +281,7 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
         startLineNumber: position.lineNumber,
         startColumn: position.column,
         endLineNumber: reveal.endLine,
-        // No end column given means "to the end of that line", which is what selecting a
-        // range of lines means to everyone who is not counting columns.
+        // No end column means "to the end of that line" -- what selecting lines means to people.
         endColumn: reveal.endColumn ?? (model?.getLineMaxColumn(reveal.endLine) ?? 1),
       });
     } else {
@@ -325,9 +292,8 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
   }, [reveal, file]);
 
   /**
-   * Two facts the `ide_*` tools need and only this pane holds: which file is on screen,
-   * and which buffers have unsaved edits. `dirtyPaths` is a ref, so it is copied here --
-   * publishing the ref itself would hand out a set that mutates underneath the reader.
+   * Which file is on screen and which buffers are unsaved -- the `ide_*` tools need both. The
+   * dirty set is copied: publishing the ref hands out something that mutates under the reader.
    */
   useEffect(() => {
     publishEditorFacts({
@@ -354,8 +320,7 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
           <div className="tab-strip" role="tablist" aria-label="Open files">
             {tabs.map((open) => {
               const isActive = open === path;
-              // The dirty set is the editor's own, and it is right for every open file --
-              // `dirty` state only tracks the one on screen.
+              // The dirty set covers every open file; `dirty` state only tracks the one on screen.
               const isDirty = dirtyPaths.current.has(open);
               return (
                 <span key={open} className={`tab${isActive ? " is-on" : ""}`}>
@@ -413,23 +378,15 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
         )}
       </div>
       <div className="pane-body is-flush">
-        {/**
-         * Keyed on the path, so opening a file remounts it and replays the animation:
-         * the address column acknowledging the file the tree row just selected.
-         */}
+        {/* Keyed on the path, so opening a file remounts it and replays the animation. */}
         {file && <span className="gutter-sync" key={file.path} aria-hidden="true" />}
         {file ? (
           <MonacoEditor
             path={toFileUri(file.path)}
             defaultValue={file.text}
             /**
-             * Without this the wrapper disposes the outgoing model on every path change,
-             * and a tab switch is a path change. That took the view state with it -- so
-             * every file reopened at line 1 -- and the unsaved edits too, which is the
-             * thing the header comment above has always claimed survives a switch and,
-             * until tabs made it easy to notice, did not.
-             *
-             * The models it keeps are disposed when their tab closes; see `tabs` below.
+             * Without this the wrapper disposes the outgoing model on every tab switch, taking
+             * the view state and the unsaved edits with it. Closing a tab disposes it instead.
              */
             keepCurrentModel
             theme={themeFor(appearance)}
@@ -442,9 +399,7 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
           <p className="note">{status ?? "no file selected — pick one from the tree"}</p>
         )}
       </div>
-      {/* The editor's own footer, not the window's status bar: it says what this file is
-          and what just happened to it. The branch, the servers and the caret are in the
-          bar at the bottom of the window. */}
+      {/* The editor's footer, not the window's status bar: this file, and what happened to it. */}
       <div className="editor-footer">
         {file && (
           <>

@@ -37,11 +37,8 @@ const DIFF_OPTIONS = {
 } as const;
 
 /**
- * The review queue: what changed since the turn started, and the controls to put any of
- * it back.
- *
- * Everything here is a query against one checkpoint. Nothing is cached across turns —
- * a stale diff is worse than a slow one when the decision it drives is "delete this".
+ * The review queue: what changed since the turn started, and how to put it back. Every read is
+ * a fresh query — a stale diff is worse than a slow one when it drives "delete this".
  */
 export function ChangesPane({ checkpoint, revision, onCountChange }: ChangesProps) {
   const appearance = useResolvedAppearance();

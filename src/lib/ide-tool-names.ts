@@ -1,14 +1,5 @@
-/**
- * The `ide_*` tools the host answers.
- *
- * This list exists apart from the code that implements it for one reason: it has to agree
- * with the tools the sidecar declares to the model, and the two live in different
- * processes. A name declared there and missing here is not a compile error -- the Rust
- * core answers "not available in this build" and the model sees a permanently broken
- * tool. `ide-tool-names.test.ts` reads the sidecar's source and fails if they drift.
- *
- * Kept free of imports so that test can load it without pulling in Monaco.
- */
+/** The `ide_*` tools the host answers. Must match what the sidecar declares to the
+ * model, or the model sees a broken tool — a test diffs the two. Keep it import-free. */
 export const HOST_TOOL_NAMES = [
   "ide_open",
   "ide_selection",

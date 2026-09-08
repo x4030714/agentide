@@ -78,8 +78,7 @@ describe("autism mode", () => {
 
   it("changes how the answer is written and nothing about the work", async () => {
     // The line CLAUDE.md draws: latency and tokens come out of the harness, never out of
-    // the model. A shape rule that capped effort or skipped a check would be the wrong
-    // trade wearing the right label.
+    // the model. A shape rule that capped effort would be the wrong trade, right label.
     const text = AUTISM_PROMPT.toLowerCase();
     for (const forbidden of ["skip", "don't check", "do not verify", "fewer tool", "shorter search"]) {
       expect(text).not.toContain(forbidden);

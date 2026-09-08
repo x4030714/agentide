@@ -1,11 +1,7 @@
 /** Display formatting for the listing's measurement columns. */
 
-/**
- * Byte counts for the tree's size column, in the shape a segment listing uses:
- * at most four characters, so the column stays a fixed width without padding.
- *
- * Directories get an em dash rather than 0 — they have no length of their own.
- */
+/** Byte counts for the tree's size column: four characters at most, so the column keeps
+ * a fixed width without padding. Directories get an em dash — they have no length. */
 export function formatSize(bytes: number, isDir: boolean): string {
   if (isDir) return "—";
   if (bytes < 1024) return String(bytes);
@@ -22,11 +18,8 @@ export function formatSize(bytes: number, isDir: boolean): string {
     : `${Math.round(value)}${units[unit]}`;
 }
 
-/**
- * "3 hours ago". Coarse on purpose: the only question a conversation list answers about
- * time is which one you were just in, and an exact clock time makes that harder to see,
- * not easier.
- */
+/** "3 hours ago". Coarse on purpose: the only question a conversation list answers about
+ * time is which one you were just in. */
 export function ago(atMs: number | null): string {
   if (!atMs) return "unknown";
   const seconds = Math.max(0, (Date.now() - atMs) / 1000);

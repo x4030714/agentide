@@ -24,14 +24,14 @@ pub fn run() {
         .manage(lsp::LspState::default())
         .manage(window::ChromeState::default())
         .setup(|app| {
-            // Before anything is spawned, because a child started first cannot be taken
-            // into the job afterwards without a race worth avoiding.
+            // Before anything is spawned: a child started first cannot join the job later
+            // without a race.
             reaper::init();
-            // The window is frameless and transparent; this is what makes it translucent
-            // and what keeps the frontend's title bar in step with the maximized state.
+            // Frameless and transparent: this is what makes the window translucent and keeps
+            // the frontend's title bar in step with the maximized state.
             window::setup(app.handle());
-            // Where the installed app keeps the agent host bundle. Absent in a `cargo
-            // run`, which is why `agent.rs` falls back to the path in the repository.
+            // Where the installed app keeps the agent host bundle. Absent under `cargo run`,
+            // which is why `agent.rs` falls back to the repository path.
             if let Ok(dir) = app.path().resource_dir() {
                 agent::set_resource_dir(dir);
             }
@@ -92,9 +92,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // The sidecar, every pty and every language server are child processes,
-            // not threads: nothing else stops them when the window closes, and managed
-            // state is not guaranteed to be dropped here.
+            // Sidecar, ptys and language servers are child processes, not threads: nothing
+            // else stops them on close, and managed state is not guaranteed to be dropped.
             if matches!(event, tauri::RunEvent::Exit) {
                 agent::shutdown(app);
                 pty::shutdown(app);

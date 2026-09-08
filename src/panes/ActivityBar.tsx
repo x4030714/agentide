@@ -3,17 +3,8 @@ import type { CSSProperties, ReactNode } from "react";
 import { IconBranch, IconChat, IconChip, IconEdit, IconFiles, IconSettings } from "../lib/icons";
 
 /**
- * The icon rail on the far left: which view the sidebar is showing, and the way to the
- * settings overlay.
- *
- * Four things that were tabs above the editor live here now. They were never editor
- * content -- a review queue and a repository panel are indexes into the workspace, the
- * same job the file tree does -- and tabbing them against the editor meant the file you
- * were editing disappeared to read a diff.
- *
- * The classes are `rail-*` rather than `activity-*` because `.activity` is already the
- * transcript's live status row, and two unrelated things under one prefix is how a
- * stylesheet becomes unreadable.
+ * The icon rail: which view the sidebar shows, plus settings. These are indexes into the
+ * workspace, not editor content, so they are not tabs. `rail-*` because `.activity` is taken.
  */
 
 /** Which view the sidebar is showing. The rail is the only thing that sets it. */
@@ -56,11 +47,8 @@ export function ActivityBar({
   return (
     <div className="rail">
       {/**
-       * The selection bar, one for the rail rather than one per button, so it slides to
-       * the view you chose instead of four bars cutting in and out. It is decoration in
-       * the accessibility tree -- `aria-pressed` on the buttons already carries which
-       * view is on -- and it stays mounted while the sidebar is away so that reopening
-       * carries on from where it was rather than starting over at the top.
+       * One marker for the whole rail, not one per button, so it slides between views. Stays
+       * mounted while the sidebar is away, so reopening resumes rather than starting over.
        */}
       <span
         className={`rail-marker${collapsed ? " is-off" : ""}`}

@@ -4,14 +4,8 @@ import { parseMarkdown } from "../lib/markdown";
 import type { Block, Span } from "../lib/markdown";
 
 /**
- * An agent's reply, rendered.
- *
- * React elements all the way down -- no HTML string, no `dangerouslySetInnerHTML`, no
- * sanitiser to keep correct. The text being rendered is written by a model that has just
- * read files off disk, so the safest thing to do with it is never treat it as markup.
- *
- * Memoised on the source: a turn re-renders the whole transcript on every event, and
- * re-parsing every past reply each time is work with no output.
+ * An agent's reply as React elements -- never as markup, since a model that just read your
+ * disk wrote it. Memoised: a turn re-renders the whole transcript on every event.
  */
 export const Markdown = memo(function Markdown({ source }: { source: string }) {
   return (
@@ -26,9 +20,8 @@ export const Markdown = memo(function Markdown({ source }: { source: string }) {
 function BlockView({ block }: { block: Block }) {
   switch (block.kind) {
     case "heading": {
-      // One visual weight for all three levels, differing only in size: a reply is a
-      // few paragraphs, not a document, and a full heading scale inside a message
-      // bubble reads as someone shouting.
+      // One weight for all three levels, size only: a full heading scale inside a message
+      // bubble reads as shouting.
       const Tag = (["h3", "h4", "h5"] as const)[block.level - 1];
       return (
         <Tag className={`md-heading is-h${block.level}`}>

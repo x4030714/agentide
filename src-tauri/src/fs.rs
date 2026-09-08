@@ -1,7 +1,5 @@
-//! Workspace filesystem access and the change watcher.
-//!
-//! Every command takes and returns [`WirePath`], so path normalization happens once, in
-//! `ipc.rs`, and never here.
+//! Workspace filesystem access and the change watcher. Every command takes and returns
+//! [`WirePath`], so path normalization happens once, in `ipc.rs`, and never here.
 
 use std::collections::HashMap;
 use std::fs;
@@ -22,11 +20,8 @@ use crate::ipc::{
     WirePath, Workspace,
 };
 
-/// Directories that never belong in the tree, whatever `.gitignore` says.
-/// Never listed, and never checkpointed. `.agentide` holds the shadow repository
-/// itself, so leaving it out is what stops a checkpoint committing its own git
-/// directory; `checkpoints.rs` writes this same list into the shadow repo's
-/// `info/exclude` so the tree and the checkpoints cannot drift apart.
+/// Directories that never belong in the tree, whatever `.gitignore` says. `checkpoints.rs`
+/// mirrors this into the shadow repo's `info/exclude` so the two cannot drift apart.
 pub const ALWAYS_IGNORED: [&str; 5] = [".git", ".agentide", "node_modules", "target", "dist"];
 
 /// Opening anything larger than this in the editor is a mistake, not a feature.
@@ -41,14 +36,7 @@ const DEBOUNCE: Duration = Duration::from_millis(120);
 const MAX_PENDING: usize = 512;
 
 /// The open workspace: its root and its live watcher, or `None` when none is open.
-///
-/// Dropping the watcher stops the OS notifications, which disconnects the forwarding
-/// thread's receiver and lets it exit -- so replacing this value is all that closing a
-/// workspace takes.
-///
-/// The root lives here rather than only in the frontend because the Rust core needs it
-/// too: `agent.rs` uses it as the sidecar's `cwd`, and later phases will resolve the PTY
-/// and language servers against it. Nothing outside this module writes it.
+/// Replacing this value drops the watcher, which is all that closing a workspace takes.
 #[derive(Default)]
 pub struct WorkspaceState(Mutex<Option<Open>>);
 
@@ -67,10 +55,8 @@ impl WorkspaceState {
     }
 }
 
-/// Open `path` as the workspace and start streaming its changes to `on_event`.
-///
-/// Replaces any previously open workspace. The returned root is canonicalized, so every
-/// path derived from it compares equal by string.
+/// Open `path` as the workspace and start streaming its changes to `on_event`. The root
+/// comes back canonicalized, so every path derived from it compares equal by string.
 #[tauri::command]
 pub async fn open_workspace(
     state: State<'_, WorkspaceState>,
@@ -157,16 +143,8 @@ pub async fn list_dir(path: WirePath) -> Result<DirListing, IpcError> {
     Ok(DirListing { path, entries })
 }
 
-/// Every file in the workspace, for the quick-open palette.
-///
-/// One walk, all of it, capped. Quick open has to rank the whole project on every
-/// keystroke, and a lazy per-directory listing -- which is right for the tree, where you
-/// only ever look at one level -- cannot answer "which file called config is nearest the
-/// root" without walking anyway. Doing it once and holding the result is the shape that
-/// matches the question.
-///
-/// The same ignore rules as the tree, deliberately: a file the tree hides is a file quick
-/// open must not offer, or the two disagree about what is in the project.
+/// Every file in the workspace, for the quick-open palette: one capped walk, not lazy, since
+/// the palette ranks the whole project per keystroke. Same ignore rules as the tree.
 #[tauri::command]
 pub async fn list_files(
     workspace: State<'_, WorkspaceState>,
@@ -175,8 +153,7 @@ pub async fn list_files(
     let Some(root) = workspace.root() else {
         return Ok(Vec::new());
     };
-    // A repository far larger than this exists, and a palette listing 200k files helps
-    // nobody: past the cap the answer is "narrow it", which the filter already does.
+    // A palette listing 200k files helps nobody; past the cap the answer is "narrow it".
     let cap = limit.unwrap_or(20_000).min(100_000);
 
     let mut files = Vec::new();
@@ -305,12 +282,8 @@ pub(crate) fn is_always_ignored(path: &Path) -> bool {
         .is_some_and(|name| ALWAYS_IGNORED.contains(&name))
 }
 
-/// Decides which watcher events are worth waking the frontend for.
-///
-/// The tree listing uses `ignore`'s full walker, which reads nested `.gitignore` files.
-/// The watcher cannot afford that per event, so it checks the workspace root's
-/// `.gitignore` plus [`ALWAYS_IGNORED`] at any depth. Nested ignore files are therefore
-/// not honored by the watcher; the worst case is a redundant refresh.
+/// Decides which watcher events are worth waking the frontend for: the root `.gitignore` plus
+/// [`ALWAYS_IGNORED`]. Nested ignore files cost too much per event; the price is a stray refresh.
 struct IgnoreFilter {
     root: PathBuf,
     gitignore: Gitignore,
@@ -340,8 +313,7 @@ impl IgnoreFilter {
         }) {
             return true;
         }
-        // `is_dir` is false for paths that were just deleted, which only affects
-        // directory-only patterns -- an acceptable miss for a refresh hint.
+        // `is_dir` is false for a path just deleted, so directory-only patterns can miss.
         self.gitignore
             .matched_path_or_any_parents(path, path.is_dir())
             .is_ignore()
@@ -349,7 +321,6 @@ impl IgnoreFilter {
 }
 
 /// Debounce, filter and batch watcher events onto the frontend channel.
-///
 /// Runs until the watcher is dropped or the webview goes away.
 fn forward_changes(
     rx: Receiver<notify::Result<Event>>,
@@ -487,11 +458,9 @@ mod tests {
         assert_eq!(with_bom.size, plain.size + 3);
     }
 
-    /// Run one of the async commands to completion.
-    ///
-    /// The commands are `async` so Tauri keeps them off the main thread -- a synchronous
-    /// command runs on the thread that draws, and `git add --all` there froze the window.
-    /// These tests call them directly, so they supply the runtime themselves.
+    /// Run one of the async commands to completion. They are `async` so Tauri keeps them off
+    /// the thread that draws -- `git add --all` there froze the window.
+
     fn done<T>(work: impl std::future::Future<Output = T>) -> T {
         tauri::async_runtime::block_on(work)
     }

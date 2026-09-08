@@ -1,16 +1,7 @@
 import { useEffect, useState } from "react";
 
-/**
- * Which colour palette the app wears.
- *
- * Orthogonal to `Appearance`: that chooses light or dark, this chooses the hues used in
- * whichever of those is showing. Every palette ships both modes, so the two settings
- * never have to know about each other.
- *
- * The default is the one in `world.css` and is expressed as the *absence* of the
- * attribute, so the app with no preferences set renders exactly the design the rest of
- * the codebase was built against.
- */
+/** Which colour palette the app wears. Orthogonal to `Appearance`; every palette ships both
+ * modes. The default is the absence of the attribute, so `world.css` stays the base case. */
 export type Palette =
   | "quiet"
   | "ferrous"
@@ -62,12 +53,8 @@ export function storedPalette(): Palette {
   }
 }
 
-/**
- * Apply a palette to the document and remember it.
- *
- * The default sets no attribute at all rather than `data-palette="quiet"`, so the
- * selector in `world.css` needs no `:not()` to stay the base case.
- */
+/** Apply a palette to the document and remember it. The default removes the attribute rather
+ * than setting `data-palette="quiet"`, so the selector in `world.css` needs no `:not()`. */
 export function applyPalette(palette: Palette): void {
   const root = document.documentElement;
   if (palette === "quiet") root.removeAttribute("data-palette");
@@ -80,12 +67,8 @@ export function applyPalette(palette: Palette): void {
   }
 }
 
-/**
- * The palette, applied and remembered, in the shape `useAppearance` uses.
- *
- * Lifted out of the picker because two surfaces set it now — the title bar and the
- * settings overlay — and each holding its own copy would mean two answers to one question.
- */
+/** The palette, applied and remembered. Lifted out of the picker because two surfaces set it
+ * — title bar and settings — and each holding a copy meant two answers to one question. */
 export function usePalette(): [Palette, (next: Palette) => void] {
   const [palette, setPalette] = useState<Palette>(storedPalette);
 

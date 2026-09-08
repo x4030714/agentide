@@ -1,31 +1,5 @@
-/**
- * Past conversations, for `/resume` in the terminal.
- *
- * The desktop app gets this from the Rust core, which reads the same files far more
- * thoroughly -- titles, turn counts, branches, every project on the machine. The CLI does
- * not run the Rust core, so this is the small half of it: the transcripts for *this*
- * workspace, newest first, enough to recognise one and resume it.
- *
- * ## Only the head of each file
- *
- * `src-tauri/src/conversations.rs` reads whole transcripts because it reports turn counts
- * and the SDK's generated title, which is written at the end. Measured there: the five
- * largest transcripts on this machine are 44.7, 33.5, 29.6, 28.6 and 23.7 MB. A picker
- * that has to read 182 MB before it can draw a list is not a picker, so this reads the
- * first few records of each file and stops.
- *
- * What that costs is the title: it takes the opening prompt instead, which is what the app
- * falls back to anyway when the SDK never made one. What it buys is a list that is drawn in
- * the time between pressing enter and looking up.
- *
- * ## The directory name is a guess
- *
- * The SDK mangles the workspace path into a directory name by replacing every separator,
- * colon and dot with `-`. That is lossy -- two different paths can produce the same name --
- * so the guess is confirmed against a record's own `cwd` before its conversations are
- * offered. Resuming into someone else's transcript because two paths collided would be a
- * hard thing to notice and a worse thing to explain.
- */
+/** Past conversations for `/resume`, the small half of `conversations.rs` for a CLI with no Rust
+ * core. Only each file's head is read -- they reach 40 MB -- and a record's `cwd` confirms the dir. */
 
 import { createReadStream } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
@@ -49,12 +23,8 @@ export interface PastConversation {
   bytes: number;
 }
 
-/**
- * `C:\Users\tung\Desktop\agentide` -> `C--Users-tung-Desktop-agentide`.
- *
- * The SDK's scheme, not ours, mirrored from `mangle` in `conversations.rs`. Any change
- * here has to be made there too, and the test pins the same path both files use.
- */
+/** The SDK's mangling scheme, not ours, mirrored from `mangle` in `conversations.rs`. A change
+ * here has to be made there too. */
 export function mangle(path: string): string {
   return path.replace(/[\\/:.]/g, "-");
 }
@@ -64,12 +34,8 @@ export function transcriptDir(cwd: string, home = homedir()): string {
   return join(home, ".claude", "projects", mangle(cwd));
 }
 
-/**
- * The opening prompt and the workspace, from the first records of a transcript.
- *
- * Stops at the first user message with text in it. A transcript whose head holds no
- * prompt is a session that was opened and abandoned, and there is nothing to resume in it.
- */
+/** The opening prompt and the workspace, from the first records. Stops at the first user message
+ * with text in it: a head holding no prompt is a session opened and abandoned. */
 async function head(file: string): Promise<{ opening: string; cwd: string } | null> {
   const stream = createReadStream(file, { encoding: "utf8" });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -78,8 +44,7 @@ async function head(file: string): Promise<{ opening: string; cwd: string } | nu
   try {
     for await (const line of lines) {
       if (seen++ >= HEAD_RECORDS) break;
-      // Cheap rejection before the parse: most records are tool output and file snapshots,
-      // and parsing one of those to learn it is not a prompt is the whole cost of this.
+      // Cheap rejection before the parse: most records are tool output and file snapshots.
       if (!line.includes('"type":"user"') && !line.includes('"cwd"')) continue;
       let record: Record<string, unknown>;
       try {
@@ -90,10 +55,8 @@ async function head(file: string): Promise<{ opening: string; cwd: string } | nu
       if (!cwd && typeof record.cwd === "string") cwd = record.cwd;
       if (record.type !== "user") continue;
       const opening = messageText(record.message);
-      // A record the harness wrote, not the person: local-command output arrives as a
-      // `user` message wrapped in `<local-command-caveat>` and friends. Labelling a row
-      // with one shows a paragraph of boilerplate where the question should be, so the
-      // scan keeps going to the thing that was actually asked.
+      // Local-command output arrives as a `user` message wrapped in `<local-command-caveat>`.
+      // Labelling a row with one shows boilerplate where the question should be, so keep scanning.
       if (opening && !/^<[a-z][a-z-]*>/i.test(opening)) return { opening, cwd };
     }
   } catch {
@@ -118,12 +81,8 @@ function messageText(message: unknown): string {
     .trim();
 }
 
-/**
- * This workspace's conversations, most recently written first.
- *
- * Empty rather than throwing when the directory is not there: a workspace nobody has had a
- * conversation in is the ordinary case on the first run, not a failure.
- */
+/** This workspace's conversations, most recently written first. Empty rather than throwing: a
+ * workspace nobody has talked in is the ordinary first run, not a failure. */
 export async function listConversations(
   cwd: string,
   limit = RESUME_LIMIT,
@@ -158,9 +117,8 @@ export async function listConversations(
   for (const entry of newest) {
     const found = await head(join(dir, entry.name));
     if (!found) continue;
-    // The mangled name is a guess; this is where it is confirmed, against the real paths
-    // rather than their mangled forms -- comparing the mangling to itself would agree
-    // precisely when two different paths collided, which is the case it exists to catch.
+    // Where the mangled-name guess is confirmed, against the real paths rather than their mangled
+    // forms -- those agree precisely when two paths collide, which is the case this catches.
     if (found.cwd && !samePath(found.cwd, cwd)) continue;
     out.push({
       id: entry.name.replace(/\.jsonl$/, ""),
@@ -172,13 +130,8 @@ export async function listConversations(
   return out;
 }
 
-/**
- * Whether two spellings are the same directory.
- *
- * Windows hands the same folder back as `C:\a\b`, `c:/a/b` and with a trailing separator,
- * and the SDK records whichever one it was given. Case-insensitive because this only ever
- * runs against paths on this machine, where it is.
- */
+/** Whether two spellings are the same directory. Windows hands back `C:\a\b`, `c:/a/b` and
+ * trailing-separator forms of one folder, and the SDK records whichever it was given. */
 function samePath(left: string, right: string): boolean {
   const flat = (path: string) =>
     path.replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();

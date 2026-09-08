@@ -1,12 +1,7 @@
 import { useSyncExternalStore } from "react";
 
-/**
- * Where the caret is, published by the editor and read by the status bar.
- *
- * A subscription rather than a prop, for the same reason `useFocusTarget` in keys.ts is
- * one: threading the position up to the app and back down would re-render every pane on
- * every arrow key. A cursor readout is the last thing that should cost a frame.
- */
+/** Where the caret is, published by the editor and read by the status bar. A
+ * subscription, not a prop — threading it up would re-render every pane per keypress. */
 export interface CursorPosition {
   /** 1-based, the way the editor, the transcript's links and every compiler count. */
   line: number;

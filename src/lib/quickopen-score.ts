@@ -1,22 +1,7 @@
-/**
- * Ranking for the quick-open palette.
- *
- * Its own module so it can be tested without mounting React: this is the part with
- * judgement in it, and the part that decides whether the palette feels sharp or vague.
- */
+/** Ranking for the quick-open palette. Its own module so it can be tested without React. */
 
-/**
- * Subsequence match, scored so the obvious answer wins.
- *
- * Typing `apptsx` should find `src/App.tsx`, and typing `app` should put `src/App.tsx`
- * above `src/app/helpers.ts`. Three things earn points, in the order a person relies on
- * them: matching in the file's own name rather than in a directory, matching consecutive
- * characters, and matching at the start of a word. An empty query matches everything, so
- * the palette opens showing the project rather than showing nothing.
- *
- * Returns 0 for no match. Both arguments are expected lower-cased by the caller, which
- * does it once per keystroke rather than once per file.
- */
+/** Subsequence match, scored so `app` ranks `src/App.tsx` over `src/app/helpers.ts`:
+ * filename beats directory, runs and word starts beat scatter. Arguments arrive lower-cased. */
 export function score(haystack: string, needle: string): number {
   if (!needle) return 1;
 

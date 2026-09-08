@@ -1,9 +1,8 @@
 import { defineConfig } from "vitest/config";
 
 /**
- * Scoped to `src/`. The sidecar is a separate project with its own runner (`node:test`,
- * run by `npm --prefix sidecar test`); letting Vitest collect those files makes one
- * suite report the other's results and hides whichever it did not run.
+ * Scoped to `src/`. The sidecar has its own runner (`npm --prefix sidecar test`); collecting
+ * it here would make one suite report the other's results.
  */
 export default defineConfig({
   test: {

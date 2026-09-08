@@ -1,24 +1,5 @@
-//! The agent's memory vault: where it is, that it exists, and how much is in it.
-//!
-//! The memory itself belongs to the SDK. `sidecar/src/memory-config.ts` chooses the
-//! directory and hands it to `query()` as `autoMemoryDirectory`, and the notes the model
-//! writes are ordinary `Write` calls through the permission flow. Nothing here reads a
-//! note or decides what is worth remembering.
-//!
-//! What is left for the core is the part the sidecar cannot do: make the folder before
-//! anyone goes looking for it, say how much is in it without opening any of it, and open
-//! it in the file manager.
-//!
-//! ## Why this resolves the vault path a second time
-//!
-//! [`memory_vault`] repeats the rule in `memory-config.ts` -- default `~/agentide-vault`,
-//! overridden by `~/.agentide/memory.json`. The two cannot share code across a process
-//! boundary, and the frontend needs the path for two things the sidecar never reports: the
-//! Settings section, and keeping the editor off a note the agent is writing. The rule is
-//! four lines; if it changes, it changes in both places, which is why both spell out the
-//! same default in a named constant.
-//!
-//! Every path in and out is a [`WirePath`], so `~` is expanded here and never travels.
+//! The agent's memory vault: where it is, that it exists, and how much is in it. The path
+//! rule is duplicated from `sidecar/src/memory-config.ts` -- change it in both places.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,17 +11,15 @@ use serde::{Deserialize, Serialize};
 use crate::fs::is_always_ignored;
 use crate::ipc::{ErrorCode, IpcError, WirePath};
 
-/// The default, and the one the Settings copy names. Must match `DEFAULT_VAULT` in
-/// `sidecar/src/memory-config.ts` -- a mismatch would seed and measure one folder while
-/// the model wrote into another.
+/// Must match `DEFAULT_VAULT` in `sidecar/src/memory-config.ts` -- a mismatch would seed and
+/// measure one folder while the model wrote into another.
 const DEFAULT_VAULT: &str = "agentide-vault";
 
 /// Read per call rather than cached, so moving the vault takes effect on the next open.
 const CONFIG_PATH: &str = ".agentide/memory.json";
 
-/// Enough notes that reaching it means something is wrong -- a vault pointed at a source
-/// tree, or at a home directory. Settings opens on this walk, so it ends rather than
-/// counting a hundred thousand files someone will not read.
+/// Reaching this means the vault is pointed at a source tree or a home directory. Settings
+/// opens on this walk, so it stops rather than counting files nobody will read.
 const MAX_NOTES: usize = 20_000;
 
 /// The user's file, as much of it as this side cares about. `enabled` is the sidecar's
@@ -65,9 +44,8 @@ pub struct MemoryVault {
 pub struct MemoryStats {
     /// Markdown files, at any depth.
     pub notes: u32,
-    /// Bytes of those files. Whatever else is in the folder -- Obsidian's own
-    /// `.obsidian/`, an attachment -- is neither counted nor measured, so the number
-    /// answers "how much has been remembered" rather than "how big is this directory".
+    /// Bytes of those files only, so the number answers "how much has been remembered"
+    /// rather than "how big is this directory".
     pub bytes: u64,
     /// Unix epoch milliseconds of the most recently written note, or `null` for an empty
     /// vault. The one number that says whether memory is actually being used.
@@ -77,9 +55,8 @@ pub struct MemoryStats {
 // ---------------------------------------------------------------------------
 // Commands
 //
-// `async` throughout. Every command in this core used to be synchronous, which ran it on
-// the thread the webview draws from; a walk of a large tree froze the window until it
-// finished. These three are on the path that opens Settings.
+// `async` throughout: a synchronous command runs on the thread the webview draws from, and
+// a walk of a large tree froze the window.
 // ---------------------------------------------------------------------------
 
 /// The configured vault, expanded and normalized.
@@ -89,12 +66,7 @@ pub async fn memory_vault() -> Result<MemoryVault, IpcError> {
 }
 
 /// Create the vault if it is absent, and explain itself in a README if it is empty.
-///
-/// Never overwrites: past the first write this folder is the person's, and a vault with a
-/// year of notes in it is not somewhere to drop a file that was not asked for. An empty
-/// folder is the only state where a README is unambiguously ours to add -- including the
-/// state where someone deleted it on purpose, which stays deleted the moment they write
-/// anything else.
+/// Never overwrites: past the first write the folder is the person's.
 #[tauri::command]
 pub async fn memory_seed(vault: WirePath) -> Result<(), IpcError> {
     seed(&vault)
@@ -123,9 +95,8 @@ fn resolve() -> Result<MemoryVault, IpcError> {
             vault: None,
             enabled: None,
         }),
-        // A missing file is the normal case: the default is meant to work for someone who
-        // never writes one. A malformed one costs its override and nothing else, matching
-        // what the sidecar does with the same file on the same turn.
+        // A missing file is the normal case. A malformed one costs its override and nothing
+        // else, which is what the sidecar does with the same file.
         Err(_) => ConfigFile {
             vault: None,
             enabled: None,
@@ -136,9 +107,8 @@ fn resolve() -> Result<MemoryVault, IpcError> {
         Some(configured) => expand(configured, &home),
         None => home.join(DEFAULT_VAULT),
     };
-    // Not silently replaced by the default when it will not normalize: the sidecar hands
-    // whatever is in the file to the SDK, so a path only this side rejects would leave
-    // Settings describing a different folder from the one being written to.
+    // Not replaced by the default when it will not normalize: the sidecar hands the raw
+    // value to the SDK, so Settings would describe a folder nobody is writing to.
     let vault = WirePath::from_path(&raw).map_err(|err| {
         IpcError::new(
             ErrorCode::InvalidPath,
@@ -181,9 +151,8 @@ fn scan(vault: &WirePath) -> Result<MemoryStats, IpcError> {
     }
 
     let mut stats = MemoryStats::default();
-    // The same walker the file tree uses, with the same ignore rules: `.git`, `target`
-    // and the rest are no more interesting in a vault than in a workspace, and a vault
-    // someone keeps in git would otherwise have its object store counted.
+    // The file tree's walker and ignore rules: a vault kept in git would otherwise have its
+    // object store counted.
     let walk = WalkBuilder::new(&dir)
         .hidden(false)
         .require_git(false)
@@ -238,10 +207,8 @@ fn reveal(vault: &WirePath) -> Result<(), IpcError> {
         command
     };
 
-    // Spawned and dropped, never waited on. `explorer` exits 1 even when it opened the
-    // window, so a status check here would report failure on every success -- and the
-    // window is the answer either way. Only "the program would not start at all" is worth
-    // saying, which is what a spawn error is.
+    // Spawned, never waited on: `explorer` exits 1 even when it opened the window, so only
+    // a failure to start at all is worth reporting.
     command
         .spawn()
         .map(|_| ())
@@ -267,9 +234,8 @@ fn expand(raw: &str, home: &Path) -> PathBuf {
     if slashed == "~" {
         return home.to_path_buf();
     }
-    // Only a leading `~/`, exactly as `memory-config.ts` does it. `~user` is a shell
-    // convention this never has to honour, and treating a `~` anywhere else as a home
-    // directory would mangle a legitimate folder name.
+    // Only a leading `~/`, exactly as `memory-config.ts` does it: a `~` anywhere else is
+    // part of a legitimate folder name.
     match slashed.strip_prefix("~/") {
         Some(rest) => home.join(rest),
         None => PathBuf::from(slashed),
@@ -284,9 +250,8 @@ fn modified_ms(meta: &fs::Metadata) -> Option<i64> {
         .map(|since| since.as_millis() as i64)
 }
 
-/// The first thing in a new vault. Short on purpose: it is read once, and the format it
-/// describes is the SDK's, so anything more detailed here would go stale against a
-/// dependency rather than against this code.
+/// The first thing in a new vault. Short on purpose: the format it describes is the SDK's,
+/// so detail here would go stale against a dependency.
 const README: &str = "\
 ---
 title: About this vault
@@ -357,8 +322,7 @@ mod tests {
 
     #[test]
     fn seeding_twice_leaves_the_second_readme_alone() {
-        // Settings seeds on every open. Rewriting the file each time would silently
-        // discard whatever the person put in it.
+        // Settings seeds on every open; rewriting would discard what the person put in it.
         let dir = TempDir::new("twice");
         let vault = dir.wire("vault");
 
@@ -374,8 +338,7 @@ mod tests {
 
     #[test]
     fn a_vault_with_notes_in_it_gets_no_readme_at_all() {
-        // Pointing the config at an existing folder of notes is a supported thing to do,
-        // and it must not drop a file into someone's established vault.
+        // Pointing the config at an existing folder of notes must not add a file to it.
         let dir = TempDir::new("existing");
         fs::create_dir_all(dir.0.join("vault")).unwrap();
         fs::write(dir.0.join("vault/kept.md"), "# a note").unwrap();
@@ -392,8 +355,8 @@ mod tests {
         fs::create_dir_all(dir.0.join("vault/.obsidian")).unwrap();
         fs::write(dir.0.join("vault/one.md"), "12345").unwrap();
         fs::write(dir.0.join("vault/topics/two.MD"), "1234567890").unwrap();
-        // Obsidian's own state, a pasted image, and a directory that happens to end in
-        // `.md` -- none of them are notes.
+        // Obsidian state, a pasted image, and a directory ending in `.md`: none are notes.
+
         fs::write(dir.0.join("vault/.obsidian/workspace.json"), "{}").unwrap();
         fs::write(dir.0.join("vault/diagram.png"), [0u8; 40]).unwrap();
         fs::create_dir_all(dir.0.join("vault/not-a-note.md")).unwrap();

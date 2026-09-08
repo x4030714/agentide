@@ -1,13 +1,5 @@
-/**
- * What this installation can do: the models it offers and the slash commands it accepts.
- * Published once per sidecar.
- *
- * `supportedModels()` lives on a running `Query` -- `startup()` hands back a `WarmQuery`,
- * which does not expose it -- so the list cannot be read without a live turn, and this
- * process will not start one just to ask. The first turn asks, the answer goes out as a
- * `models` message, and every later turn skips it: the catalogue describes the
- * installation, not the turn.
- */
+/** The models and slash commands this installation offers. `supportedModels()` needs a live
+ * `Query`, which only a turn has, so the first turn asks and publishes and later ones skip. */
 
 import type {
   ModelInfo as SdkModelInfo,
@@ -27,18 +19,12 @@ export class ModelCatalogue {
     this.#link = link;
   }
 
-  /**
-   * Ask `running` for the model list and send it on, unless an earlier turn already did.
-   *
-   * Returns immediately: the answer reaches the host when it reaches it, and no turn
-   * waits for it. A rejection is logged and nothing is sent -- the frontend renders what
-   * it has, and a missing catalogue costs a picker rather than a turn.
-   */
+/** Ask `running` for the model list and send it on, unless an earlier turn already did.
+ * Returns immediately; a rejection is logged and costs a picker rather than a turn. */
   publish(running: Query): void {
     if (this.#asked) return;
-    // Set before awaiting, so two turns starting in the same tick cannot both ask, and
-    // left set after a failure, so a build where this never works asks once rather than
-    // once per turn. Restarting the sidecar is the retry.
+// Set before awaiting, so two turns in the same tick cannot both ask, and left set after a
+// failure, so a broken build asks once rather than once per turn. Restarting is the retry.
     this.#asked = true;
     void running.supportedModels().then(
       (models) => {
@@ -53,8 +39,7 @@ export class ModelCatalogue {
       (error: unknown) => warn(`could not read the model list: ${describe(error)}`),
     );
 
-    // Asked at the same moment and for the same reason: both describe the installation
-    // rather than the turn, and both need a live `Query` to ask.
+// Same moment and same reason as the models: describes the installation, needs a live `Query`.
     void running.supportedCommands().then(
       (commands) => {
         if (!Array.isArray(commands)) {
@@ -78,13 +63,8 @@ function forwardCommand(command: SdkSlashCommand): SlashCommand {
   };
 }
 
-/**
- * Narrow one SDK row to the wire shape.
- *
- * Field by field rather than by spread: the SDK's `ModelInfo` carries flags for modes
- * this protocol does not plumb, and spreading would put fields on the wire that no
- * schema describes and no fixture covers.
- */
+/** Narrow one SDK row to the wire shape. Field by field, not a spread: the SDK carries flags
+ * this protocol does not plumb, and spreading puts fields on the wire that no schema covers. */
 function forward(model: SdkModelInfo): ModelInfo {
   return {
     value: model.value,

@@ -1,31 +1,5 @@
-/**
- * Where the agent's memory lives, and whether it is on.
- *
- * The memory itself is the SDK's. It has an auto-memory system already -- a recall
- * supervisor that surfaces relevant notes into a turn, and a writer the model drives with
- * ordinary `Write` calls -- and `Settings.autoMemoryDirectory` says where those notes go.
- * All this module does is choose the directory and say who may write to it.
- *
- * ## Why a folder of markdown
- *
- * The SDK's notes are markdown with YAML frontmatter and `[[wikilinks]]`, which is exactly
- * what Obsidian reads. Pointing it at a folder makes that folder a vault: openable, graph
- * and all, with no conversion and no plugin. Obsidian does not have to be installed for
- * any of this to work -- it is a folder of text either way.
- *
- * ## Why user level only
- *
- * There is deliberately no per-workspace override. What the agent learns about this machine,
- * these languages and this person does not stop being true in a different folder, and a
- * per-project vault would make memory something you lose by opening the wrong directory.
- * This is the same argument that moved `system.md` up a level.
- *
- * ## Why not under `<workspace>/.agentide/`
- *
- * `ALWAYS_IGNORED` in `src-tauri/src/fs.rs` hides that directory from the file listing, the
- * tree, quick open and the watcher, and excludes it from checkpoints. Memory kept there
- * would be invisible to every tool the agent has for finding things.
- */
+/** Where the SDK's auto-memory writes: a folder of markdown, which is also an Obsidian vault.
+ * User level only, and never under `.agentide/` -- `ALWAYS_IGNORED` in `fs.rs` hides that. */
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -51,12 +25,7 @@ export interface MemoryConfig {
   enabled: boolean;
 }
 
-/**
- * The vault to use for this turn.
- *
- * `home` is a parameter only so tests can point at a temporary tree; production never
- * passes it.
- */
+/** The vault for this turn. `home` is a parameter only so tests can point at a temp tree. */
 export function loadMemoryConfig(home: string = homedir()): MemoryConfig {
   const base = slashes(home);
   let file: z.infer<typeof FileSchema> = {};
@@ -67,8 +36,7 @@ export function loadMemoryConfig(home: string = homedir()): MemoryConfig {
     if (result.success) {
       file = result.data;
     } else {
-      // The override is lost, the default still stands. A hand-edited file with a stray
-      // comma must not cost the turn the person is in the middle of.
+// A hand-edited file with a stray comma must not cost the turn; the default still stands.
       warn(`${CONFIG_PATH} is not a memory config; using the default vault`);
     }
   } catch (error) {
@@ -83,17 +51,8 @@ export function loadMemoryConfig(home: string = homedir()): MemoryConfig {
   };
 }
 
-/**
- * What the SDK is told, or `null` when memory is off.
- *
- * `permissions.ask` is the whole of the approval story. Memory writes are ordinary `Write`
- * and `Edit` calls, and in Review mode -- `acceptEdits` -- an edit lands without ever
- * reaching `canUseTool`, so nothing would prompt. An ask rule forces those calls back
- * through the permission flow the app already renders and answers.
- *
- * It does not survive `bypassPermissions`, which is what Auto mode selects. Nothing does;
- * that is what Auto means.
- */
+/** What the SDK is told, or `null` when memory is off. The `ask` rules are the whole approval
+ * story: in Review mode (`acceptEdits`) a memory write never reaches `canUseTool` otherwise. */
 export function memorySettings(config: MemoryConfig): Record<string, unknown> | null {
   if (!config.enabled) return { autoMemoryEnabled: false };
   return {

@@ -35,15 +35,8 @@ interface Metrics {
 }
 
 /**
- * The row pitch, taken from the stylesheet rather than written down here.
- *
- * `.tree-row` is `height: var(--row)` with no vertical margin, so a rendered row is the
- * truth and `--row` is the answer before one exists. A constant in this file would
- * survive a density or font change and then place every row below the fold at the wrong
- * offset -- the kind of bug that looks like a rendering glitch and is arithmetic.
- *
- * Zero means neither could be read, and `rowWindow` reads that as "draw the whole list":
- * slow, but the same thing this pane did before it was windowed.
+ * Row pitch from a rendered row, else from `--row`. A constant here would survive a density
+ * change and misplace every row below the fold. Zero means "draw the whole list".
  */
 function readRowHeight(body: HTMLElement): number {
   const rendered = body.querySelector<HTMLElement>(".tree-row");
@@ -54,11 +47,8 @@ function readRowHeight(body: HTMLElement): number {
 }
 
 /**
- * Lazily expanded directory tree. One `list_dir` call per expanded folder, and a reload
- * of the affected folders when the watcher reports a change -- never a poll.
- *
- * Only the rows in view are rendered. A home directory or a Desktop is thousands of
- * entries, and expanding one used to build every button before the frame could land.
+ * Lazily expanded tree: one `list_dir` per open folder, reloaded on watcher events, never
+ * polled. Only visible rows render -- a Desktop is thousands of entries.
  */
 export function FileTree({
   root,
@@ -75,12 +65,8 @@ export function FileTree({
   const [metrics, setMetrics] = useState<Metrics>({ row: 0, pad: 0, viewport: 0 });
 
   /**
-   * Every row an expanded tree would show, in order. Derived rather than held: it is a
-   * projection of `children` and `expanded` and of nothing else, and keeping a copy in
-   * state would only add a way for the three to disagree.
-   *
-   * Memoised because scrolling re-renders this component. Rebuilding ten thousand rows
-   * on every scroll event is exactly the per-frame cost the windowing exists to remove.
+   * Every visible row in order, derived so nothing can disagree. Memoised: scrolling re-renders,
+   * and rebuilding ten thousand rows per frame is the cost windowing exists to remove.
    */
   const rows = useMemo(() => {
     const out: Row[] = [];
@@ -104,18 +90,15 @@ export function FileTree({
   const hasRows = rows.length > 0;
 
   /**
-   * Layout, measured rather than assumed. It re-runs once the first row exists so the
-   * pitch comes from a real button instead of from `--row`, and the observer catches the
-   * pane being dragged to another height or the window being restored at one.
+   * Layout measured, not assumed. Re-runs once a real row exists, and the observer catches
+   * resizes.
    */
   useLayoutEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
     const measure = () => {
-      // A tree the sidebar is not showing -- another view is selected, or Ctrl+B put the
-      // whole sidebar away -- measures zero, and a zero viewport means "draw everything".
-      // That would build ten thousand rows behind a pane nobody is looking at. Keeping
-      // the last real measurement bounds the DOM and is still right when it comes back.
+      // A hidden sidebar measures zero, and a zero viewport means "draw everything" -- ten
+      // thousand rows behind a pane nobody is looking at. Keep the last real measurement.
       if (body.clientHeight === 0) return;
       const next: Metrics = {
         row: readRowHeight(body),
@@ -136,10 +119,7 @@ export function FileTree({
     return () => observer.disconnect();
   }, [hasRows]);
 
-  /**
-   * Scroll row `index` into view, taking the new position into state in the same pass so
-   * the drawn slice moves with it. A no-op when the row is already on screen.
-   */
+  /** Scroll row `index` into view, updating state in the same pass so the drawn slice follows. */
   const revealRow = useCallback(
     (index: number) => {
       const body = bodyRef.current;
@@ -158,14 +138,8 @@ export function FileTree({
   );
 
   /**
-   * A selection made outside this pane -- Ctrl+P, go to definition -- brings its row into
-   * view. With only the visible rows drawn there is no element to ask where that row is,
-   * so the index answers it instead, which works for a row that has never been rendered.
-   *
-   * Only a change of `activePath` scrolls, and the ref is set once the row exists rather
-   * than on the first attempt, so a selection made before its folder finished loading is
-   * still revealed when it arrives. Expanding a folder above the selection moves it too,
-   * and chasing it there would yank the list out from under the folder being opened.
+   * A selection made elsewhere scrolls into view, by index because an undrawn row has no element.
+   * Only `activePath` changes scroll; chasing a row that merely moved would yank the list.
    */
   const revealed = useRef<WirePath | null>(null);
   useLayoutEffect(() => {
@@ -175,16 +149,8 @@ export function FileTree({
   }, [activePath, activeIndex, revealRow]);
 
   /**
-   * Ctrl+1 puts the keyboard on the selected row, or the first one.
-   *
-   * The rows are buttons, so once focus is on one the arrow keys and Enter already work
-   * without this pane inventing a navigation model of its own.
-   *
-   * The selected row may be scrolled out of the window, and a row that is not drawn
-   * cannot be focused. Scrolling to it and flushing that render before looking is the
-   * whole reason for `flushSync` here: without it `querySelector` finds nothing, focus
-   * falls back to the first row, and Ctrl+1 answers "the file I have open" with "the top
-   * of the tree".
+   * Ctrl+1 focuses the selected row. `flushSync` is load-bearing: an undrawn row cannot be
+   * focused, and without the flush `querySelector` finds nothing and focus lands on the top row.
    */
   useFocusTarget("tree", () => {
     flushSync(() => revealRow(activeIndex));
@@ -194,14 +160,9 @@ export function FileTree({
       pane?.querySelector<HTMLElement>(".tree-row");
     target?.focus();
   });
-  /**
-   * What the watcher has seen touch each path since this workspace opened. Drives the
-   * length column's role colour, so the tree carries the same meanings the syntax theme
-   * does rather than only claiming to.
-   */
+  /** What the watcher has touched since the workspace opened; colours the length column. */
   const [marks, setMarks] = useState<Record<WirePath, FsChangeKind>>({});
-  // Mirrors the keys of `children` so the watcher effect can see what is loaded without
-  // re-running every time a listing changes.
+  // Mirrors the keys of `children` so the watcher effect need not re-run on every listing.
   const loaded = useRef(new Set<WirePath>());
 
   const loadDir = useCallback(async (path: WirePath) => {
@@ -314,13 +275,8 @@ export function FileTree({
           <p className="note">no entries — the folder is empty, or all of it is ignored</p>
         )}
         {/**
-         * The canvas holds the height of the whole listing, so the scrollbar keeps
-         * measuring the folder rather than the dozen rows on screen. The window carries
-         * the drawn slice down to where it belongs, by transform rather than by offset,
-         * so a scroll never touches layout.
-         *
-         * Rows are keyed by path, not by position: a keyed-by-index list would hand the
-         * focused button to a different file as the slice moves under it.
+         * The canvas holds the full listing height so the scrollbar measures the folder; the
+         * window moves by transform, never layout. Keyed by path, or focus would jump files.
          */}
         <div
           className="tree-canvas"

@@ -1,25 +1,14 @@
-/**
- * The link back to the Rust host: outbound framing plus the request/reply correlation
- * that `permissions.ts` and `ide-tools.ts` are built on.
- *
- * Nothing in the sidecar answers its own questions. A permission prompt and an IDE tool
- * both leave here as a message with a fresh id and block until the host sends a reply
- * carrying that id, so the host stays the only owner of the editor, the filesystem and
- * the user's attention.
- */
+/** The link back to the Rust host: outbound framing plus the request/reply correlation
+ * behind `permissions.ts` and `ide-tools.ts`. The sidecar answers none of its own questions. */
 
 import { encodeLine, type SidecarMessage } from "./protocol.ts";
 
-/**
- * How long an IDE tool waits for the host. Long enough to cross a busy UI thread, short
- * enough that the model gets a usable error instead of stalling the turn.
- */
+/** How long an IDE tool waits for the host. Long enough to cross a busy UI thread, short
+ * enough that the model gets a usable error instead of a stalled turn. */
 export const TOOL_TIMEOUT_MS = 30_000;
 
-/**
- * How long a permission prompt waits. This is a backstop against a host that never
- * answers, not a UI deadline -- the host applies its own, shorter one.
- */
+/** A backstop against a host that never answers, not a UI deadline -- the host applies its
+ * own, shorter one. */
 export const PERMISSION_TIMEOUT_MS = 15 * 60_000;
 
 interface Pending {
@@ -44,12 +33,8 @@ export class HostLink {
     this.#writeLine(encodeLine(message));
   }
 
-  /**
-   * Send `build(id)` and resolve when the host replies with that id.
-   *
-   * Rejects on timeout or abort, and unregisters either way, so a late reply is dropped
-   * rather than resolving a request nobody is waiting on.
-   */
+/** Send `build(id)` and resolve when the host replies with that id. Unregisters on timeout
+ * or abort, so a late reply is dropped rather than resolving a dead request. */
   request<T>(options: {
     prefix: string;
     label: string;
@@ -89,10 +74,8 @@ export class HostLink {
     });
   }
 
-  /**
-   * Deliver a reply. Returns false when the id is unknown, which is the normal shape of
-   * a duplicate reply or one that lost a race with a timeout -- not an error.
-   */
+/** Deliver a reply. False means the id is unknown: a duplicate, or one that lost a race
+ * with a timeout. Not an error. */
   settle(id: string, value: unknown): boolean {
     const pending = this.#pending.get(id);
     if (!pending) return false;

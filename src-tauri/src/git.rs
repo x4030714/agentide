@@ -1,29 +1,5 @@
-//! The user's own git repository: status, diffs, staging, commits and branches.
-//!
-//! Distinct from `checkpoints.rs`, which owns a private shadow repository and goes to
-//! great lengths to be isolated from the user's git setup. This module is the opposite:
-//! it runs git *as the user would*, in their working tree, with their config, their
-//! identity, their hooks and their signing key. A commit made here has to be
-//! indistinguishable from one they made in a terminal, or the panel is a trap.
-//!
-//! ## Why the CLI rather than `git2`
-//!
-//! The plan called for `git2` on the read side. Two things argued against it once the
-//! checkpoint system was already shelling out to git:
-//!
-//! - **Two implementations disagree.** libgit2 and git have different ignore handling,
-//!   different index edge cases, and different notions of what is "clean". A panel that
-//!   disagrees with the user's terminal about whether a file is staged is worse than no
-//!   panel.
-//! - **Writes lose the user's setup.** `git2` commits do not run hooks, do not sign, and
-//!   have to reimplement identity resolution. A pre-commit hook that silently stops
-//!   running because you committed from the IDE is exactly the kind of surprise this
-//!   codebase is supposed to avoid.
-//!
-//! The concern `git2` was meant to address -- not parsing human output -- is met by
-//! asking git for its machine formats: `--porcelain=v2 -z` and `for-each-ref --format`.
-//! Those are documented, stable, and NUL-delimited, so a path with a space, a quote or a
-//! newline in it survives.
+//! The user's own git repository: status, diffs, staging, commits and branches. The git CLI
+//! rather than `git2`, so hooks, signing and ignore rules match the user's terminal exactly.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -34,11 +10,8 @@ use tauri::State;
 use crate::fs::WorkspaceState;
 use crate::ipc::{ErrorCode, IpcError, WirePath};
 
-/// What a file's presence in the status list means.
-///
-/// Kept as a named state rather than the raw porcelain letter: the letter is an
-/// implementation detail of the format, and the frontend needs to colour and label these,
-/// not decode them.
+/// What a file's presence in the status list means, named rather than left as the porcelain
+/// letter: the frontend colours and labels these, it does not decode them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GitState {
@@ -66,11 +39,8 @@ impl GitState {
     }
 }
 
-/// One row in the panel.
-///
-/// A file can appear twice -- once staged, once not -- because git tracks those
-/// separately and a partially staged file is a real, common state. Conflating them would
-/// make "stage" and "unstage" ambiguous.
+/// One row in the panel. A file can appear twice -- once staged, once not -- because a
+/// partially staged file is a real state, and merging them makes "stage" ambiguous.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitFile {
@@ -131,13 +101,8 @@ pub struct GitFileDiff {
 
 // --- Running git ----------------------------------------------------------------
 
-/// A git invocation in the user's working tree, with the user's environment intact.
-///
-/// The deliberate opposite of `checkpoints.rs`'s builder, which strips the environment to
-/// isolate the shadow repository. Here the user's config *is* the point. Only two things
-/// are forced: no credential prompt (nothing here is a network operation, and a prompt
-/// would block a thread nobody can answer from), and C messages for the few places output
-/// is matched against.
+/// A git invocation in the user's tree with their environment intact -- the opposite of
+/// `checkpoints.rs`. Only two things are forced: no credential prompt, and C messages.
 fn git_in(dir: &Path) -> Command {
     let mut command = Command::new("git");
     command
@@ -221,12 +186,8 @@ fn repo_root(dir: &Path) -> Result<Option<PathBuf>, IpcError> {
 
 // --- Status ---------------------------------------------------------------------
 
-/// Parse `git status --porcelain=v2 --branch -z --untracked-files=all`.
-///
-/// Split out from the command so it can be tested against the exact bytes git emits,
-/// including the shapes that are easy to get wrong: a rename, whose original path is a
-/// second NUL-terminated field inside one record, and a file that is staged and modified
-/// again afterwards, which must produce two rows.
+/// Parse `git status --porcelain=v2 --branch -z --untracked-files=all`. Split out so tests
+/// get the exact bytes: a rename adds a second NUL field, and `MM` must produce two rows.
 fn parse_status(bytes: &[u8], root: &Path) -> Result<GitStatus, IpcError> {
     let mut status = GitStatus {
         is_repo: true,
@@ -302,11 +263,10 @@ fn parse_status(bytes: &[u8], root: &Path) -> Result<GitStatus, IpcError> {
                 push_entry(&mut status, root, &xy, &path, from);
             }
 
-            // `u <XY> ...` -- unmerged. One row, never two: a conflict is not something
-            // that can be half-staged, and offering to stage it would be a lie.
+            // `u <XY> ...` -- unmerged. One row, never two: a conflict cannot be half-staged.
             "u" => {
-                // `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`: ten fields
-                // after the tag, one more stage hash than a `1` record carries.
+                // `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`: one more stage
+                // hash than a `1` record carries.
                 let path = rest.splitn(10, ' ').nth(9).unwrap_or("");
                 if let Some(file) = entry(root, path, false, GitState::Conflicted, None) {
                     status.files.push(file);
@@ -326,12 +286,8 @@ fn parse_status(bytes: &[u8], root: &Path) -> Result<GitStatus, IpcError> {
     Ok(status)
 }
 
-/// Turn one tracked entry's `XY` code into up to two rows.
-///
-/// `X` is the index against HEAD and `Y` is the working tree against the index, so a file
-/// that was staged and then edited again is genuinely in both lists. Showing it once
-/// would make "stage" and "unstage" mean something different for that file than for every
-/// other one.
+/// Turn one tracked entry's `XY` code into up to two rows: `X` is the index against HEAD and
+/// `Y` the working tree against the index, so a staged-then-edited file is in both lists.
 fn push_entry(status: &mut GitStatus, root: &Path, xy: &[u8], path: &str, from: Option<String>) {
     let index = xy.first().copied().unwrap_or(b'.');
     let worktree = xy.get(1).copied().unwrap_or(b'.');
@@ -402,10 +358,8 @@ pub async fn git_status(workspace: State<'_, WorkspaceState>) -> Result<GitStatu
     parse_status(&bytes, &root)
 }
 
-/// The two sides of one file's diff, for the diff editor.
-///
-/// `staged` picks which comparison: the index against HEAD, or the working tree against
-/// the index. That is the same split the panel shows, so a row and its diff always agree.
+/// The two sides of one file's diff. `staged` picks the comparison -- index against HEAD, or
+/// working tree against index -- which is the panel's own split, so row and diff agree.
 #[tauri::command]
 pub async fn git_file_diff(
     workspace: State<'_, WorkspaceState>,
@@ -430,8 +384,8 @@ pub async fn git_file_diff(
         show(&dir, &format!(":{rel}"))?
     };
 
-    // Either side being binary makes the pair meaningless in a text diff editor; saying
-    // so is better than rendering mojibake and letting the user think that is the file.
+    // Either side being binary makes the pair meaningless here; say so rather than render
+    // mojibake the user might take for the file.
     let binary = before.is_binary || after.is_binary;
     Ok(GitFileDiff {
         path,
@@ -505,10 +459,8 @@ pub async fn git_stage(workspace: State<'_, WorkspaceState>, paths: Vec<String>)
     Ok(())
 }
 
-/// Unstage, keeping the working tree untouched.
-///
-/// `restore --staged` rather than `reset`: it is the operation that only ever touches the
-/// index, so there is no version of this that can eat someone's edits.
+/// Unstage, keeping the working tree untouched. `restore --staged` rather than `reset`: it
+/// only ever touches the index, so no version of it can eat someone's edits.
 #[tauri::command]
 pub async fn git_unstage(
     workspace: State<'_, WorkspaceState>,
@@ -531,11 +483,8 @@ pub struct GitCommitResult {
     pub subject: String,
 }
 
-/// Commit what is staged.
-///
-/// Runs the user's hooks and signing, because it is their git doing it. A hook that
-/// rejects the commit surfaces as the error it wrote, which is the only useful thing to
-/// show: the hook already explained itself better than we could.
+/// Commit what is staged, with the user's hooks and signing. A hook that refuses surfaces
+/// its own message -- it explained itself better than we could.
 #[tauri::command]
 pub async fn git_commit(
     workspace: State<'_, WorkspaceState>,
@@ -548,8 +497,7 @@ pub async fn git_commit(
     }
     let dir = root_of(&workspace)?;
 
-    // `--file -` would need stdin; a temp file is avoided by passing the message as one
-    // argument, which keeps newlines intact on every platform.
+    // The message goes as one argument: no stdin, no temp file, newlines intact everywhere.
     let mut args: Vec<&str> = vec!["commit", "-m", trimmed];
     if amend {
         args.push("--amend");
@@ -623,11 +571,8 @@ pub async fn git_branches(workspace: State<'_, WorkspaceState>) -> Result<Vec<Gi
         .collect())
 }
 
-/// Switch branches.
-///
-/// Never forced. A switch that would discard local changes is refused by git, and its
-/// refusal names the files -- which is exactly what the user needs to decide what to do,
-/// and far better than this app deciding for them.
+/// Switch branches, never forced. Git refuses one that would discard local changes and names
+/// the files, which is what the user needs in order to decide.
 #[tauri::command]
 pub async fn git_switch(workspace: State<'_, WorkspaceState>, name: String) -> Result<(), IpcError> {
     let dir = root_of(&workspace)?;
@@ -657,8 +602,7 @@ mod tests {
         })
     }
 
-    /// Build the NUL-delimited bytes git emits, so the tests exercise the real framing
-    /// rather than a convenient approximation of it.
+    /// Build the NUL-delimited bytes git emits, so the tests exercise the real framing.
     fn porcelain(records: &[&str]) -> Vec<u8> {
         let mut bytes = Vec::new();
         for record in records {
@@ -713,8 +657,8 @@ mod tests {
 
     #[test]
     fn staged_then_edited_again_appears_on_both_sides() {
-        // The case that makes two rows the right model: `MM` means the index differs from
-        // HEAD *and* the working tree differs from the index.
+        // `MM`: the index differs from HEAD *and* the working tree differs from the index.
+
         let bytes = porcelain(&["1 MM N... 100644 100644 100644 aaa bbb src/main.rs"]);
         let status = parse_status(&bytes, &root()).unwrap();
         assert_eq!(status.files.len(), 2);

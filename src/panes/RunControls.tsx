@@ -8,11 +8,8 @@ import { MCP_CLOSED } from "../lib/transcript";
 import type { McpServerRow } from "../lib/transcript";
 
 /**
- * What the next turn runs on. Sits directly above the composer, because it describes
- * the prompt you are about to send rather than the conversation behind it.
- *
- * Both values are optional at every hop: unset means the SDK's own default, which is a
- * real answer, not a missing one. Neither is invented here.
+ * What the next turn runs on, above the composer because it describes the prompt you are about
+ * to send. Both values stay optional: unset means the SDK's default, and nothing is invented here.
  */
 
 /** One row of the menu. The grouping and the wording live in `model-menu.ts`. */
@@ -27,19 +24,8 @@ function modelOption(entry: ModelInfo) {
 const ALL_EFFORTS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 /**
- * A server's status as a colour class. Only `connected` is good news; everything else,
- * including a status this build has not seen, is something the person has to act on, so
- * an unknown word warns rather than passing silently.
- *
- * `pending` warns rather than reading as a quiet wait. MCP startup is non-blocking, and
- * this row describes the init message -- the moment the turn's prompt was built. A server
- * still pending then contributed no tools to the turn the person is watching, which is
- * the state this strip was added to reveal. Dimming it would hide it.
- *
- * `disabled` and `closed` are dimmed, because neither is an outcome: one is the person
- * switching a server off, the other is the application it drives not being open. A
- * closed gate is a fact about the desktop, not a fault to go and fix -- but it is still
- * drawn, because a server nobody can see is the failure this strip exists to prevent.
+ * Only `connected` is good news, so anything unrecognised warns rather than passing silently --
+ * `pending` included, since a server still pending gave this turn no tools. Choices are not faults.
  */
 function mcpTone(status: string): string {
   if (status === "connected") return "ok";
@@ -85,22 +71,15 @@ export function RunControls({
   const { known, catalogue, pinned, providers: backends, all } = modelMenu(models, providers);
   const selected = all.find((entry) => entry.value === model);
 
-  /**
-   * Only the levels this model actually has. The SDK silently downgrades an unsupported
-   * level, and a control that offers a setting which quietly does nothing is worse than
-   * one that does not offer it.
-   */
+  /** Only levels this model has: the SDK silently downgrades, so offering the rest would lie. */
   const efforts =
     selected?.supportedEffortLevels ??
     (selected && selected.supportsEffort === false ? [] : ALL_EFFORTS);
 
   return (
     <div className="run-controls">
-      {/**
-       * A segmented control, not a select: three options that change how much the agent
-       * can do without asking should all be visible at once, and the one in force should
-       * be readable without opening anything.
-       */}
+      {/* Segmented, not a select: how much the agent may do unasked should be readable
+          without opening anything. */}
       <div className="segmented" role="radiogroup" aria-label="Edit mode">
         {EDIT_MODES.map((option) => (
           <button
@@ -162,10 +141,8 @@ export function RunControls({
               ))}
             </>
           ) : (
-            // One group before the first turn: there is nothing to contrast it against
-            // yet, and the note beside the control already says the list is provisional.
-            // The configured backends are not provisional and get their own groups either
-            // way -- they came from a file that was read, not from a query nobody has run.
+            // One group before the first turn -- nothing to contrast against yet. Backends keep
+            // their groups regardless: they came from a file, not from a query nobody has run.
             <>
               {pinned.map(modelOption)}
               {backends.map((group) => (
@@ -197,10 +174,7 @@ export function RunControls({
         </label>
       )}
 
-      {/**
-       * One note slot, and the more actionable message wins it. A missing system.md is
-       * something the person can fix; the catalogue arriving is just a wait.
-       */}
+      {/* One note slot, and the fixable message wins it. The catalogue arriving is just a wait. */}
       {promptMode === "tuned" && !tunedAvailable ? (
         <span className="note control-note">no system.md — Tuned adds nothing</span>
       ) : (
@@ -208,29 +182,15 @@ export function RunControls({
       )}
 
       {/**
-       * The MCP servers this turn will have, one chip each.
-       *
-       * Here rather than in a pane of its own, because it answers the same question the
-       * rest of this row does -- what the next prompt runs with -- and because an MCP
-       * server is only ever interesting for the two seconds after it fails to start.
-       * A connected server shows its tool count and nothing else; anything else shows
-       * the status word, because that is the part worth reading.
-       *
-       * A connected server contributing zero tools is drawn as a warning. It is the
-       * shape of the bug that hid the IDE's own tools for three phases, and "connected"
-       * on its own says nothing about whether the model can see anything.
-       *
-       * A server whose gate was closed is here too, dimmed. It was never started, so it
-       * is in no init message and would otherwise be missing from this strip entirely --
-       * which is exactly what "the tool does not exist" looks like from the chair.
+       * One chip per MCP server. Connected-but-zero-tools warns: that shape hid the IDE's own
+       * tools for three phases. Gated servers are drawn too, or they vanish from the strip.
        */}
       {mcpServers.length > 0 && (
         <div className="mcp-strip">
           <span className="legend">MCP</span>
           {mcpServers.map((server) => {
             const empty = server.status === "connected" && server.tools === 0;
-            // The gated title names the address instead of the tool count: zero tools is
-            // the consequence, and the port is the part that says what to open.
+            // Gated servers name the address, not the tool count: the port says what to open.
             const title = server.at
               ? `${server.name}: not started — nothing is listening on ${server.at}`
               : `${server.name}: ${server.status}, ${server.tools} tool${server.tools === 1 ? "" : "s"}`;

@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-/**
- * Appearance, the way a Mac app does it: follow the system by default, with an explicit
- * override that wins in both directions.
- *
- * `system` is a real third state, not the absence of a choice — it is why the app tracks
- * the OS setting live rather than reading it once at launch.
- */
+/** Appearance the way a Mac app does it: follow the system by default, explicit override
+ * wins. `system` is a real third state, which is why the OS setting is tracked live. */
 export type Appearance = "system" | "light" | "dark";
 
 const KEY = "agentide.appearance";
@@ -20,15 +15,8 @@ function stored(): Appearance {
   }
 }
 
-/**
- * Drives `data-theme` on the document element: the explicit override, absent while
- * following the system, which is what lets `world.css` express "system dark unless light
- * was chosen" in plain CSS.
- *
- * `data-effect` — whether the window's translucency actually applied — used to be set
- * here too. It moved to `useTransparency`, which is the hook that can change the answer:
- * one attribute, one writer, and no race between a probe and a command that disagree.
- */
+/** Drives `data-theme`: absent while following the system, which is what lets `world.css`
+ * say "system dark unless light was chosen". `data-effect` belongs to `useTransparency`. */
 export function useAppearance(): [Appearance, (next: Appearance) => void] {
   const [appearance, setAppearance] = useState<Appearance>(stored);
 
@@ -54,14 +42,8 @@ export function resolvedAppearance(appearance: Appearance): "light" | "dark" {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-/**
- * What is on screen right now, tracked live.
- *
- * Watches two sources, because either can change without the other: the OS setting
- * (while following it) and our own `data-theme` attribute (when the override moves).
- * Reading `matchMedia` once at mount would leave the editor on the wrong theme the
- * moment Windows switches at sunset.
- */
+/** What is on screen right now, tracked live. Watches the OS setting and our own
+ * `data-theme`, since either moves without the other — read once and sunset breaks it. */
 export function useResolvedAppearance(): "light" | "dark" {
   const [resolved, setResolved] = useState<"light" | "dark">(() =>
     resolvedAppearance(stored()),

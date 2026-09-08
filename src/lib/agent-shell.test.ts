@@ -5,14 +5,8 @@ import { __testing } from "./agent-shell";
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 
-/**
- * What the model reads out of a terminal.
- *
- * Terminal output is written for eyes: colour, cursor moves, progress bars that redraw
- * one line a hundred times. Handed to a model raw it is thousands of tokens describing
- * something the user already watched, and the escape bytes make the real text harder to
- * find rather than easier. These pin what survives that trip.
- */
+/** What the model reads out of a terminal. Raw output is thousands of tokens of colour
+ * and redraws describing something the user already watched; these pin what survives. */
 describe("terminal output for a model", () => {
   const { stripAnsi, clamp } = __testing;
 

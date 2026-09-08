@@ -1,25 +1,5 @@
-/**
- * The sidecar wire protocol -- the single source of truth.
- *
- * One JSON object per line, both directions, over the sidecar's stdin/stdout.
- *
- * The shapes are declared as Zod schemas and the TypeScript types are derived from them,
- * so there is one definition rather than a type plus a validator that can drift apart.
- * `src-tauri/src/agent.rs` and `src/lib/protocol.ts` mirror what is here by hand; change
- * one and change the other two.
- *
- * The mirrors are kept honest by `protocol-fixtures.json`, which holds one canonical
- * message per variant. `codec.test.ts` validates every entry against the schemas below,
- * and `agent::tests::fixtures_*` parses the same file into the Rust types and serializes
- * it back. A field renamed, retyped or dropped on one side fails that side's test.
- *
- * ## Path policy
- *
- * Paths on this wire are already normalized: `agent.rs` fills `cwd` from the workspace
- * root it holds as a `WirePath`, and tool arguments naming files travel as strings the
- * host normalized on the way in. The sidecar never normalizes a path itself; see the
- * module docs in `src-tauri/src/ipc.rs` for why that is the rule.
- */
+/** The wire protocol, one JSON object per line. These schemas are the source of truth: change one
+ * and change `agent.rs` and `src/lib/protocol.ts` too. Paths arrive normalized; never normalize here. */
 
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
@@ -28,10 +8,7 @@ import { z } from "zod";
 const jsonObject = z.record(z.string(), z.unknown());
 export type JsonObject = Record<string, unknown>;
 
-/**
- * How the SDK resolves a tool call that is not pre-approved. Mirrors the SDK's
- * `PermissionMode`; Phase 2's mode toggle maps onto it.
- */
+/** How the SDK resolves a call that is not pre-approved. Mirrors the SDK's `PermissionMode`. */
 export const PermissionModeSchema = z.enum([
   "default",
   "acceptEdits",
@@ -42,19 +19,13 @@ export const PermissionModeSchema = z.enum([
 ]);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 
-/**
- * How much reasoning the model spends on a turn. Mirrors the SDK's `EffortLevel`.
- *
- * Not every model accepts every level; `ModelInfoSchema` carries the ones each model
- * takes, which is what the picker should offer.
- */
+/** How much reasoning a turn gets. Mirrors the SDK's `EffortLevel`; not every model takes every
+ * level, which is what `ModelInfoSchema.supportedEffortLevels` carries. */
 export const EffortLevelSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type EffortLevel = z.infer<typeof EffortLevelSchema>;
 
-/**
- * Per-turn agent configuration. Sent with each prompt rather than at startup so the
- * Phase 2 mode toggle takes effect on the next turn without restarting the sidecar.
- */
+/** Per-turn agent configuration. Sent with each prompt rather than at startup, so a mode change
+ * takes effect on the next turn without restarting the sidecar. */
 export const PromptOptionsSchema = z.strictObject({
   model: z.string().optional(),
   /** Omitted means the SDK's own default, which is not a value this protocol invents. */
@@ -65,37 +36,17 @@ export const PromptOptionsSchema = z.strictObject({
   /** Tools denied outright. A bare name removes the tool from the model's context. */
   disallowedTools: z.array(z.string()).optional(),
   maxTurns: z.number().int().optional(),
-  /**
-   * Appended to Claude Code's preset system prompt, never replacing it.
-   *
-   * Replacing would throw away the tool-use discipline the preset carries and make us
-   * responsible for keeping it current per model release; appending keeps that and adds
-   * what the preset cannot know. Omitted means the bare preset.
-   */
+  /** Appended to Claude Code's preset system prompt, never replacing it: replacing throws away the
+   * tool-use discipline the preset carries. Omitted means the bare preset. */
   systemPromptAppend: z.string().optional(),
-  /**
-   * Continue a past conversation instead of this session's own.
-   *
-   * The SDK resumes from its transcript on disk, so this is the id of a file the host
-   * listed -- not a session this process has seen. Sent per prompt rather than at start:
-   * picking a conversation is something the user does mid-session.
-   */
+  /** Continue a past conversation: the id of a transcript on disk, not a session this process has
+   * seen. Per prompt, because picking one is something the user does mid-session. */
   resumeConversation: z.string().optional(),
-  /**
-   * Which backend runs this turn: a key from `~/.agentide/providers.json`, or omitted for
-   * Anthropic's own.
-   *
-   * Sent per prompt beside `model` because it is chosen the same way and at the same
-   * moment. Unlike `model` it cannot be applied to a running query -- it becomes
-   * environment variables the CLI reads once at startup -- so a change rebuilds the query.
-   * See `queryFingerprint`.
-   */
+  /** Which backend runs this turn, or omitted for Anthropic's own. Unlike `model` it cannot be
+   * applied to a running query -- it is env the CLI reads once -- so a change rebuilds the query. */
   provider: z.string().optional(),
-  /**
-   * Emit `stream_event` messages so the transcript can render text as it arrives. Off by
-   * default: it multiplies event volume, and a UI that only renders complete assistant
-   * messages should not pay for it.
-   */
+  /** Emit `stream_event` messages so text can render as it arrives. Off by default: it multiplies
+   * event volume, and a UI that renders only complete messages should not pay for it. */
   includePartialMessages: z.boolean().optional(),
 });
 export type PromptOptions = z.infer<typeof PromptOptionsSchema>;
@@ -114,18 +65,8 @@ export type DoneReason = z.infer<typeof DoneReasonSchema>;
 export const PermissionDecisionSchema = z.enum(["allow", "deny"]);
 export type PermissionDecision = z.infer<typeof PermissionDecisionSchema>;
 
-/**
- * One model the installation can run. The subset of the SDK's `ModelInfo` a picker
- * needs; the fields describing modes this protocol does not plumb are dropped here
- * rather than forwarded and ignored.
- */
-/**
- * One slash command this installation accepts, as the SDK reports it.
- *
- * Read from the SDK rather than listed here: commands come from the CLI build, the
- * user's own `.claude/commands`, and any plugin they have enabled, so a hardcoded list
- * would be wrong on every machine including this one.
- */
+/** One slash command this installation accepts, as the SDK reports it. Read from the SDK because
+ * they come from the CLI build, `.claude/commands` and plugins -- any fixed list is wrong somewhere. */
 export const SlashCommandSchema = z.strictObject({
   /** Without the leading slash. */
   name: z.string(),
@@ -138,12 +79,8 @@ export const SlashCommandSchema = z.strictObject({
 
 export type SlashCommand = z.infer<typeof SlashCommandSchema>;
 
-/**
- * One MCP server the loader held back, and where its application would have been.
- *
- * `host` and `port` travel with the name because the chip has to say what to open. A
- * name alone reads as a broken server rather than as a closed program.
- */
+/** An MCP server the loader held back, and where it would have been. `host` and `port` travel with
+ * the name because the chip has to say what to open; a name alone reads as a broken server. */
 export const GatedServerSchema = z.strictObject({
   name: z.string(),
   host: z.string(),
@@ -152,6 +89,7 @@ export const GatedServerSchema = z.strictObject({
 });
 export type GatedServer = z.infer<typeof GatedServerSchema>;
 
+/** The subset of the SDK's `ModelInfo` a picker needs; the rest is dropped, not forwarded and ignored. */
 export const ModelInfoSchema = z.strictObject({
   /** The id to send back as `PromptOptions.model`. */
   value: z.string(),
@@ -165,14 +103,8 @@ export const ModelInfoSchema = z.strictObject({
 });
 export type ModelInfo = z.infer<typeof ModelInfoSchema>;
 
-/**
- * A configured backend, as the host is allowed to see it.
- *
- * Deliberately not the whole entry: `baseUrl` and `token` stay in the sidecar. The host
- * needs to draw the models, know what command brings the backend up, and say where it
- * listens -- none of which requires the credential. A key that never crosses this boundary
- * cannot be read out of the webview.
- */
+/** A configured backend as the host may see it: `baseUrl` and `token` stay in the sidecar. A key
+ * that never crosses this boundary cannot be read out of the webview. */
 export const ProviderInfoSchema = z.strictObject({
   /** The key to send back as `PromptOptions.provider`. */
   key: z.string(),
@@ -196,10 +128,8 @@ export type ProviderInfo = z.infer<typeof ProviderInfoSchema>;
 // ---------------------------------------------------------------------------
 
 export const HostMessageSchema = z.discriminatedUnion("t", [
-  /**
-   * Run a turn. `cwd` is the workspace root, filled by `agent.rs` from Rust state on
-   * every prompt so a workspace change lands without a sidecar restart.
-   */
+  /** Run a turn. `cwd` is refilled from Rust state on every prompt, so a workspace change lands
+   * without a sidecar restart. */
   z.strictObject({
     t: z.literal("prompt"),
     sessionId: z.string(),
@@ -235,33 +165,18 @@ export type HostMessage = z.infer<typeof HostMessageSchema>;
 export const SidecarMessageSchema = z.discriminatedUnion("t", [
   /** Emitted once, before any other message, when the stdio loop is listening. */
   z.strictObject({ t: z.literal("ready"), pid: z.number().int(), sdkVersion: z.string() }),
-  /**
-   * One `SDKMessage` from the agent SDK, verbatim. Opaque here and in Rust: the SDK's
-   * message union is large and moves, so only the transcript UI destructures it.
-   */
+  /** One `SDKMessage` from the agent SDK, verbatim. Opaque here and in Rust: the union is large and
+   * moves, so only the transcript UI destructures it. */
   z.strictObject({ t: z.literal("event"), sessionId: z.string(), msg: jsonObject }),
-  /**
-   * The models this installation can run. Sent once per sidecar lifetime, during the
-   * first turn: the list only exists on a live query, so there is nothing to report
-   * before one has started. Not tied to a session -- it describes the installation.
-   */
+  /** The models this installation can run. Once per sidecar, during the first turn, because the
+   * list only exists on a live query. Not tied to a session -- it describes the installation. */
   z.strictObject({ t: z.literal("models"), models: z.array(ModelInfoSchema) }),
-  /**
-   * The backends `providers.json` names. Sent at startup and refreshed each turn, because
-   * the file is re-read each turn and a picker that only learned them once would go stale
-   * the moment one was added.
-   */
+  /** The backends `providers.json` names. Refreshed every turn: the file is re-read every turn, and
+   * a picker told once would go stale the moment a backend was added. */
   z.strictObject({ t: z.literal("providers"), providers: z.array(ProviderInfoSchema) }),
   z.strictObject({ t: z.literal("commands"), commands: z.array(SlashCommandSchema) }),
-  /**
-   * The external MCP servers this turn was built without, because the application each
-   * one drives is not open. Sent at the start of every turn, empty list included: an
-   * empty list is what clears the chips the previous turn left standing.
-   *
-   * Reported rather than left to stderr, because a server that is not started is
-   * invisible in the SDK's own `init` -- the failure this reports looks exactly like a
-   * tool that never existed.
-   */
+  /** The external MCP servers this turn was built without, because the application each one drives
+   * is not open. Reported because an unstarted server is invisible in the SDK's own `init`. */
   z.strictObject({
     t: z.literal("mcp_gated"),
     sessionId: z.string(),
@@ -298,10 +213,8 @@ export type SidecarMessage = z.infer<typeof SidecarMessageSchema>;
 // codec
 // ---------------------------------------------------------------------------
 
-/**
- * A line longer than this is treated as a desynchronized stream rather than a large
- * message. Tool results carrying file contents are the reason the ceiling is high.
- */
+/** Longer than this is a desynchronized stream, not a large message. Tool results carrying file
+ * contents are why the ceiling is high. */
 export const MAX_LINE_BYTES = 32 * 1024 * 1024;
 
 /** Serialize a message to its wire line, terminator included. */
@@ -310,14 +223,8 @@ export function encodeLine(message: HostMessage | SidecarMessage): string {
   return `${JSON.stringify(message)}\n`;
 }
 
-/**
- * Reassembles newline-delimited lines from arbitrary byte chunks.
- *
- * A stdio read boundary falls wherever the OS puts it: mid-message, mid-line and
- * mid-UTF-8-character are all normal. `StringDecoder` holds back a split character; the
- * carry buffer holds back a split line. Neither a chunk smaller than a message nor a
- * message larger than a chunk is a special case.
- */
+/** Reassembles newline-delimited lines from arbitrary byte chunks. A read boundary falls
+ * mid-message, mid-line or mid-UTF-8 character; the decoder and the carry buffer cover all three. */
 export class LineDecoder {
   readonly #decoder = new StringDecoder("utf8");
   readonly #maxLineBytes: number;
@@ -353,13 +260,8 @@ export class LineDecoder {
   }
 }
 
-/**
- * Parse a host line, rejecting anything this build does not know how to run.
- *
- * Validated rather than cast: the host is another process, and a message that is one
- * field short should fail here with a readable error rather than three frames deep in a
- * handler.
- */
+/** Parse a host line, rejecting what this build cannot run. Validated rather than cast: a message
+ * one field short should fail here with a readable error, not three frames into a handler. */
 export function parseHostMessage(line: string): HostMessage {
   const parsed = HostMessageSchema.safeParse(JSON.parse(line));
   if (!parsed.success) {

@@ -1,13 +1,5 @@
-/**
- * The agent host sidecar.
- *
- * Reads newline-delimited JSON on stdin, writes it on stdout, and owns nothing else. The
- * Rust core is the host: it decides what the agent may do and answers the questions this
- * process asks. See `protocol.ts` for the wire format.
- *
- * stdout is the wire and carries nothing but protocol lines -- diagnostics go to stderr,
- * which the host captures. Closing stdin is the shutdown signal.
- */
+/** The agent host sidecar: newline-delimited JSON in on stdin, out on stdout, and nothing else
+ * owned here. stdout is the wire, so diagnostics go to stderr; closing stdin means shut down. */
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -30,8 +22,8 @@ function log(text: string): void {
 
 function sdkVersion(): string {
   try {
-    // The package does not export `./package.json`, so resolve the entry point and read
-    // the manifest next to it. Informational only -- an unknown version is not fatal.
+    // The package does not export `./package.json`, so read the manifest beside the entry
+    // point. Informational only -- an unknown version is not fatal.
     const require = createRequire(import.meta.url);
     const entry = require.resolve("@anthropic-ai/claude-agent-sdk");
     const manifest = readFileSync(join(dirname(entry), "package.json"), "utf8");
@@ -146,9 +138,8 @@ function main(): void {
 
   link.send({ t: "ready", pid: process.pid, sdkVersion: sdkVersion() });
 
-  // Before any turn, unlike the model catalogue: providers are a file, not something only
-  // a live query can be asked for. Sending them here is what lets the picker offer a local
-  // model on the first prompt rather than the second.
+  // Before any turn, unlike the model catalogue: providers come from a file, not from a live
+  // query. That is what lets the first prompt already offer a local model.
   link.send({ t: "providers", providers: publicProviders(loadProviders()) });
 }
 

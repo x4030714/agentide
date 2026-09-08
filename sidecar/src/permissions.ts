@@ -1,12 +1,5 @@
-/**
- * `canUseTool`: the round trip from a tool the SDK will not auto-approve to a decision
- * made outside this process.
- *
- * The SDK calls this only when the permission flow falls through to a prompt -- calls
- * covered by `allowedTools`, a settings allow rule or a permissive `permissionMode` never
- * reach here. That is the right granularity for Phase 2's Strict mode, which works by
- * narrowing what is pre-approved rather than by intercepting everything.
- */
+/** `canUseTool`: turns a tool the SDK will not auto-approve into a decision made outside
+ * this process. Only reached when the permission flow falls through to a prompt. */
 
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 
@@ -21,14 +14,8 @@ interface HostPermissionReply {
   message?: string;
 }
 
-/**
- * A `canUseTool` bound to one session.
- *
- * Never resolves to `null`: the SDK treats that as "the application already answered on
- * another channel" and, if nothing did, the tool call blocks forever with no timeout.
- * Every path here ends in an explicit allow or deny, including the failure paths -- a
- * host that dies mid-prompt denies rather than hangs.
- */
+/** Never resolves to `null`: the SDK reads that as "answered on another channel" and the
+ * call then blocks forever. Every path ends in an explicit allow or deny. */
 export function createPermissionHandler(link: HostLink, sessionId: string): CanUseTool {
   return async (toolName, input, options): Promise<PermissionResult> => {
     let reply: HostPermissionReply;

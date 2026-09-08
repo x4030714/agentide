@@ -1,11 +1,5 @@
-/**
- * Which rows of a fixed-height list are worth rendering, and where to scroll to show one.
- *
- * Its own module so the arithmetic can be tested without a DOM. The tree is the one pane
- * whose row count is set by the user's disk rather than by us -- opening a home directory
- * is thousands of rows -- and an off-by-one here is invisible until the list is long
- * enough to matter, which is exactly when it is hardest to debug.
- */
+/** Which rows of a fixed-height list are worth rendering. Its own module so the arithmetic
+ * can be tested without a DOM; an off-by-one shows up only on lists too long to debug. */
 
 /** Rows kept beyond each edge so a fast scroll does not expose an unpainted band. */
 const OVERSCAN = 6;
@@ -17,18 +11,8 @@ export interface RowWindow {
   end: number;
 }
 
-/**
- * The slice to render for a list scrolled to `offset` px inside a `viewport` px window.
- *
- * `offset` is measured from the top of the list, not from the top of the scroll
- * container: the caller subtracts whatever padding sits above the first row, because a
- * container that pads its content would otherwise place every row that much out.
- *
- * A viewport or a row height of zero means nothing has been measured yet, and that
- * returns the whole list rather than an empty one. Too many rows costs one frame; none
- * is a pane that looks broken, and it is the failure a person would report as "the tree
- * is empty" rather than as "the tree is slow".
- */
+/** The slice to render for a list scrolled to `offset` px inside a `viewport` px window.
+ * `offset` excludes padding above row 0; an unmeasured viewport returns every row, never none. */
 export function rowWindow(
   offset: number,
   viewport: number,
@@ -50,13 +34,8 @@ export function rowWindow(
   };
 }
 
-/**
- * The offset that brings row `index` into view, or null if it is already there.
- *
- * Nearest edge, the way a source list behaves: a row above the fold comes to the top, one
- * below it comes to the bottom, and one already visible does not move at all -- selecting
- * a row that is on screen must never scroll the list out from under the pointer.
- */
+/** The offset that brings row `index` into view, or null if it is already there. Nearest
+ * edge, and a visible row never moves — selecting one must not scroll it out from under you. */
 export function offsetToReveal(
   offset: number,
   viewport: number,

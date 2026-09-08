@@ -4,12 +4,8 @@ import { __testing } from "./quickopen-score";
 
 const { score } = __testing;
 
-/**
- * Ranking, pinned by the searches actually made in this project.
- *
- * A fuzzy finder is only worth having if the obvious answer is first. These are the cases
- * where a naive subsequence match puts the wrong file on top.
- */
+/** Ranking, pinned by the searches actually made in this project: the cases where a
+ * naive subsequence match puts the wrong file on top. */
 describe("quick open ranking", () => {
   const best = (query: string, paths: string[]) =>
     [...paths]
