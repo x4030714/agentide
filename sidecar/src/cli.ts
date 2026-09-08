@@ -32,6 +32,8 @@ import { resolve } from "node:path";
 import { HostLink } from "./host.ts";
 import { ModelCatalogue } from "./models.ts";
 import { allCommands, complete, format, lookup } from "./cli-commands.ts";
+import { ago, listConversations } from "./conversations.ts";
+import type { PastConversation } from "./conversations.ts";
 import { accept, MENU_HEIGHT, menuFor, move, rows } from "./cli-menu.ts";
 import { pad, theme, width as visibleWidth } from "./cli-theme.ts";
 import type { Theme } from "./cli-theme.ts";
@@ -58,6 +60,8 @@ interface Options {
   provider?: string;
   /** Print every tool call and its result, not just the assistant's prose. */
   verbose: boolean;
+  /** A past conversation to continue, chosen with `/resume`. */
+  resume?: string;
 }
 
 function usage(): never {
@@ -277,6 +281,7 @@ async function main(): Promise<void> {
   const promptOptions = () => ({
     ...(options.model ? { model: options.model } : {}),
     ...(options.provider ? { provider: options.provider } : {}),
+    ...(options.resume ? { resumeConversation: options.resume } : {}),
     // Edits land. There is nobody to review them here, and a terminal that asked would
     // hang on a question with no answer.
     permissionMode: "acceptEdits" as const,
@@ -330,6 +335,8 @@ async function repl(
     // case, where there is no live menu to Tab into.
     completer: (line: string) => complete(line, allCommands(known())),
   });
+  /** What `/resume` last printed, so `/resume 3` means that third row. */
+  const recent: PastConversation[] = [];
   const menu = attachMenu(rl, () => allCommands(known()));
   menuHook.refresh = menu.refresh;
   const release = captureWarnings(menu.above);
@@ -347,7 +354,7 @@ async function repl(
       const { exact, matches } = lookup(text, commands);
       if (exact?.name === "exit") break;
       if (exact && "local" in exact) {
-        handleLocal(exact.name, text, options);
+        await handleLocal(exact.name, text, options, recent);
         menu.open();
         continue;
       }
@@ -748,6 +755,62 @@ function attachMenu(
 }
 
 /**
+ * `/resume` with nothing after it lists; `/resume 3` continues the third.
+ *
+ * Two steps rather than one, because the id is a UUID and nobody is typing one of those.
+ * The list is kept between the two so the number means what it meant when it was printed:
+ * re-reading the directory would renumber the rows under a choice already made, and a
+ * conversation that was written to in between would move.
+ *
+ * Only the next turn carries the id. `Session` adopts it once and then continues that
+ * conversation on its own, so resuming twice in a row is not two branches from the same
+ * point -- which is the failure the adopt-once rule in `session.ts` exists for.
+ */
+async function resume(
+  argument: string,
+  options: Options,
+  recent: PastConversation[],
+): Promise<void> {
+  if (!argument) {
+    const found = await listConversations(options.cwd);
+    recent.length = 0;
+    recent.push(...found);
+    if (found.length === 0) {
+      process.stdout.write(paint.dim("  no past conversations in this folder\n"));
+      return;
+    }
+    const width = String(found.length).length;
+    for (const [index, entry] of found.entries()) {
+      const number = paint.accent(String(index + 1).padStart(width));
+      const when = paint.dim(ago(entry.updatedMs).padEnd(8));
+      process.stdout.write(`  ${number}  ${when}  ${entry.opening}\n`);
+    }
+    process.stdout.write(paint.dim(`  /resume <n> to continue one of these\n`));
+    return;
+  }
+
+  const picked = Number(argument);
+  // A number is a row from the list just printed; anything else is taken as an id, so a
+  // conversation named by something other than this menu still works.
+  if (!Number.isInteger(picked)) {
+    options.resume = argument;
+    process.stdout.write(paint.dim(`  continuing ${argument}\n`));
+    return;
+  }
+  if (recent.length === 0) {
+    process.stdout.write(paint.dim("  run /resume on its own first, to see the list\n"));
+    return;
+  }
+  const entry = recent[picked - 1];
+  if (!entry) {
+    process.stdout.write(paint.dim(`  there is no ${picked}; the list has ${recent.length}\n`));
+    return;
+  }
+  options.resume = entry.id;
+  process.stdout.write(`  ${paint.dim("continuing")} ${entry.opening}\n`);
+}
+
+/**
  * Print the commands, saying when the list is still only half of itself.
  *
  * The caveat is not decoration. Before the first turn this list is six entries the CLI
@@ -773,11 +836,19 @@ function list(matches: readonly SlashCommand[], beforeFirstTurn: boolean): void 
  * clear: emptying them by typing the name alone is a way to lose a local backend without
  * being told.
  */
-function handleLocal(name: string, input: string, options: Options): void {
+async function handleLocal(
+  name: string,
+  input: string,
+  options: Options,
+  recent: PastConversation[],
+): Promise<void> {
   const argument = input.replace(/^\/\S+\s*/, "").trim();
   switch (name) {
     case "help":
       list(allCommands([]), false);
+      return;
+    case "resume":
+      await resume(argument, options, recent);
       return;
     case "model":
       if (!argument) return void process.stdout.write(`  ${options.model ?? "default"}\n`);

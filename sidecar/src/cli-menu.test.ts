@@ -25,9 +25,14 @@ function many(count: number): SlashCommand[] {
 
 const HEIGHT = 8;
 
+/** The whole list: the CLI's own plus whatever the installation published. */
+const ALL = LOCAL_COMMANDS.length + 90;
+
 test("a slash on its own opens the whole list", () => {
+  // Derived, not written down: a hardcoded count fails the day a local command is added,
+  // which says nothing about the menu and everything about the number.
   const menu = menuFor("/", allCommands(many(90)));
-  assert.equal(menu?.matches.length, 96);
+  assert.equal(menu?.matches.length, ALL);
   assert.equal(menu?.selected, 0);
 });
 
@@ -118,7 +123,7 @@ test("the footer says how many there are, not how many are shown", () => {
   // this was reported: "there is only a few commands in the cli".
   const menu = menuFor("/", allCommands(many(90)))!;
   const footer = rows(menu, { terminal: 80, height: HEIGHT }).at(-1) ?? "";
-  assert.ok(footer.includes("1/96"), footer);
+  assert.ok(footer.includes(`1/${ALL}`), footer);
   assert.ok(footer.includes("↑↓"), "the keys are not written anywhere else");
 });
 
