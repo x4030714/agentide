@@ -33,12 +33,13 @@ import { HostLink } from "./host.ts";
 import { ModelCatalogue } from "./models.ts";
 import { allCommands, complete, format, lookup } from "./cli-commands.ts";
 import { ago, listConversations } from "./conversations.ts";
+import { modelRows, pickModel } from "./cli-models.ts";
 import type { PastConversation } from "./conversations.ts";
 import { accept, MENU_HEIGHT, menuFor, move, rows } from "./cli-menu.ts";
 import { pad, theme, width as visibleWidth } from "./cli-theme.ts";
 import type { Theme } from "./cli-theme.ts";
 import type { Menu } from "./cli-menu.ts";
-import type { JsonObject, SidecarMessage, SlashCommand, ToolResult } from "./protocol.ts";
+import type { JsonObject, ModelInfo, SidecarMessage, SlashCommand, ToolResult } from "./protocol.ts";
 import { Session } from "./session.ts";
 
 /**
@@ -178,6 +179,8 @@ async function main(): Promise<void> {
   let failed = false;
   /** What the installation offers, once the warm-up has asked it. See `cli-commands.ts`. */
   let agentCommands: SlashCommand[] = [];
+  /** The models it can run, from the same warm-up. See `cli-models.ts`. */
+  let agentModels: ModelInfo[] = [];
   /**
    * Redraw an open menu. Replaced by `repl` once there is one to redraw.
    *
@@ -228,6 +231,12 @@ async function main(): Promise<void> {
         // it does when skills are discovered in a subdirectory.
         agentCommands = message.commands;
         menuHook.refresh();
+        return;
+      }
+      case "models": {
+        // Asked at the same moment as the command list and for the same reason: both
+        // describe the installation rather than the turn.
+        agentModels = message.models;
         return;
       }
       case "event": {
@@ -308,7 +317,7 @@ async function main(): Promise<void> {
   // until a turn has been spent. It costs the CLI spawn that turn would have paid anyway.
   void session.warm(options.cwd, promptOptions());
 
-  await repl(turn, options, session, () => agentCommands, menuHook);
+  await repl(turn, options, session, () => agentCommands, menuHook, () => agentModels);
 }
 
 /**
@@ -326,6 +335,7 @@ async function repl(
   session: Session,
   known: () => SlashCommand[],
   menuHook: { refresh: () => void },
+  models: () => ModelInfo[],
 ): Promise<void> {
   const rl = createInterface({
     input: process.stdin,
@@ -354,7 +364,7 @@ async function repl(
       const { exact, matches } = lookup(text, commands);
       if (exact?.name === "exit") break;
       if (exact && "local" in exact) {
-        await handleLocal(exact.name, text, options, recent);
+        await handleLocal(exact.name, text, options, recent, models());
         menu.open();
         continue;
       }
@@ -755,6 +765,67 @@ function attachMenu(
 }
 
 /**
+ * `/model` with nothing after it lists; `/model 3` or `/model opus` picks one.
+ *
+ * A name that is not a model is refused here rather than sent. It used to be taken as
+ * written and fail on the next turn, from inside the SDK -- `Model "opus-5" is not a
+ * recognized model id` -- which spends a turn and reads as the agent breaking rather than
+ * as a typo two prompts ago.
+ *
+ * Before the warm-up has answered there is no list to check against, so a name is taken on
+ * trust and said out loud. Refusing everything for the two seconds before the catalogue
+ * arrives would be worse than the error it prevents.
+ */
+function chooseModel(
+  argument: string,
+  options: Options,
+  models: readonly ModelInfo[],
+): void {
+  if (!argument) {
+    if (models.length === 0) {
+      process.stdout.write(`  ${options.model ?? "default model"}\n`);
+      process.stdout.write(paint.dim("  the model list arrives a moment after startup\n"));
+      return;
+    }
+    process.stdout.write(`${modelRows(models, options.model, paint, process.stdout.columns || 100).join("\n")}\n`);
+    process.stdout.write(paint.dim("  /model <n> or /model <id> to switch\n"));
+    return;
+  }
+
+  // A bare number is a row from the list just printed; the numbers are why the list is
+  // never reordered.
+  const picked = Number(argument);
+  if (Number.isInteger(picked) && models.length > 0) {
+    const entry = models[picked - 1];
+    if (!entry) {
+      process.stdout.write(paint.dim(`  there is no ${picked}; the list has ${models.length}\n`));
+      return;
+    }
+    options.model = entry.value;
+    process.stdout.write(`  next turns run on ${paint.accent(entry.displayName)}\n`);
+    return;
+  }
+
+  if (models.length === 0) {
+    options.model = argument;
+    process.stdout.write(`  next turns run on ${argument}\n`);
+    return;
+  }
+
+  const { chosen, suggestion } = pickModel(argument, models);
+  if (chosen) {
+    options.model = chosen.value;
+    process.stdout.write(`  next turns run on ${paint.accent(chosen.displayName)}\n`);
+    return;
+  }
+  const near = suggestion ? ` Did you mean ${paint.accent(suggestion.value)}?` : "";
+  process.stdout.write(
+    `  ${paint.danger(`"${argument}" is not a model this installation has.`)}${near}\n`,
+  );
+  process.stdout.write(paint.dim("  /model on its own lists them\n"));
+}
+
+/**
  * `/resume` with nothing after it lists; `/resume 3` continues the third.
  *
  * Two steps rather than one, because the id is a UUID and nobody is typing one of those.
@@ -841,6 +912,7 @@ async function handleLocal(
   input: string,
   options: Options,
   recent: PastConversation[],
+  models: readonly ModelInfo[],
 ): Promise<void> {
   const argument = input.replace(/^\/\S+\s*/, "").trim();
   switch (name) {
@@ -851,9 +923,7 @@ async function handleLocal(
       await resume(argument, options, recent);
       return;
     case "model":
-      if (!argument) return void process.stdout.write(`  ${options.model ?? "default"}\n`);
-      options.model = argument;
-      process.stdout.write(`  next turns run on ${argument}\n`);
+      chooseModel(argument, options, models);
       return;
     case "provider":
       if (!argument) return void process.stdout.write(`  ${options.provider ?? "anthropic"}\n`);

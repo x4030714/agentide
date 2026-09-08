@@ -95,8 +95,15 @@ test("the listing puts every description in the same column", () => {
 });
 
 test("the listing shows what a command takes", () => {
-  const line = format(LOCAL_COMMANDS).find((entry) => entry.includes("/model"));
-  assert.ok(line?.includes("<id>"), `no argument hint in: ${line}`);
+  // Read off the command rather than written down again: pinning the literal hint makes
+  // this fail whenever the wording changes, which says nothing about the listing.
+  for (const command of LOCAL_COMMANDS.filter((entry) => entry.argumentHint)) {
+    const line = format(LOCAL_COMMANDS).find((entry) => entry.includes(`/${command.name} `));
+    assert.ok(
+      line?.includes(command.argumentHint),
+      `no "${command.argumentHint}" in: ${line}`,
+    );
+  }
 });
 
 test("no line runs off the terminal", () => {
