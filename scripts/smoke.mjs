@@ -1,20 +1,10 @@
 /**
- * The end-to-end check: does the app actually work?
+ * The path a person takes -- launch, open a folder, reach a file from the keyboard, send a
+ * prompt, watch the agent call a tool. The seams the bugs live in; no unit test sees them.
  *
- * Every other test in this repository covers a piece. This covers the path a person
- * takes -- launch, open a folder, see the files, reach one from the keyboard, send a
- * prompt, watch the agent call a tool and answer. Those seams are exactly where the
- * bugs in this project have lived: an MCP server whose tools never reached the model,
- * a bundle Node refused to load, a keybinding killed by a throw in its own guard. Not
- * one of them would have failed a unit test.
- *
- *   node scripts/smoke.mjs           # launch the app, run the checks, report
- *   node scripts/smoke.mjs --attach  # use an app already running on the debug port
- *   node scripts/smoke.mjs --no-turn # skip the agent turn (and its cost)
- *
- * This spends money by default: one short turn against the user's own Claude
- * credentials. `--no-turn` covers everything up to the agent and costs nothing, which
- * is the right mode for a quick "did I break the shell".
+     node scripts/smoke.mjs           # launch, check, and run one real turn — costs money
+     node scripts/smoke.mjs --attach  # use an app already running on the debug port
+     node scripts/smoke.mjs --no-turn # skip the agent turn, and its cost, for free
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -60,9 +50,8 @@ function portHolder(port) {
 }
 
 /**
- * Synchronous on purpose. The signal path calls this and then exits immediately, and an
- * async spawn would be abandoned before `taskkill` had started -- failing in exactly the
- * case the signal handler exists for.
+ * Synchronous on purpose: the signal path exits immediately, and an async spawn would be
+ * abandoned before `taskkill` started -- the exact case the handler exists for.
  */
 function kill(pid) {
   try {
@@ -109,10 +98,9 @@ async function until(what, fn, { timeoutMs = 30_000, everyMs = 500 } = {}) {
 }
 
 // --- A workspace of our own -------------------------------------------------------
-//
-// Not whatever folder the user last had open: a check that passes or fails depending on
-// someone's working directory is not a check. A scratch folder also means the agent turn
-// below cannot touch anything real.
+
+// A scratch folder, not whatever the user last had open: a check that turns on someone's
+// working directory is not a check, and the agent turn below can touch nothing real.
 
 function makeWorkspace() {
   const dir = mkdtempSync(join(tmpdir(), "agentide-smoke-"));
@@ -129,16 +117,8 @@ function makeWorkspace() {
 }
 
 /**
- * The fixture the language-server checks are written against.
- *
- * Deliberately shaped: a trait with two implementations (so `ide_implementations` has a
- * right answer and a wrong one -- references would also return the two `impl` lines *and*
- * the bound on line 1), a function whose return type is inferred rather than written (so
- * hover reports something the text does not contain), and no `std` beyond `println!`,
- * because `rust-src` is not installed on this machine and anything reaching into `std`
- * would fail for a reason that has nothing to do with the tools.
- *
- * Line numbers are asserted below, so edits here mean edits there.
+ * The fixture the language-server checks are written against. Line numbers are asserted
+ * below, and nothing reaches into `std`, which is not indexed without `rust-src`.
  */
 const MAIN_RS = [
   "pub trait Greet {", //                1
@@ -276,12 +256,8 @@ async function main() {
   console.log(`workspace: ${workspace}\n`);
 
   if (!ATTACH) {
-    // A teardown cannot run when the run is killed outright -- Ctrl+C, or a harness
-    // stopping the command -- so the previous run's Vite can still be holding 1420 and
-    // `tauri dev` fails before it starts. Clearing it here rather than in teardown is
-    // the difference between a guarantee and a hope. Only a stale one is touched: a
-    // holder that predates this process was not started by this script, and the check
-    // below leaves it alone.
+    // A killed run never reaches teardown, so its Vite is still on 1420 and `tauri dev`
+    // dies before it starts. Only a holder this run could have left is cleared.
     const stale = portHolder(VITE_PORT);
     if (stale && stale !== viteBefore) kill(stale);
 
@@ -337,10 +313,8 @@ async function main() {
     `document.querySelector(".quick-input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })), "closed"`,
   );
 
-  // Opening it proves the editor mounts and Ctrl+3 has something to focus.
-  // Whichever file the tree lists first -- directories sort above files, so which one
-  // that is depends on the fixture. The assertion below uses what was actually opened
-  // rather than assuming, which is the difference between a check and a coin flip.
+  // Opening the tree's first file proves the editor mounts and Ctrl+3 has a target. Which
+  // file that is depends on the fixture, so the checks below use the name it reports.
   const openedFile = await page.eval(`(() => {
     const row = document.querySelector(".tree-row.is-file");
     if (!row) return "";
@@ -359,12 +333,9 @@ async function main() {
   record("the agent host starts", !sidecarError, sidecarError || "no error row");
 
   // --- The language server ---------------------------------------------------------
-  //
-  // These call the tools directly rather than through the agent, so they cost nothing and
-  // run in --no-turn. What they cover is the part no unit test reaches: the capabilities
-  // we send at initialize decide the *shape* of what comes back, and a wrong one there
-  // does not fail loudly -- it produces an empty list, or an action with no edit, which
-  // reads as "nothing to do here" all the way to the model.
+
+  // Straight to the tools, not through the agent, so these are free and run in --no-turn.
+  // A wrong capability at initialize fails quietly: an empty list, or an action with no edit.
 
   const rustFile = `${workspace}/src/main.rs`;
 
@@ -392,20 +363,16 @@ async function main() {
 
   const actions = await page.tool("ide_code_actions", { path: rustFile, line: 5, column: 12 });
   const actionText = actions?.text ?? actions?.error ?? "";
-  // Not asserting a particular action: rust-analyzer's assist list moves between releases.
-  // What must hold is that actions arrive as literals with titles at all -- the failure
-  // this guards is `codeActionLiteralSupport` going missing, which turns the list into
-  // bare commands and every one of them into "has no edit to apply".
+  // The assist list moves between releases, so only its shape is asserted: without
+  // `codeActionLiteralSupport` the literals arrive as bare commands with nothing to apply.
   record(
     "ide_code_actions lists actions to apply",
     Boolean(actions?.ok) && /\n1\. \S/.test(actionText),
     flatten(actionText).slice(0, 120),
   );
 
-  // Applying is the half that can silently do nothing: rust-analyzer sends its assists
-  // without edits and computes one only when asked, so a build that skipped
-  // `codeAction/resolve` would report success here and change no file at all. The check
-  // is therefore against the file on disk, not against the tool's own claim.
+  // Checked against the file on disk, not the tool's claim: assists arrive without edits,
+  // so a build that skipped `codeAction/resolve` reports success and changes nothing.
   const before = readFileSync(`${workspace}/src/main.rs`, "utf8");
   const applied = await page.tool("ide_code_actions", {
     path: rustFile,
@@ -421,21 +388,16 @@ async function main() {
   );
 
   if (RUN_TURN) {
-    // Where the turn's latency actually goes. Armed before the prompt is sent, because
-    // the interval that matters starts at Enter: everything up to the first token is
-    // harness -- spawning the CLI, spawning and connecting each MCP server, building
-    // the prompt -- and none of it is the model thinking.
+    // Armed before Enter, because that is where the interval starts: everything up to the
+    // first token is harness -- spawning the CLI and the MCP servers, building the prompt.
     await page.eval(`(() => {
       const marks = { sent: 0, init: 0, first: 0 };
       window.__ttft = marks;
       const root = document.querySelector('.transcript-body');
       const observer = new MutationObserver(() => {
         const now = performance.now();
-        // The MCP strip is written from the init message, so its arrival is the moment
-        // the prompt was built and the harness handed over.
-        // A connected chip, not the strip itself: gated servers are reported before the
-        // turn starts and paint the strip early, so the strip's arrival stopped meaning
-        // 'the prompt was built'. Only init can produce a connected server.
+        // A connected chip, not the strip: gated servers paint the strip before the turn
+        // starts, so only an is-ok server means init landed and the prompt was built.
         if (!marks.init && document.querySelector('.mcp-server.is-ok')) marks.init = now;
         if (!marks.first && document.querySelector('.t-text, .t-thinking')) marks.first = now;
       });
@@ -487,12 +449,8 @@ async function main() {
         : `${toFirst}ms total, init not observed`,
     );
 
-    // The MCP strip is written from the init message, which is the moment the turn's
-    // prompt was built. That is the only place the answer to "could the model see
-    // these tools" is visible: MCP startup is non-blocking, so a server can be
-    // running and useful by the time the turn ends and still have contributed nothing
-    // to the prompt the model was given. Reported rather than asserted -- which
-    // servers are configured is the person's business, not this script's.
+    // The strip comes from init, so it answers "could the model see these tools" -- MCP
+    // startup is non-blocking. Reported, not asserted: the server list is the person's.
     const strip = await page.eval(`[...document.querySelectorAll(".mcp-server")]
       .map((row) => row.getAttribute("title"))
       .join(" | ")`);
@@ -513,14 +471,8 @@ let cleaned = false;
 function cleanUp() {
   if (cleaned) return;
   cleaned = true;
-  // Killing the npm process is not enough. `tauri dev` spawns Vite and the built
-  // agentide.exe, both of which are re-parented and survive a kill of the tree they
-  // started in. Three runs' worth of those orphans is what left a Vite server holding
-  // port 1420, an agentide.exe holding the debug binary cargo wanted to relink, and a
-  // half-copied node_modules from a stage killed mid-copy.
-  //
-  // Only what this run started is killed: both lists are diffed against a snapshot
-  // taken before launch, so a window the person already had open is left alone.
+  // Killing npm is not enough: `tauri dev` re-parents Vite and agentide.exe, and they
+  // outlive the tree. Only PIDs missing from the pre-launch snapshot are killed.
   if (child) {
     try {
       process.platform === "win32"
@@ -534,11 +486,8 @@ function cleanUp() {
     if (holder && holder !== viteBefore) kill(holder);
   }
 
-  // The scratch workspace is a real workspace as far as the agent SDK is concerned, so
-  // a turn leaves a transcript directory behind in ~/.claude/projects. Nine had piled
-  // up before anyone noticed, sitting at the top of the conversation import list where
-  // the person's own projects should be. A test that litters the thing it is testing is
-  // worse than no test.
+  // The scratch workspace is a real one to the SDK, so a turn leaves a transcript in
+  // ~/.claude/projects, at the top of the import list. Nine piled up before anyone looked.
   try {
     const projects = join(homedir(), ".claude", "projects");
     const leaf = workspaceName(workspace);
@@ -553,12 +502,8 @@ function cleanUp() {
 }
 
 /**
- * Teardown on the way out, however the run ends.
- *
- * `finally` covers a run that finishes or throws. It does not cover the one that gets
- * killed, which is exactly the run that leaves a Vite server on 1420 and an
- * agentide.exe on the debug binary -- and then the next build fails for a reason that
- * has nothing to do with the change being tested.
+ * `finally` covers a run that finishes or throws, not one that is killed -- and that is the
+ * run that leaves Vite on 1420 and agentide.exe on the binary the next build must relink.
  */
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
   process.on(signal, () => {
