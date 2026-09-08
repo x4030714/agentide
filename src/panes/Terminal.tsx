@@ -43,13 +43,8 @@ function label(command: string): string {
   return first.length > 18 ? `${first.slice(0, 17)}…` : first;
 }
 
-/**
- * Real shells, in tabs, plus a read-only tab for each thing the agent is running.
- *
- * Every session stays mounted while the pane lives: xterm owns the scrollback, so
- * unmounting an inactive tab would throw away exactly the output you switched away to
- * keep. Hidden tabs are hidden with the attribute, never unmounted.
- */
+/** Real shells in tabs, plus a read-only tab per agent process. Every session stays
+ * mounted: xterm owns the scrollback, so unmounting throws away what you switched to keep. */
 export function TerminalPane({ root }: TerminalProps) {
   const [sessions, setSessions] = useState<Session[]>(() => [nextSession()]);
   const [active, setActive] = useState(() => sessions[0].id);
@@ -59,13 +54,8 @@ export function TerminalPane({ root }: TerminalProps) {
   // just mirrors it. `watchBackground` fires on start, exit and stop.
   useEffect(() => watchBackground(() => setBackground(listBackground())), []);
 
-  /**
-   * Hand focus to the terminal that is showing.
-   *
-   * Through the DOM rather than a ref into every view: xterm keeps its own hidden
-   * textarea and that is the thing that must receive the keystroke, so reaching for it
-   * directly is both shorter and the only version that is actually correct.
-   */
+  /** Focus the visible terminal through the DOM, not a ref: xterm's own hidden textarea
+   * is what must receive the keystroke. */
   const focusTerminal = useCallback(() => {
     // After the state change above, so the newly shown tab is the one queried.
     requestAnimationFrame(() => {
@@ -104,11 +94,8 @@ export function TerminalPane({ root }: TerminalProps) {
   return (
     <div className="pane terminal">
       <div className="pane-header term-tabs" role="tablist">
-        {/**
-         * The agent's terminal, first and not closable. It is where every command the
-         * agent runs appears; closing it would mean the agent could run something with
-         * nowhere to show it, which is the state this tab exists to make impossible.
-         */}
+        {/* The agent's terminal, first and not closable: closing it would let the agent
+            run something with nowhere to show it. */}
         <span className={`term-tab${active === AGENT_PTY_ID ? " is-on" : ""}`}>
           <button
             type="button"
@@ -121,12 +108,8 @@ export function TerminalPane({ root }: TerminalProps) {
             Agent
           </button>
         </span>
-        {/**
-         * One tab per process the agent left running. Same reasoning as the Agent tab:
-         * a dev server the agent started is exactly the thing worth watching while it
-         * runs, and a log you can only read by asking the agent to read it to you is not
-         * a visible home for it.
-         */}
+        {/* One tab per process the agent left running. A dev server it started is the
+            thing worth watching, and asking the agent to read its log back is not that. */}
         {background.map((process) => (
           <span key={process.id} className={`term-tab${process.id === active ? " is-on" : ""}`}>
             <button
@@ -227,13 +210,8 @@ function TerminalView({
   id: string;
   root: WirePath | null;
   active: boolean;
-  /**
-   * Render an existing stream instead of spawning a shell.
-   *
-   * The agent's terminal is driven by whatever it is running, not by this component, and
-   * it must survive the tab being closed or never opened. When this is given, the view is
-   * a window onto that session: it spawns nothing, kills nothing, and takes no input.
-   */
+  /** Render an existing stream instead of spawning a shell. A window onto that session:
+   * it spawns nothing, kills nothing, and takes no input. */
   attach?: (write: (chunk: Uint8Array) => void) => () => void;
 }) {
   const appearance = useResolvedAppearance();
@@ -261,11 +239,8 @@ function TerminalView({
     termRef.current = term;
     fitRef.current = fit;
 
-    /**
-     * WebGL, falling back to canvas. The DOM renderer is xterm's default and cannot keep
-     * up with build output — this is the single biggest thing between a terminal that
-     * feels native and one that feels like a web page.
-     */
+    /** WebGL, falling back to canvas. xterm's default DOM renderer cannot keep up with
+     * build output, and that is most of the difference from feeling native. */
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => {
@@ -322,11 +297,8 @@ function TerminalView({
     // width and every subsequent line is garbage.
     const observer = new ResizeObserver(() => {
       if (disposed || host.clientWidth === 0) return;
-      // Nothing is done unless the size *in cells* changed. A pane drag fires this on
-      // every pixel while the terminal only cares about whole rows and columns, so most
-      // of those observations have nothing to do -- and refitting to the size it already
-      // is writes the terminal's dimensions back, which is its own resize event and the
-      // shape of a loop. See `.term-host`'s `overflow` for the other half.
+      // Only act when the size *in cells* changed: a pane drag fires per pixel, and
+      // refitting to the size it already is emits another resize — that is the loop.
       const proposed = fit.proposeDimensions();
       if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return;
       if (proposed.cols === term.cols && proposed.rows === term.rows) return;
@@ -344,8 +316,7 @@ function TerminalView({
       // Only a shell this view started is a shell this view may end.
       if (!attach) void ptyKill(id);
     };
-    // Spawned once per session id. `root` at mount is the workspace the shell opens in;
-    // changing folders does not move a running shell, the same as any terminal.
+    // Once per session id: changing folders does not move a running shell, as anywhere.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 

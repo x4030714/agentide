@@ -1,32 +1,10 @@
-/**
- * Solve a theme's colours against its own worst-case composite, and print the CSS.
- *
- * The window is translucent, so a pane's effective background depends on the user's
- * wallpaper. PRODUCT.md fixes the rule: contrast is verified against the worst case, not
- * the nominal colour. A pane sits at 82% effective, so the worst case is that surface
- * composited over black (light themes) or over white (dark themes) -- which means a theme
- * that tints its surfaces has a *different* worst case, and colours solved for the
- * default one would not be safe in it.
- *
- * So nothing here is hand-tuned. A theme is a list of hues and a surface tint; this walks
- * lightness in OKLCH until each colour clears the floor against that theme's own
- * composite, and prints the result. "It passes" is then a fact, and adding a theme is a
- * few numbers rather than an afternoon with a contrast checker.
- *
- *   node scripts/solve-theme.mjs           # print the CSS
- *   node scripts/solve-theme.mjs --check   # verify the committed values still pass
- */
+/** Solve each theme's colours against its own worst-case composite and print the CSS. The
+ * window is translucent, so a pane's real background is the wallpaper. `--check` re-verifies. */
 
 import { readFileSync } from "node:fs";
 
-/**
- * What a pane composites to: `--ground` under `--surface`, both translucent.
- *
- * A theme may override it. An opaque theme sits at 1 and has no wallpaper under it, so
- * its worst case is one of its own flat greys -- which is not a special case to be worked
- * around but the same solve with the hard part removed. Every theme is emitted twice for
- * that reason: once as glass, and once at alpha 1 for the Transparency setting.
- */
+/** What a pane composites to: `--ground` under `--surface`. Every theme is emitted twice —
+ * as glass, and at alpha 1 — because the Transparency setting needs both. */
 const EFFECTIVE_ALPHA = 0.82;
 const INK_TARGET = 4.5;
 const ROLE_TARGET = 4.55; // Over the floor, so rounding to 8-bit cannot drop it under.
@@ -89,15 +67,8 @@ function worstCase(surfaceHex, darkMode, alpha = EFFECTIVE_ALPHA) {
   return rgbToHex(surface.map((c) => alpha * c + (1 - alpha) * wallpaper));
 }
 
-/**
- * The worst case for an opaque theme: whichever of its own greys gives text the least.
- *
- * There is no wallpaper to fear, but there are four surfaces and they are not the same
- * grey. Dark ink loses on the darkest of them and light ink loses on the lightest, so the
- * solve runs against that one and the other three come out with headroom. Solving against
- * `--surface` alone would leave the elevated menu -- the one surface that is deliberately
- * further from the ground -- a little under the floor.
- */
+/** The worst case for an opaque theme: whichever of its four greys gives text the least.
+ * Solving against `--surface` alone leaves the elevated menu under the floor. */
 function hardestGrey(hexes, darkMode) {
   return hexes.reduce((worst, hex) => {
     const worse = luminance(hexToRgb(hex)) > luminance(hexToRgb(worst));
@@ -105,13 +76,8 @@ function hardestGrey(hexes, darkMode) {
   });
 }
 
-/**
- * The most saturated colour of this hue that still clears `target` on `background`.
- *
- * Chroma drops only when the hue at that lightness leaves sRGB. Clipping instead would
- * shift the hue silently, and in a four-role system that means two roles drifting
- * towards each other until they stop being tellable apart.
- */
+/** The most saturated colour of this hue that still clears `target`. Chroma drops only
+ * when it leaves sRGB — clipping shifts the hue, and two roles then converge. */
 function solve(hue, background, { darkMode, target = ROLE_TARGET, chroma = 0.16 }) {
   const steps = 500;
   for (let step = 0; step <= steps; step += 1) {
@@ -137,40 +103,16 @@ const tint = (hex, percent) => {
 };
 
 // --- Themes ---------------------------------------------------------------------
-//
-// Four role hues plus the states, and the surface each mode is tinted with.
-//
-// Two constraints, and the second was learned the hard way. Within a palette the four
-// hues must sit far enough apart to stay tellable at a glance -- that is the only reason
-// they are colours rather than shapes. *Between* palettes, `sym` must differ, because it
-// is not just the symbol colour: it drives `--tint-accent`, which fills the prompt
-// bubble, and `--md-inline-code`, so it is the single most visible colour in the app.
-// The first cut gave three palettes a blue-ish `sym` and they looked identical where it
-// mattered most.
-//
-// The four themes named after well-known editor themes strain the second rule, because
-// two of them are cold by definition: `sym` runs 175 (Solarized cyan), 205 (Halide), 232
-// (Nord frost), 250 (VS Code), 257 (Quiet). Thirty degrees apart is close, and what keeps
-// them tellable is the surface each one lands on -- cream, near-black, blue-grey, flat
-// grey. Adding a sixth cold palette would break that, and the fix would be to move its
-// hue rather than to shade the surfaces towards each other.
-//
-// None of the four is a port. The hues are measured off the originals and then re-solved
-// here, so a value that would have failed the contrast floor moved instead of shipping;
-// `note` says so on each, because a palette file repeats its own claims forever.
+// Between palettes it is `sym` that must differ: it also drives `--tint-accent`, so three
+// blue-ish `sym`s made three palettes look identical. The named ones are re-solved, not ported.
 
 const THEMES = [
   {
     name: "quiet",
     label: "Quiet Instrument",
     note: "The default. Its glass values live in world.css; only the opaque set is here.",
-    /**
-     * The default palette, and the one theme whose translucent values are not generated:
-     * they are the base case in `world.css`, which is where the app with no preferences
-     * set gets its colours. What is missing there is the opaque set, so that is all this
-     * entry emits -- the Transparency setting has to work on the palette most people are
-     * on, and it cannot without this.
-     */
+    /** The default palette. Its translucent values are the base case in `world.css`, so
+     * only the opaque set is emitted here — Transparency needs it. */
     base: true,
     neutralHue: 264,
     light: { ground: "#f4f5f8", surface: "#ffffff", ink: "#1b1f27" },
@@ -185,11 +127,8 @@ const THEMES = [
     label: "VS Code",
     note: "Dark+ greys and its blue. Opaque, like the editor it is named after.",
     neutralHue: 250,
-    /**
-     * Opaque, and that is the whole character of it. Every other theme here is glass over
-     * the desktop; this one is the flat panel VS Code actually is, so there is no
-     * wallpaper to solve against and the surfaces are exactly the greys named below.
-     */
+    /** Opaque, which is the whole character of it: the flat panel VS Code actually is, so
+     * there is no wallpaper to solve against. */
     alpha: 1,
     light: { ground: "#f3f3f3", surface: "#ffffff", ink: "#3b3b3b" },
     // Dark Modern's own values: editor #1f1f1f, side bar #181818, text #cccccc.
@@ -239,12 +178,8 @@ const THEMES = [
     // violet, which is what 264 does at the low chroma `--ink-dim` is solved at.
     neutralHue: 250,
     light: { ground: "#e8ecf3", surface: "#f6f8fc", ink: "#2e3440" },
-    /**
-     * Darker than Polar Night's own #2e3440, and that is the one place this parts company
-     * with Nord. At 82% over a white wallpaper #2e3440 composites to a mid grey, and a
-     * role clearing 4.5:1 against *that* has to be nearly white -- the palette would lose
-     * its colour to pass its own floor. Dropping the base two steps keeps both.
-     */
+    /** Darker than Nord's own #2e3440: at 82% over white that composites to mid grey, and
+     * clearing 4.5:1 against it would bleach every role. */
     dark: { ground: "#171b23", surface: "#1d222c", ink: "#e2e8f2" },
     // Frost blue, sitting between #88c0d0 (217) and #81a1c1 (249).
     roles: { addr: 84, sym: 232, xref: 131, imm: 333 },
@@ -291,9 +226,8 @@ const THEMES = [
     // base02 #073642 composites too light under a white wallpaper; this is base03 pulled
     // down until the roles keep their chroma.
     dark: { ground: "#001a21", surface: "#04222a", ink: "#cfe0e0" },
-    // Cyan #2aa198 accent, pulled 12 degrees green off its measured 187 to stay clear of
-    // Halide's 205; amber #b58900 addresses. Green moves off its own 119 to 130, because
-    // at 119 it and the amber solve to two olives that are not tellable apart.
+    // Cyan pulled 12° green off its measured 187 to clear Halide's 205; green moves 119 →
+    // 130, because at 119 it and the amber solve to two olives you cannot tell apart.
     roles: { addr: 86, sym: 175, xref: 130, imm: 356 },
     states: { uncommitted: 279, error: 27, warn: 40, hint: 245 },
   },
@@ -317,15 +251,8 @@ function emit(theme, mode) {
     lines.push(`  --${token}: ${hex}; /* ${ratio.toFixed(2)} */`);
   };
 
-  /**
-   * The three surfaces, at the alphas the design calls for -- or flat, for an opaque
-   * theme.
-   *
-   * An opaque theme cannot express its steps as transparency, because there is nothing
-   * behind them to show through. It gets real greys instead: the ground as given, and
-   * the surfaces lifted off it, which is how a flat editor separates a sidebar from a
-   * document without a hairline doing all the work.
-  */
+  /** The three surfaces at their design alphas, or real greys for an opaque theme —
+   * nothing behind them to show through, so the steps have to be actual colours. */
   lines.push(`  --ground: ${opaque ? palette.ground : tint(palette.ground, darkMode ? 53 : 55)};`);
   lines.push(`  --surface: ${opaque ? palette.surface : tint(palette.surface, 62)};`);
   lines.push(`  --chrome: ${opaque ? chrome : tint(palette.surface, 70)};`);
@@ -379,15 +306,8 @@ const out = [];
 const chips = { light: {}, dark: {} };
 let blocks = 0;
 
-/**
- * The selector a theme's block hangs off.
- *
- * The default palette is spelled as the *absence* of `data-palette` -- `applyPalette`
- * removes the attribute rather than writing `quiet` -- so its blocks say `:not()` where
- * every other theme names itself. `[data-opaque="true"]` adds an attribute and with it a
- * point of specificity, so an opaque block beats the glass block it follows on both
- * counts and neither needs `!important`.
- */
+/** The selector a theme's block hangs off. The default palette is the *absence* of
+ * `data-palette`, and `[data-opaque]` adds specificity so it wins without `!important`. */
 function rootFor(theme, opaque) {
   const scope = opaque ? ':root[data-opaque="true"]' : ":root";
   return scope + (theme.base ? ":not([data-palette])" : `[data-palette="${theme.name}"]`);
@@ -408,9 +328,8 @@ function push(theme, opaque) {
     if (mode === "light") {
       out.push(root + " {", body, "}", "");
     } else {
-      // Two blocks, not one selector list: a media query cannot be a member of one.
-      // Both spellings are needed -- the explicit override, and system-dark with no
-      // override -- which is the same pattern the base palette in world.css uses.
+      // Two blocks, not one selector list: a media query cannot be a member of one. Both
+      // spellings are needed — the explicit override, and system-dark with none.
       out.push(root + '[data-theme="dark"] {', body, "}", "");
       out.push("@media (prefers-color-scheme: dark) {");
       out.push("  " + root + ':not([data-theme="light"]) {');
@@ -447,14 +366,8 @@ for (const theme of THEMES) {
   push(theme, true);
 }
 
-/**
- * The picker's chips, which are the one place a palette's colour is needed while a
- * *different* palette is showing -- so they cannot come from the tokens above.
- *
- * Each is that theme's own `--sym`, the value the palette is most identified by, in the
- * mode that is on screen. Generated for the same reason as everything else here: a chip
- * hand-picked in App.css is a colour nobody re-checked when the theme moved.
- */
+/** The picker's chips: the one place a palette's colour is needed while a *different*
+ * palette shows, so they cannot use the tokens above. Each is that theme's `--sym`. */
 out.push("/* --- Picker chips ----------------------------------------------------");
 out.push(" * Each palette's accent, for the row that offers it. App.css reads these;");
 out.push(" * a literal there would be a colour outside the solver's reach.");

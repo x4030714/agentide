@@ -56,23 +56,14 @@ export default function App() {
   const [changeCount, setChangeCount] = useState(0);
   /** Which view the sidebar shows. The activity bar sets it; nothing else does. */
   const [view, setView] = useState<SidebarView>("explorer");
-  /**
-   * Whether the sidebar is put away. Mirrored from the panel rather than driving it:
-   * dragging the separator collapses it too, and the rail must dim its icon for that as
-   * much as for Ctrl+B.
-   */
+  /** Mirrored from the panel, not driving it: dragging the separator collapses it too,
+   * and the rail has to dim its icon for that as much as for Ctrl+B. */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  /**
-   * Where the editor should put the cursor next. Carries a nonce because jumping twice to
-   * the same line is a real thing to ask for -- go to definition, scroll away, go again --
-   * and identical props would make the second one do nothing.
-   */
+  /** Where the cursor goes next. The nonce is why jumping twice to the same line works:
+   * identical props would make the second jump do nothing. */
   const [reveal, setReveal] = useState<RevealTarget | null>(null);
-  /**
-   * The past conversation the next prompt continues, or null for this session's own.
-   * Stays set once chosen: the sidecar adopts the id, so every following turn continues
-   * the same conversation, and a marker that cleared itself would say otherwise.
-   */
+  /** The conversation the next prompt continues, or null for this session's own. Stays
+   * set: the sidecar adopts the id, so every later turn continues the same one. */
   const [resumed, setResumed] = useState<string | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -85,10 +76,8 @@ export default function App() {
     sidebarRef.current?.expand();
   }, []);
 
-  /**
-   * The rail's own click. The active icon puts the sidebar away and brings it back, which
-   * is what every editor with an activity bar does; any other icon switches to it.
-   */
+  /** Clicking the active icon hides the sidebar and brings it back; any other switches
+   * to it. What every editor with an activity bar does. */
   const selectView = useCallback(
     (next: SidebarView) => {
       const panel = sidebarRef.current;
@@ -103,13 +92,8 @@ export default function App() {
     setTabs((previous) => openTab(previous, path));
   }, []);
 
-  /**
-   * A file the agent has just edited.
-   *
-   * Opened behind whatever you are reading. The editor following the agent is worth
-   * having, and before tabs it could only do that by replacing your file -- which made
-   * the useful feature the fastest way to lose your place.
-   */
+  /** A file the agent just edited, opened behind whatever you are reading. Before tabs
+   * this replaced your file, which made a useful feature the fastest way to lose it. */
   const openEdited = useCallback((path: WirePath) => {
     setTabs((previous) => openTab(previous, path, true));
   }, []);
@@ -140,11 +124,8 @@ export default function App() {
 
   const lsp = useLsp(workspace?.root ?? null, openAt);
 
-  /**
-   * The `ide_*` tools, answered here because this is the only component that holds all
-   * the pieces at once: the workspace root, the language servers and the ability to move
-   * the editor. The transcript owns the sidecar but knows none of that.
-   */
+  /** The `ide_*` tools live here: this is the only component holding the root, the
+   * language servers and the editor at once. The transcript owns the sidecar, not those. */
   const onToolCall = useCallback(
     (name: string, args: JsonObject): Promise<ToolResult> =>
       answerIdeTool(name, args, {
@@ -155,21 +136,14 @@ export default function App() {
     [workspace?.root, lsp.workspace, openAt],
   );
 
-  /**
-   * The same entry point the agent uses, reachable from the debug console.
-   *
-   * `scripts/smoke.mjs` calls it to exercise the language-server tools without spending
-   * a turn. That seam -- our client capabilities, the server's answer shape, the tool's
-   * formatting -- is not crossed by any unit test, and it is where this project's bugs
-   * keep being found. A hook is a cheap price for covering it.
-   */
+  /** The agent's own entry point, exposed for `scripts/smoke.mjs` to drive the LSP tools
+   * without spending a turn. No unit test crosses that seam, and the bugs live there. */
   useEffect(() => {
     (window as unknown as { __ideTool?: typeof onToolCall }).__ideTool = onToolCall;
   }, [onToolCall]);
 
-  // `null` when the turn is running without one -- a workspace whose checkpoint could not
-  // be taken. Stored as null rather than left alone, so the review queue compares against
-  // nothing instead of against a point two turns back.
+  // `null` when the checkpoint could not be taken. Stored rather than left alone, or the
+  // review queue would compare this turn against a point two turns back.
   const onTurnStart = useCallback((next: Checkpoint | null) => {
     setCheckpoint(next);
     setChangeCount(0);
@@ -204,14 +178,8 @@ export default function App() {
     if (picked) await open(picked);
   }, [open]);
 
-  /**
-   * The app's keyboard, in one table.
-   *
-   * Chords chosen to match what a person coming from any editor already has in their
-   * fingers: Ctrl+P for a file, Ctrl+B for the sidebar, Ctrl+` for the terminal. The
-   * number row moves focus between the four panes in the order they appear on screen,
-   * so the mapping is positional rather than something to memorise.
-   */
+  /** The whole keyboard in one table. Chords match what any editor already put in your
+   * fingers, and the number row is positional: panes in the order they appear. */
   useKeybindings(
     useMemo(
       () => [
@@ -319,11 +287,8 @@ export default function App() {
           transparency={transparency}
           onTransparency={setTransparency}
           onImported={(id) => {
-            // The imported conversation belongs in the transcript, which is where it is
-            // continued -- setting it as resumed makes that pane replay it. Sending the
-            // person to the Conversations list instead showed them a read-only copy of
-            // the thing they had just asked to carry on with, which is the wrong half.
-            // The list still needs re-reading, because the file is new.
+            // Set it resumed so the transcript replays it. Opening the Conversations list
+            // instead showed a read-only copy of the thing they asked to carry on with.
             setResumed(id);
             setReviewRevision((n) => n + 1);
             setSettingsOpen(false);
@@ -332,16 +297,8 @@ export default function App() {
         />
       )}
 
-      {/**
-       * The frame, left to right: the icon rail, the view it selects, the transcript, and
-       * the work column.
-       *
-       * The transcript is a permanent column and not a view on the rail, which is the one
-       * place this parts company with the editor it borrows its shape from. The agent
-       * leads and the editor is the surface it acts on; a transcript you have to summon
-       * is a transcript you consult, which is the arrangement every agentic editor
-       * already ships and the one this build exists to refuse.
-       */}
+      {/* Rail, its view, the transcript, the work column. The transcript is a permanent
+          column, not a rail view: one you have to summon is one you consult. */}
       <div className="workbench">
         <ActivityBar
           view={view}
@@ -359,12 +316,8 @@ export default function App() {
             panelRef={sidebarRef}
             onResize={(size) => setSidebarCollapsed(size.asPercentage <= 0)}
           >
-            {/**
-             * All four views stay mounted. Switching must not drop the tree's expanded
-             * folders or re-fetch a diff you were halfway through reading -- and the tree
-             * stops measuring itself while it is hidden, so a view nobody is looking at
-             * costs no rows. See `measure` in FileTree.
-             */}
+            {/* All four stay mounted: switching must not drop expanded folders or a diff
+                you were reading. Hidden trees stop measuring — see `measure` in FileTree. */}
             <div className="sidebar">
               <div className="sidebar-view" hidden={view !== "explorer"}>
                 <FileTree
@@ -400,14 +353,8 @@ export default function App() {
                   onResume={setResumed}
                 />
               </div>
-              {/**
-               * Mounted only when it is the view being shown, unlike the four above.
-               *
-               * The others are cheap and benefit from staying alive -- the tree keeps its
-               * scroll, the transcript its history. This one polls a directory once a
-               * second to draw its progress bars, and doing that for the whole session
-               * because it was opened once is a cost for nothing.
-               */}
+              {/* Mounted only while shown, unlike the four above: this one polls a
+                  directory every second, and paying that all session is for nothing. */}
               {view === "models" && (
                 <div className="sidebar-view">
                   <LocalModelsView root={workspace?.root ?? null} />
@@ -416,13 +363,8 @@ export default function App() {
             </div>
           </Panel>
           <Separator className="separator vertical" />
-          {/**
-           * The agent leads by reading order, not by out-measuring the editor. An earlier
-           * split gave the transcript 45% and left the editor ~79 columns — under
-           * rustfmt's default max_width of 100, so real Rust and C++ files scrolled
-           * sideways at the shipped default. Reading-order primacy already carries
-           * "agent leads"; taking columns off the primary language to restate it does not.
-           */}
+          {/* The agent leads by reading order, not width. At 45% the editor was ~79
+              columns — under rustfmt's max_width of 100, so real files scrolled sideways. */}
           <Panel id="transcript" defaultSize="35" minSize="20" collapsible>
             <TranscriptPane
               root={workspace?.root ?? null}

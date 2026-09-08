@@ -49,44 +49,24 @@ import type { Activity, Row } from "../lib/transcript";
 
 interface TranscriptProps {
   root: WirePath | null;
-  /**
-   * A checkpoint was taken; the turn that follows can be reverted to it.
-   *
-   * `null` when one could not be taken and the turn ran anyway. It has to be said rather
-   * than left unsaid: keeping the previous turn's checkpoint would leave the review queue
-   * measuring this turn's edits against a point two turns back, and reverting would undo
-   * work nobody asked to lose.
-   */
+  /** A checkpoint the next turn can revert to; `null` when one could not be taken. Said
+   * rather than left unsaid, or the review queue measures against a stale point. */
   onTurnStart: (checkpoint: Checkpoint | null) => void;
   /** The turn ended, so the review queue should re-read. */
   onTurnEnd: () => void;
-  /**
-   * Answer one `ide_*` call. Owned by the parent, which is what holds the editor and the
-   * language servers; this pane only knows when a call arrives.
-   */
+  /** Answer one `ide_*` call. The parent holds the editor and language servers; this
+   * pane only knows when a call arrives. */
   onToolCall: (name: string, args: JsonObject) => Promise<ToolResult>;
-  /**
-   * The agent is about to change this file, so show it.
-   *
-   * Watching an edit land is the reason to have an editor in an agent's IDE at all;
-   * the file already reloads from disk when the watcher reports it, so opening it is
-   * the whole of what was missing.
-   */
+  /** The agent is about to change this file, so show it. Watching an edit land is the
+   * reason to have an editor here at all; the watcher already handles reloading. */
   onAgentEdit: (path: WirePath) => void;
   /** The names `onToolCall` will answer. Anything else is answered by the Rust core. */
   hostTools: readonly string[];
-  /**
-   * A past conversation to continue instead of this session's own, chosen in the
-   * Conversations panel. Sent with every prompt: the sidecar adopts the id, so repeating
-   * it costs nothing, and dropping it after the first turn would branch the conversation
-   * without saying so.
-   */
+  /** A past conversation to continue, from the Conversations panel. Sent every prompt:
+   * the sidecar adopts it, and dropping it after turn one would branch silently. */
   resumeConversation: string | null;
-  /**
-   * The user started a new conversation. The parent clears whatever it was continuing:
-   * this pane owns the transcript, but which past conversation is being resumed is the
-   * parent's state.
-   */
+  /** A new conversation was started. The parent clears what it was resuming — this pane
+   * owns the transcript, the parent owns which conversation it continues. */
   onNewConversation: () => void;
 }
 
@@ -113,14 +93,8 @@ function remember(key: string, value: string | null) {
   }
 }
 
-/**
- * How long to wait for a checkpoint before running the turn without one.
- *
- * Generous on purpose. A real project with a large tree can legitimately take many
- * seconds, and timing that out would cost the safety net exactly where it is worth
- * most. This bounds the pathological case -- a drive root, where the walk is the whole
- * disk -- rather than trimming the normal one.
- */
+/** How long to wait for a checkpoint before running without one. Generous: this bounds
+ * the drive-root case, not the large-project case where the net is worth most. */
 const CHECKPOINT_MS = 30_000;
 
 function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
@@ -138,15 +112,8 @@ function newSessionId(): string {
   return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/**
- * The agent's turn, drawn as a function in a listing: an address column that never
- * renumbers, one addressed row per tool call, and a boundary rule closing each turn.
- *
- * The pane owns the sidecar's lifetime. It declares `hostPermissions: true` because it
- * renders an approval row, and it declares the `ide_*` tools its parent can answer --
- * anything outside that list is refused by the Rust core immediately, which is what keeps
- * an unimplemented tool from stalling a turn until the sidecar's timeout.
- */
+/** The agent's turn as a listing: addresses that never renumber, one row per tool call.
+ * Declares only the `ide_*` tools its parent answers; the core refuses the rest at once. */
 export function TranscriptPane({
   root,
   onTurnStart,
@@ -158,15 +125,12 @@ export function TranscriptPane({
   onNewConversation,
 }: TranscriptProps) {
   const [state, dispatch] = useReducer(reduce, undefined, initialState);
-  /**
-   * What the sidecar has read, plus anything Settings has written since it last looked.
-   * See `pending-providers.ts`; the extra entries drop out on the first turn.
-   */
+  /** What the sidecar has read, plus what Settings wrote since. See
+   * `pending-providers.ts`; the extras drop out on the first turn. */
   const pendingProviders = usePendingProviders();
   const providers = mergeProviders(state.providers, pendingProviders);
-  // Once the sidecar has read an entry for itself, stop holding a copy of it. In an effect
-  // rather than in the merge: a render that wrote to the store would be reading and writing
-  // the same state, which React may do twice.
+  // Drop our copy once the sidecar has read it. In an effect, not the merge: a render that
+  // wrote to the store would read and write the same state, which React may do twice.
   useEffect(() => {
     settleProviders(state.providers);
   }, [state.providers]);
@@ -198,12 +162,8 @@ export function TranscriptPane({
   const toolCallRef = useRef(onToolCall);
   const hostToolsRef = useRef(hostTools);
   const onAgentEditRef = useRef(onAgentEdit);
-  /**
-   * The memory vault, once Rust has resolved it. A ref rather than state for the same
-   * reason the callbacks above are: the event handler is installed on mount and must not
-   * be rebuilt when this arrives. `null` until then, which only means an early note could
-   * still open -- the fetch is one IPC call and beats the first turn.
-   */
+  /** The memory vault, once Rust resolves it. A ref, not state: the handler is installed
+   * on mount and must not be rebuilt when this lands. */
   const vaultRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -219,14 +179,8 @@ export function TranscriptPane({
       cancelled = true;
     };
   }, []);
-  /**
-   * Draw the conversation being continued, rather than only telling the SDK about it.
-   *
-   * Keyed on the id alone: re-reading on every render would fight the live rows, and the
-   * only moment a replay is wanted is when the conversation being continued changes. A
-   * read that fails leaves the transcript as it was -- the resume itself still works,
-   * since that is the SDK's business and not this pane's.
-   */
+  /** Draw the conversation being continued, not just tell the SDK about it. Keyed on the
+   * id alone — re-reading each render would fight the live rows. */
   useEffect(() => {
     if (!resumeConversation) return;
     let cancelled = false;
@@ -261,9 +215,8 @@ export function TranscriptPane({
       }
       if (event.t === "done" || event.t === "exited") onTurnEnd();
       if (event.t === "tool_call") {
-        // Every call must be answered, including the ones that fail: an unanswered
-        // `tool_call` leaves the turn waiting on the sidecar's timeout with no sign of
-        // why. `answerIdeTool` already catches its own errors; this catches the rest.
+        // Every call gets an answer, failures included: an unanswered `tool_call` leaves
+        // the turn on the sidecar's timeout with no sign of why.
         void toolCallRef.current(event.name, event.args)
           .catch((err) => ({ ok: false, error: errorMessage(err) }) as ToolResult)
           .then((result) => agentToolReply(event.id, result))
@@ -279,8 +232,7 @@ export function TranscriptPane({
       cancelled = true;
       void agentStop();
     };
-    // `onTurnEnd` is a stable callback from the parent; re-subscribing on every render
-    // would restart the sidecar.
+    // `onTurnEnd` is stable; re-subscribing every render would restart the sidecar.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -320,19 +272,8 @@ export function TranscriptPane({
     pinned.current = true;
     dispatch({ t: "prompt_submitted", text });
 
-    /**
-     * Checkpoint first, prompt second, and never the other way round: a turn that began
-     * before its checkpoint is a turn with nothing to go back to.
-     *
-     * A checkpoint that cannot be taken no longer stops the turn, though. Some
-     * workspaces cannot have one -- a drive root cannot hold `.agentide` without
-     * elevation, and a huge tree takes long enough that waiting is its own failure --
-     * and refusing to run there made the app useless in a place someone reasonably
-     * wants to work. The guarantee is not dropped quietly, which was the real objection:
-     * the turn says on its own line that nothing in it can be reverted, and the parent
-     * is told there is no checkpoint so the review queue does not measure against a
-     * stale one.
-     */
+    /** Checkpoint first, prompt second, or the turn has nothing to go back to. One that
+     * cannot be taken says so on its own row rather than blocking or going quiet. */
     void (async () => {
       try {
         onTurnStart(await withTimeout(checkpointCreate(text.slice(0, 72)), CHECKPOINT_MS));
@@ -351,10 +292,8 @@ export function TranscriptPane({
         // One menu value carries both halves of the choice; see `model-menu.ts`.
         const chosen = decodeModel(model);
         if (chosen.provider) {
-          // Started here rather than in the sidecar so it lands in a terminal tab: a 30B
-          // model takes tens of seconds to load, and that wait is only tolerable when you
-          // can see it happening. The sidecar still holds the gate and will refuse the
-          // turn if the backend never answers.
+          // Started here, not in the sidecar, so it lands in a visible terminal tab — a
+          // 30B takes tens of seconds. The sidecar still gates the turn on it answering.
           const backend = state.providers.find((entry) => entry.key === chosen.provider);
           if (backend) {
             const start = await ensureProvider(backend, root);
@@ -386,13 +325,8 @@ export function TranscriptPane({
     })();
   }, [draft, running, state.status, state.providers, sessionId, model, effort, mode, promptMode, root, resumeConversation, onTurnStart]);
 
-  /**
-   * Start over: a new session id, an empty transcript, nothing resumed.
-   *
-   * The sidecar is left running. It holds no per-conversation state of its own -- the
-   * SDK's transcript is keyed by session id and a new id is simply a new one -- so
-   * restarting it would cost a second of startup to achieve nothing.
-   */
+  /** Start over: new session id, empty transcript, nothing resumed. The sidecar keeps
+   * running — it holds no per-conversation state, so restarting buys nothing. */
   const newConversation = useCallback(() => {
     setSessionId(newSessionId());
     setDraft("");
@@ -441,10 +375,8 @@ export function TranscriptPane({
     <div className="pane transcript">
       <div className="pane-header">
         <span className="legend">Transcript</span>
-        {/**
-         * One live slot. Thinking outranks the model name because it is the thing that
-         * changes; when nothing is happening the header says what it will run on.
-         */}
+        {/* One live slot. Thinking outranks the model name because it is what changes;
+            idle, the header says what the next turn will run on. */}
         {state.thinking !== null ? (
           <span className="measure is-thinking">thinking · {formatTokens(state.thinking)}</span>
         ) : running ? (
@@ -492,14 +424,8 @@ export function TranscriptPane({
             onAnswer={answer}
           />
         ))}
-        {/**
-         * The answer as it arrives, drawn after the last real row and replaced by one the
-         * moment the message lands. Deliberately not a `Row`: giving it an address and a
-         * turn would put a provisional thing into the structure everything else indexes
-         * by, and every reducer would have to know it might not be real.
-         *
-         * Markdown, like the row it becomes, so the text does not reflow when it settles.
-         */}
+        {/* The answer as it arrives, replaced by a real row when the message lands. Not
+            a `Row` — nothing provisional goes into the structure everything indexes by. */}
         {state.streaming !== null && state.streaming !== "" && (
           <div className="row is-text is-streaming">
             <div className="t-text">
@@ -539,15 +465,8 @@ export function TranscriptPane({
   );
 }
 
-/**
- * Memoised, and not as a micro-optimisation.
- *
- * The reducer returns a new `rows` array on every agent event, so an unmemoised row
- * re-renders every row in the transcript for each of the hundreds of events in a turn --
- * quadratic in the length of the run, which is exactly the case this pane exists for.
- * `replace()` only ever swaps the one row it changes, so identity comparison prunes all
- * but that row, and the callbacks below are `useCallback`-stable for the same reason.
- */
+/** Memoised, and not as a micro-optimisation: the reducer returns a fresh `rows` on every
+ * event, so unmemoised this is quadratic in the length of the run. */
 const TranscriptRow = memo(function TranscriptRow({
   row,
   opensTurn,
@@ -667,17 +586,8 @@ const TranscriptRow = memo(function TranscriptRow({
   }
 });
 
-/**
- * One tool call, and -- when the call changed a file -- what it changed.
- *
- * The diff is built from the call's *input*, so it is ready as the row is drawn and it
- * survives a call that was denied. What used to sit under an edit was the tool's result
- * text, "File created successfully at: ...", which says nothing about the change it is
- * reporting.
- *
- * The summary line is always visible; the body waits for an expand, because that is when
- * reading the file back is worth an IPC call.
- */
+/** One tool call, and what it changed. The diff comes from the call's *input*, so it is
+ * ready as the row draws and survives a denied call. The body waits for an expand. */
 function ToolRow({
   row,
   className,
@@ -691,21 +601,12 @@ function ToolRow({
   onToggle: (addr: number) => void;
   onAnswer: (id: string, decision: "allow" | "deny") => void;
 }) {
-  // Memoised on the row's own fields: the reducer replaces this row when the result lands
-  // and again on every progress tick, and rediffing a `Write` of a whole file on each of
-  // those is work with no output. `input` is only kept for a mutating call, so every
-  // other row settles this with a property lookup.
+  // Memoised on the row's own fields: this row is replaced on every progress tick, and
+  // rediffing a whole-file `Write` each time is work with no output.
   const diff = useMemo(() => toolDiff(row.name, row.input), [row.name, row.input]);
 
-  /**
-   * The hunks placed in the file, once it has been read back; `null` until then.
-   *
-   * Read on first expand and kept: doing it when the row arrives is a round trip per
-   * edited file for a body most rows never open. A failed read is cached as the *unplaced*
-   * hunks rather than retried -- `locateHunks` already degrades one hunk at a time when an
-   * anchor has moved, and a diff numbered from 1 is still the diff. Withholding it because
-   * the file could not be read would hide the change over the least interesting half of it.
-   */
+  /** Hunks placed in the file, read on first expand and kept — doing it on arrival is a
+   * round trip per file for a body most rows never open. A failed read caches unplaced. */
   const [hunks, setHunks] = useState<DiffHunk[] | null>(null);
 
   useEffect(() => {
@@ -733,11 +634,8 @@ function ToolRow({
     <>
       <div className={className}>
         <span className="t-addr">{formatAddr(row.addr)}</span>
-        {/**
-         * A div, not a button: the approval controls nest inside this row, and a
-         * button inside a button is invalid markup. Expansion is wired by hand so
-         * the row still answers to the keyboard when there is detail to show.
-         */}
+        {/* A div, not a button: approval controls nest here and a button inside a button
+            is invalid markup. Keyboard expansion is wired by hand instead. */}
         <div
           className={[
             "t-tool",
@@ -831,14 +729,8 @@ const DIFF_TAB_SIZE = 2;
 
 const SIGNS: Record<LineKind, string> = { context: " ", add: "+", remove: "-" };
 
-/**
- * The edit itself: a gutter of line numbers, the sign, and the code -- removals and
- * additions on their roles' grounds, context plain.
- *
- * Colour comes from `monaco.editor.colorize`, which is already loaded and already carries
- * the theme the editor is drawn with. A highlighting library would be a second set of
- * colours to keep true to the palette, and this world does not choose colours twice.
- */
+/** The edit itself: line numbers, sign, code. Coloured by `monaco.editor.colorize`, which
+ * is already loaded and already themed — a second highlighter is a second palette. */
 function DiffBody({ path, hunks }: { path: string; hunks: DiffHunk[] }) {
   const appearance = useResolvedAppearance();
   const [painted, setPainted] = useState<string[][] | null>(null);
@@ -848,10 +740,8 @@ function DiffBody({ path, hunks }: { path: string; hunks: DiffHunk[] }) {
     // Nothing Monaco tokenizes. The uncoloured lines below are the whole diff already.
     if (language === null) return;
 
-    // `colorize` paints with whatever theme was last set globally, and the editor pane is
-    // what sets it -- with no file open it has never mounted, and the diff would come back
-    // in Monaco's default light theme over a dark pane. Setting the id the editor would
-    // set is idempotent when it has.
+    // `colorize` uses whatever theme was last set globally, and the editor pane sets it.
+    // With no file ever opened the diff would come back light on a dark pane.
     monaco.editor.setTheme(themeFor(appearance));
 
     let cancelled = false;
@@ -891,13 +781,8 @@ function DiffBody({ path, hunks }: { path: string; hunks: DiffHunk[] }) {
                 {html === undefined ? (
                   <code className="t-dtext">{line.text}</code>
                 ) : (
-                  /**
-                   * Monaco's own output, and the one place in the transcript that inserts
-                   * HTML. It escapes the text it renders and emits nothing but `mtk*`
-                   * spans, so a file's contents cannot become markup on the way through --
-                   * which is what `Markdown` refuses to risk with a model's prose, where
-                   * the text really is the untrusted thing.
-                   */
+                  /* Monaco's own output, and the only HTML this pane inserts. It escapes
+                     what it renders and emits nothing but `mtk*` spans. */
                   <code className="t-dtext" dangerouslySetInnerHTML={{ __html: html }} />
                 )}
               </div>
@@ -909,23 +794,13 @@ function DiffBody({ path, hunks }: { path: string; hunks: DiffHunk[] }) {
   );
 }
 
-/**
- * What the agent is doing, while it is doing it.
- *
- * Above the composer rather than in the pane header: this is read while waiting, and
- * waiting happens with your eyes on the thing you just typed into. The header keeps its
- * one-word version for when the transcript is scrolled away.
- *
- * The elapsed clock is the point of the whole line. A tool name tells you what is
- * happening; a number climbing past thirty seconds is what tells you something is wrong,
- * and it is the only signal here that distinguishes slow from hung.
- */
+/** What the agent is doing, above the composer because that is where you are looking
+ * while waiting. The elapsed clock is the point: it is what separates slow from hung. */
 function ActivityLine({ activity, startedAt }: { activity: Activity; startedAt: number }) {
   const [now, setNow] = useState(() => Date.now());
 
-  // One interval, only while a turn is live, and it stops when this unmounts. A second
-  // clock ticking beside the SDK's own `tool_progress` would be two answers to one
-  // question.
+  // One interval, only while a turn is live. A second clock beside the SDK's own
+  // `tool_progress` would be two answers to one question.
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -972,14 +847,8 @@ function Composer({
   // the scrollback instead would put the cursor nowhere useful.
   useFocusTarget("composer", () => ref.current?.focus());
 
-  /**
-   * The commands worth offering for what has been typed so far.
-   *
-   * Only while the draft is a single `/word` with no space after it: past that the user
-   * is writing the command's arguments, and a menu over the top of that is in the way.
-   * Aliases match too but are not listed, because `/cost` and `/usage` being two rows
-   * for one command makes the list longer without making it more useful.
-   */
+  /** Commands worth offering for what is typed. Only while the draft is one `/word` with
+   * no space — past that these are arguments, and a menu over them is in the way. */
   const matches = useMemo(() => {
     const typed = /^\/(\S*)$/.exec(value);
     if (!typed) return [];

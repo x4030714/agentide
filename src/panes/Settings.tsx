@@ -63,18 +63,8 @@ const TRANSPARENCIES: Array<{ id: Transparency; label: string; note: string }> =
   },
 ];
 
-/**
- * Settings, as an overlay rather than a pane.
- *
- * A pane would cost a permanent tab for something opened a few times a month, and the
- * panes are the work. This is a mode: it takes the keyboard, Escape leaves, and nothing
- * behind it moves.
- *
- * Dense on purpose. Every control here is one this machine's only user already knows the
- * meaning of, so the space goes to the lists rather than to explaining the switches. The
- * one thing that does get a sentence is import, because what it does to a transcript is
- * not guessable from the word.
- */
+/** An overlay, not a pane: a permanent tab is too much for something opened monthly. A
+ * mode — it takes the keyboard and Escape leaves. Dense, because the user knows these. */
 export function Settings({
   root,
   appearance,
@@ -119,13 +109,8 @@ export function Settings({
         </header>
 
         <div className="settings-body">
-          {/**
-           * A list of sections rather than one long scroll.
-           *
-           * Three sections was already more than a screen, and reaching Import meant
-           * scrolling past the whole of Memory. One panel at a time, and the nav says what
-           * else is here without showing it.
-           */}
+          {/* Sections rather than one scroll: three was already past a screen, and
+              reaching Import meant scrolling the whole of Memory. */}
           <nav className="settings-nav" aria-label="Settings sections">
             {SECTIONS.map((entry) => (
               <button
@@ -209,16 +194,8 @@ export function Settings({
   );
 }
 
-/**
- * What the agent remembers between sessions, and where it keeps it.
- *
- * Read-only on purpose. There is no text input anywhere in Settings and no place to
- * persist one, and the path has a working default — so the section says where the
- * override lives instead of growing an editor for a value that is changed once.
- *
- * The counting is one directory walk that stats and never opens a file, which is what
- * makes it cheap enough to run on open.
- */
+/** What the agent remembers, and where. Read-only: the path has a working default, so
+ * this names the override rather than growing an editor for a value set once. */
 function MemorySection() {
   const [vault, setVault] = useState<MemoryVault | null>(null);
   const [stats, setStats] = useState<MemoryStats | null>(null);
@@ -231,9 +208,8 @@ function MemorySection() {
         const found = await memoryVault();
         if (cancelled) return;
         setVault(found);
-        // Seeded from here rather than at startup: this is the first place the folder is
-        // named, so it must exist by the time anyone clicks Reveal or opens Obsidian on
-        // it. Seeding never overwrites, so running it on every open costs a stat.
+        // Seeded here, not at startup: this is the first place the folder is named, so it
+        // must exist before Reveal is clicked. Never overwrites, so it costs a stat.
         await memorySeed(found.vault);
         const counted = await memoryStats(found.vault);
         if (!cancelled) setStats(counted);
@@ -307,14 +283,8 @@ function MemorySection() {
   );
 }
 
-/**
- * Every project Claude Code has transcripts for, and a way to bring one here.
- *
- * The two listings are separate calls because they cost different amounts. The projects
- * list reads the head of one file per directory; the conversations in a directory cost a
- * full scan of every transcript in it, and the biggest directory on this machine is 182 MB
- * over 79 files. So a directory is only scanned once it is expanded.
- */
+/** Every project with transcripts, and a way to import one. Two calls because they cost
+ * differently: the biggest directory here is 182 MB, so it is scanned only on expand. */
 function ImportSection({
   root,
   onImported,
@@ -503,13 +473,8 @@ function ImportSection({
   );
 }
 
-/**
- * Is this transcript's `cwd` the workspace that is open?
- *
- * The record's `cwd` is native — `C:\a\b` — and the workspace root is a `WirePath`, so the
- * two never match as written. Rust normalizes properly; this only has to be right enough
- * to label a row, so it does the same three things `WirePath` does and no more.
- */
+/** Is this transcript's `cwd` the open workspace? The record's is native and the root is a
+ * `WirePath`, so they never match as written. Right enough to label a row. */
 function sameWorkspace(cwd: string, root: string | null): boolean {
   if (!root) return false;
   const shape = (path: string) =>
