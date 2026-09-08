@@ -745,3 +745,75 @@ describe("memory recalled into a turn", () => {
     expect(run(recall([{ scope: "personal" }])).rows).toEqual([]);
   });
 });
+
+// --- streaming ------------------------------------------------------------------------
+
+/** One raw stream event, wrapped the way every other event reaches the reducer. */
+function streamEvent(event: unknown) {
+  return { t: "event" as const, sessionId: "s1", msg: { type: "stream_event", event } };
+}
+
+/** The finished message that a preview is replaced by. */
+function assistantText(text: string) {
+  return assistant({ type: "text", text });
+}
+
+const textDelta = (text: string) =>
+  streamEvent({ type: "content_block_delta", delta: { type: "text_delta", text } });
+const textStart = () =>
+  streamEvent({ type: "content_block_start", content_block: { type: "text" } });
+
+describe("the answer as it arrives", () => {
+  it("shows text before the message carrying it lands", () => {
+    // The whole point: an answer that takes twenty seconds should not be twenty seconds
+    // of blank pane.
+    let state = reduce(initialState(), textStart());
+    state = reduce(state, textDelta("Hello"));
+    state = reduce(state, textDelta(", world"));
+    expect(state.streaming).toBe("Hello, world");
+    expect(state.rows).toHaveLength(0);
+  });
+
+  it("draws nothing twice when the message finally lands", () => {
+    // The preview and the row are the same words; showing both would be the answer
+    // printed twice.
+    let state = reduce(initialState(), textStart());
+    state = reduce(state, textDelta("done"));
+    state = reduce(state, assistantText("done"));
+    expect(state.streaming).toBeNull();
+    expect(state.rows.filter((row) => row.kind === "text")).toHaveLength(1);
+  });
+
+  it("gives the same transcript whether or not a single delta arrived", () => {
+    // The property that makes this safe on a surface that already rendered correctly: a
+    // dropped, malformed or missing delta costs a preview, never a wrong transcript.
+    const withStream = reduce(
+      reduce(reduce(initialState(), textStart()), textDelta("partial")),
+      assistantText("the whole answer"),
+    );
+    const without = reduce(initialState(), assistantText("the whole answer"));
+    expect(withStream.rows).toEqual(without.rows);
+  });
+
+  it("starts a second block over rather than running the two together", () => {
+    // Two text blocks in one message are separate paragraphs. Concatenating them would
+    // show a sentence that was never written.
+    let state = reduce(initialState(), textStart());
+    state = reduce(state, textDelta("first"));
+    state = reduce(state, textStart());
+    state = reduce(state, textDelta("second"));
+    expect(state.streaming).toBe("second");
+  });
+
+  it("ignores an event that is not text", () => {
+    // Thinking has its own live measure, and a tool call cannot be drawn until its
+    // arguments are whole -- a half-parsed path is worse than a pause.
+    let state = reduce(initialState(), textStart());
+    state = reduce(state, streamEvent({ type: "content_block_delta", delta: { type: "thinking_delta", thinking: "hm" } }));
+    expect(state.streaming).toBe("");
+  });
+
+  it("survives an event with nothing in it", () => {
+    expect(reduce(initialState(), streamEvent(undefined)).streaming).toBeNull();
+  });
+});

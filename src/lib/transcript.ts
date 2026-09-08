@@ -245,6 +245,15 @@ export interface TranscriptState {
    */
   thinking: number | null;
   /**
+   * The answer as it arrives, before the message carrying it does.
+   *
+   * A preview and nothing more. The final `assistant` message is still what becomes a
+   * row, and it clears this -- so a dropped, malformed or missing delta costs a few
+   * seconds of blank screen and never a wrong transcript. That property is the whole
+   * reason streaming is safe to add to a surface that already renders correctly.
+   */
+  streaming: string | null;
+  /**
    * When the running turn began, for the elapsed clock beside the activity line.
    *
    * Wall clock rather than a tick count: the number has to survive the pane
@@ -320,6 +329,7 @@ export function initialState(): TranscriptState {
     turn: 0,
     turnClosed: false,
     thinking: null,
+    streaming: null,
     turnStartedAt: 0,
     models: [],
     providers: [],
@@ -712,10 +722,10 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
     case "done":
       // `result` already drew this turn's close, with more detail than `done` carries.
       if (state.turnClosed && !action.error) {
-        return { ...state, status: "ready", thinking: null };
+        return { ...state, status: "ready", thinking: null, streaming: null };
       }
       return push(
-        { ...state, status: "ready", turnClosed: true, thinking: null },
+        { ...state, status: "ready", turnClosed: true, thinking: null, streaming: null },
         (addr, turn) => ({
           kind: "turn",
           addr,
@@ -740,7 +750,7 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
             ? { ...row, status: "deny" as const, source: "host" as const }
             : row,
       );
-      return push({ ...state, rows, status: "exited", thinking: null }, (addr, turn) => ({
+      return push({ ...state, rows, status: "exited", thinking: null, streaming: null }, (addr, turn) => ({
         kind: "notice",
         addr,
         turn,
@@ -762,8 +772,9 @@ function reduceSdk(state: TranscriptState, msg: JsonObject): TranscriptState {
   if (type === "user") return reduceUser(state, msg);
   if (type === "result") return reduceResult(state, msg);
   if (type === "tool_progress") return reduceProgress(state, msg);
-  // stream_event and the two dozen remaining variants carry nothing this surface
-  // draws. Dropping them is deliberate: an unknown variant must never become a row.
+  if (type === "stream_event") return reduceStream(state, msg);
+  // The two dozen remaining variants carry nothing this surface draws. Dropping them is
+  // deliberate: an unknown variant must never become a row.
   return state;
 }
 
@@ -923,9 +934,33 @@ function readMcpServers(value: unknown, tools: string[]): McpServerRow[] | undef
   return rows;
 }
 
+/**
+ * The answer, a few characters at a time.
+ *
+ * Only text deltas, and only into `streaming`. Thinking already has its own live measure
+ * and tool calls cannot be drawn until their arguments are whole -- a half-parsed path is
+ * worse than a pause. So this previews the one thing that reads correctly half-written.
+ *
+ * A new text block resets rather than appends: two blocks in one message are separate
+ * paragraphs, and running them together would show a sentence that never existed.
+ */
+function reduceStream(state: TranscriptState, msg: JsonObject): TranscriptState {
+  const event = msg.event as { type?: string; delta?: { type?: string; text?: string }; content_block?: { type?: string } } | undefined;
+  if (!event) return state;
+  if (event.type === "content_block_start") {
+    return event.content_block?.type === "text" ? { ...state, streaming: "" } : state;
+  }
+  if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+    const text = event.delta.text ?? "";
+    return text ? { ...state, streaming: (state.streaming ?? "") + text } : state;
+  }
+  return state;
+}
+
 function reduceAssistant(state: TranscriptState, msg: JsonObject): TranscriptState {
   // Content means the reasoning for this step produced something; stop counting.
-  let next: TranscriptState = { ...state, thinking: null };
+  // The message that was being previewed has arrived; the preview is now the row.
+  let next: TranscriptState = { ...state, thinking: null, streaming: null };
 
   if (typeof msg.error === "string") {
     next = push(next, (addr, turn) => ({
@@ -993,7 +1028,7 @@ function reduceUser(state: TranscriptState, msg: JsonObject): TranscriptState {
 }
 
 function reduceResult(state: TranscriptState, msg: JsonObject): TranscriptState {
-  return push({ ...state, turnClosed: true, thinking: null }, (addr, turn) => ({
+  return push({ ...state, turnClosed: true, thinking: null, streaming: null }, (addr, turn) => ({
     kind: "turn",
     addr,
     turn,

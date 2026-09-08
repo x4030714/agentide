@@ -71,3 +71,35 @@ test("every name the CLI answers is a real tool", () => {
     );
   }
 });
+
+/** Whether the built server asks for its tools to sit in the prompt. */
+function loaded(server: unknown): boolean {
+  const registered = (server as { instance?: { _registeredTools?: Record<string, { _meta?: Record<string, unknown> }> } })
+    .instance?._registeredTools;
+  const first = Object.values(registered ?? {})[0];
+  return first?._meta?.["anthropic/alwaysLoad"] === true;
+}
+
+test("the tools sit in the prompt by default, which is Anthropic", () => {
+  // Measured: loaded costs 4,199 cached tokens and a 6.5s turn; deferred costs 492 tokens
+  // and 8-9s, because the model spends a ToolSearch finding them. Cached tokens are nearly
+  // free after the first turn, so paying two seconds a turn to save them is backwards.
+  assert.equal(loaded(createIdeServer(silentLink(), "s-1")), true);
+});
+
+test("a local backend defers them instead", () => {
+  // There is no prompt cache off Anthropic, so those 4,199 tokens are prefill compute on
+  // every turn -- including the ones that touch no tool -- and 5% of the 64k window
+  // `contextFor` floors at. There the round trip is the cheaper half.
+  assert.equal(loaded(createIdeServer(silentLink(), "s-1", undefined, false)), false);
+});
+
+test("deferring changes what is loaded, never what is declared", () => {
+  // The saving must come out of the prompt, not out of the model's reach: a tool that is
+  // deferred is still findable and callable, and one that is missing is gone. Verified
+  // live -- two runs on a turn that could only be answered by calling `ide_run` issued a
+  // ToolSearch, found it, and called it.
+  const loadedNames = declared(createIdeServer(silentLink(), "s-1", undefined, true));
+  const deferredNames = declared(createIdeServer(silentLink(), "s-1", undefined, false));
+  assert.deepEqual(deferredNames.sort(), loadedNames.sort());
+});

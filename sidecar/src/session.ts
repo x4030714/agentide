@@ -544,7 +544,13 @@ export class Session {
     // One `agentide` server per query, not per session: the SDK connects the instance it
     // is handed when the query is constructed, and handing a closed query's server to the
     // next one is not a state this has any reason to explore.
-    const ide = createIdeServer(this.#link, this.#sessionId, this.#answers);
+    // Loaded on Anthropic, deferred on a local backend. The prompt cache is what decides
+    // it: cached, these fifteen descriptions are nearly free and worth the two seconds a
+    // tool search costs; uncached, they are prefill on every turn. Measured both ways --
+    // see `alwaysLoad` in `ide-tools.ts`. Per query, not per turn, which is what makes it
+    // follow the provider: `queryFingerprint` carries the provider, so changing backend
+    // rebuilds and this is decided again.
+    const ide = createIdeServer(this.#link, this.#sessionId, this.#answers, !shape.provider);
     const queue = new PromptQueue();
     const running = this.#start({
       prompt: queue.stream(),

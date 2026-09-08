@@ -21,7 +21,7 @@ import { monaco, themeFor } from "../lib/monaco-setup";
 import { errorMessage } from "../lib/protocol";
 import { isEditMode, modeOptions } from "../lib/editmode";
 import type { EditMode } from "../lib/editmode";
-import { isPromptMode, readTunedPrompt } from "../lib/promptmode";
+import { isPromptMode, readPromptAppend, readTunedPrompt } from "../lib/promptmode";
 import type { PromptMode } from "../lib/promptmode";
 import type {
   AgentEvent,
@@ -347,7 +347,7 @@ export function TranscriptPane({
       try {
         // Read now, not at mount: the file is meant to be iterated on, and a cached
         // copy would make editing it silently do nothing until a restart.
-        const append = promptMode === "tuned" ? await readTunedPrompt(root) : null;
+        const append = await readPromptAppend(promptMode, root);
         // One menu value carries both halves of the choice; see `model-menu.ts`.
         const chosen = decodeModel(model);
         if (chosen.provider) {
@@ -375,6 +375,9 @@ export function TranscriptPane({
           ...(chosen.provider ? { provider: chosen.provider } : {}),
           ...(effort ? { effort } : {}),
           ...(append ? { systemPromptAppend: append } : {}),
+          // The answer is drawn as it arrives rather than when it is finished; see
+          // `streaming` in `transcript.ts` for why that cannot change what is drawn.
+          includePartialMessages: true,
           ...(resumeConversation ? { resumeConversation } : {}),
         });
       } catch (err) {
@@ -489,6 +492,21 @@ export function TranscriptPane({
             onAnswer={answer}
           />
         ))}
+        {/**
+         * The answer as it arrives, drawn after the last real row and replaced by one the
+         * moment the message lands. Deliberately not a `Row`: giving it an address and a
+         * turn would put a provisional thing into the structure everything else indexes
+         * by, and every reducer would have to know it might not be real.
+         *
+         * Markdown, like the row it becomes, so the text does not reflow when it settles.
+         */}
+        {state.streaming !== null && state.streaming !== "" && (
+          <div className="row is-text is-streaming">
+            <div className="t-text">
+              <Markdown source={state.streaming} />
+            </div>
+          </div>
+        )}
       </div>
 
       <RunControls

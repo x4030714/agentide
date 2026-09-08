@@ -33,3 +33,6 @@ dist-ssr
 
 # Staged into the bundle by scripts/stage-sidecar.mjs; a copy of the Node runtime.
 src-tauri/binaries/
+
+# Scratch space for review passes, not part of the project.
+.review-tmp/

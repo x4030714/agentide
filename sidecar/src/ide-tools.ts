@@ -82,7 +82,12 @@ async function callHost(
  * session id, which is what lets the host attribute a `tool_call` to the transcript that
  * caused it and cancel it when that session is interrupted.
  */
-export function createIdeServer(link: HostLink, sessionId: string, answers?: readonly string[]) {
+export function createIdeServer(
+  link: HostLink,
+  sessionId: string,
+  answers?: readonly string[],
+  alwaysLoad = true,
+) {
   const proxy = (name: string, args: JsonObject) => callHost(link, sessionId, name, args);
 
   const ideOpen = tool(
@@ -527,20 +532,36 @@ export function createIdeServer(link: HostLink, sessionId: string, answers?: rea
     version: "0.1.0",
     instructions: INSTRUCTIONS,
     /**
-     * Load these into the prompt rather than hiding them behind tool search.
+     * Whether these fifteen sit in the prompt or behind tool search. On by default,
+     * and `session.ts` turns it off for a local backend.
      *
-     * Not an optimisation -- without it the tools do not reach the model at all. MCP
-     * startup is non-blocking by default, so at the moment the first turn's prompt is
-     * built this server has not connected yet, its tools are not in the search index,
-     * and a model looking for them by exact name finds nothing. The observed symptom is
-     * an agent that reasons about `ide_definition`, cannot find it, and falls back to
-     * Grep -- with no error anywhere to say why.
+     * It used to be unconditional, because without it the tools did not reach the model
+     * at all: MCP startup is non-blocking, so at the moment the first prompt was built
+     * this server had not connected, its tools were not in the search index, and a model
+     * looking for `ide_definition` found nothing and fell back to Grep with no error
+     * anywhere to say why.
      *
-     * The cost is that startup now waits for this server (capped at 5s). It is an
-     * in-process server, so that wait is nothing, and these tools are the reason this
-     * app exists rather than an optional extra.
+     * That is no longer what happens, and it was re-measured rather than assumed. Two
+     * runs deferred, on a turn that could only be answered by calling `ide_run`: the
+     * model issued a ToolSearch, found the tool and called it, both times.
+     *
+     * What the measurement left is an ordinary trade, and it goes opposite ways on the
+     * two backends:
+     *
+     *   loaded    34,443 tokens in-window, turn 6,537ms
+     *   deferred  31,254 tokens in-window, turn 7,959-9,215ms
+     *
+     * 3,163 tokens against roughly two seconds. On Anthropic the tokens are cached and
+     * cost almost nothing after the first turn, so paying two seconds a turn to save them
+     * is the wrong way round -- keep them loaded. On a local backend there is no prompt
+     * cache: those 3,163 tokens are prefill compute on *every* turn, including the ones
+     * that touch no tool, and they are 5% of the 64k window `contextFor` floors at. There
+     * the round trip is the cheaper half.
+     *
+     * The cost of loading is that startup waits for this server, capped at 5s. It is
+     * in-process, so that wait is nothing.
      */
-    alwaysLoad: true,
+    alwaysLoad,
     tools: keep(answers, [
       ideOpen,
       ideSelection,

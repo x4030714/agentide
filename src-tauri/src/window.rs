@@ -7,6 +7,13 @@
 //! and the answer to "is the desktop showing through behind me, or must I paint my own
 //! background?".
 //!
+//! The window is square. It was clipped to a rounded rectangle for a while, with a GDI
+//! region, because this window has no per-pixel alpha and the webview's own rounded corner
+//! composited against the opaque surface underneath and came back square anyway. That cost
+//! the invisible resize border -- the region clips the non-client area away with the rest,
+//! so an edge drag wants the content edge rather than eight pixels outside it -- and it had
+//! to be rebuilt on every resize and every DPI change. Square corners cost none of that.
+//!
 //! Resizing is deliberately absent. tao keeps `WS_SIZEBOX` on an undecorated window and
 //! hit-tests the edges itself, so the OS resize borders still work with nothing from us.
 
@@ -19,12 +26,6 @@ use crate::ipc::{ErrorCode, IpcError};
 /// The window `tauri.conf.json` declares, and the one `capabilities/default.json` grants
 /// permissions to. Everything here acts on it and nothing else.
 const MAIN_WINDOW: &str = "main";
-
-/// The corner radius, in CSS pixels, matching `--r-window` in `src/styles/world.css`.
-///
-/// Duplicated rather than read from the frontend because the OS needs it before the
-/// webview has painted anything. If one moves, move the other.
-const CORNER_RADIUS: f64 = 10.0;
 
 /// Carries the new value whenever the window is maximized or restored, by any route.
 /// Mirrored in `src/lib/protocol.ts`.
@@ -62,8 +63,6 @@ pub fn setup(app: &AppHandle) {
         .maximized
         .store(window.is_maximized().unwrap_or(false), Ordering::Relaxed);
 
-    round_corners(&window);
-
     let app = app.clone();
     window.on_window_event(move |event| {
         // Our own button, a double click on the drag region, a Win+Arrow snap and a drag
@@ -71,112 +70,9 @@ pub fn setup(app: &AppHandle) {
         // maximized state changed.
         if matches!(event, WindowEvent::Resized(_)) {
             publish_maximized(&app);
-            // A window region is in physical pixels and does not follow the window, so
-            // every resize needs a new one -- including the DPI changes that arrive here
-            // as a resize.
-            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-                round_corners(&window);
-            }
         }
     });
 }
-
-/// Clip the window to a rounded rectangle, because nothing else will.
-///
-/// The frontend draws the radius in CSS and clips correctly -- the webview's own corner
-/// pixels are transparent, measured. What it composites against is the problem: this
-/// window has no per-pixel alpha (`WS_EX_LAYERED` is unset, and Windows 10 rounds no
-/// window itself), so those transparent pixels come back as the opaque surface underneath
-/// and the corner reads as square. A window region removes the pixels from the window
-/// instead of asking DWM to blend them, which is the one approach that does not depend on
-/// the compositor, the graphics driver, or whether a backdrop effect applied.
-///
-/// Two things this deliberately does not do. It does not antialias -- a region is a hard
-/// clip, and at 10px on a dark window the stair-step is a pixel or two that the CSS radius
-/// still softens on the inside edge. And it squares the corners when maximized, the way
-/// every editor does: a rounded corner against the screen edge reads as a gap in the
-/// window rather than as a shape.
-///
-/// `SetWindowRgn` is documented as unreliable on layered windows. It is used here *because*
-/// this window is not one; if that ever changes, per-pixel alpha would work and this whole
-/// function becomes unnecessary rather than merely wrong.
-///
-/// The cost is the invisible resize border, which the region clips away with the rest of
-/// the non-client area: the grab zone for an edge drag becomes the content edge rather
-/// than eight pixels outside it. Corners are the noticeable part of that -- a diagonal
-/// resize now wants the corner itself.
-#[cfg(windows)]
-fn round_corners(window: &WebviewWindow) {
-    use std::ffi::c_void;
-
-    // All three live in Gdi, SetWindowRgn included -- it is a region call that happens
-    // to take a window, not a window call.
-    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
-
-    let Ok(handle) = window.hwnd() else {
-        eprintln!("[window] no handle to round the corners of");
-        return;
-    };
-    // Through `isize` so this compiles whether the handle is a pointer or an integer --
-    // that type has changed across `windows` releases and tauri picks the version.
-    let handle = handle.0 as isize as *mut c_void;
-
-    // `true` on the redraw flag: the region takes effect on the next paint either way, and
-    // without it a resize leaves the old corner on screen until something else invalidates.
-    if window.is_maximized().unwrap_or(false) {
-        unsafe { SetWindowRgn(handle, std::ptr::null_mut(), 1) };
-        return;
-    }
-
-    // The region is in *window* coordinates but must cover only the client area.
-    //
-    // This window keeps `WS_CAPTION` and `WS_SIZEBOX` -- tao leaves the styles on and hides
-    // the frame through DWM -- so the outer rect is 8px wider on each side and 8px taller
-    // at the bottom than what the webview draws. A region built from the outer size stops
-    // DWM hiding that border and Windows paints it: a light frame around the content,
-    // offset from it, rounded on the outside while the content stays square inside. Which
-    // is worse than the square corner it was meant to fix. Clipping to the client rect
-    // removes the border from the window instead.
-    let (Ok(outer), Ok(inner), Ok(size)) = (
-        window.outer_position(),
-        window.inner_position(),
-        window.inner_size(),
-    ) else {
-        return;
-    };
-    let left = inner.x - outer.x;
-    let top = inner.y - outer.y;
-
-    let scale = window.scale_factor().unwrap_or(1.0);
-    // `CreateRoundRectRgn` takes the ellipse's width and height, which is the diameter.
-    let diameter = (CORNER_RADIUS * 2.0 * scale).round() as i32;
-    // The rectangle is exclusive on the right and bottom, so both edges get one more pixel
-    // or the region falls a pixel short of the client area and shows a seam.
-    let region = unsafe {
-        CreateRoundRectRgn(
-            left,
-            top,
-            left + size.width as i32 + 1,
-            top + size.height as i32 + 1,
-            diameter,
-            diameter,
-        )
-    };
-    if region.is_null() {
-        eprintln!("[window] could not build a rounded region; corners stay square");
-        return;
-    }
-    // The window owns the region once this succeeds, and must not have it freed underneath
-    // it. On failure it is still ours, and leaking a GDI object per resize is not an option.
-    if unsafe { SetWindowRgn(handle, region, 1) } == 0 {
-        unsafe { DeleteObject(region) };
-        eprintln!("[window] the rounded region was refused; corners stay square");
-    }
-}
-
-/// Only Windows needs this: every other platform rounds its own windows.
-#[cfg(not(windows))]
-fn round_corners(_window: &WebviewWindow) {}
 
 /// Emit [`MAXIMIZED_EVENT`] if, and only if, the state is not the one already published.
 ///

@@ -309,6 +309,10 @@ async function main(): Promise<void> {
     // Edits land. There is nobody to review them here, and a terminal that asked would
     // hang on a question with no answer.
     permissionMode: "acceptEdits" as const,
+    // Deliberately not `includePartialMessages`. The terminal renders `**bold**` and
+    // backtick spans, and a delta splits those markers across writes -- streaming here
+    // would put raw asterisks back on screen, which is the thing that was just fixed.
+    // The window streams instead; see `streaming` in `src/lib/transcript.ts`.
   });
 
   /** One turn, and the wait for its `done`. */
