@@ -1,7 +1,7 @@
 /** The agent in a terminal, no window. This process is also the host: the `HostLink` writer
  * loops straight back, and only the three `ide_*` tools a terminal can answer are declared. */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { clearLine, clearScreenDown, createInterface, cursorTo, moveCursor } from "node:readline";
 import type { Interface, Key } from "node:readline";
 import { resolve } from "node:path";
@@ -10,6 +10,8 @@ import { HostLink } from "./host.ts";
 import { ModelCatalogue } from "./models.ts";
 import { allCommands, complete, format, lookup } from "./cli-commands.ts";
 import { ago, listConversations } from "./conversations.ts";
+import { checkup, claudeBinary, ready, signedIn } from "./doctor.ts";
+import type { Problem } from "./doctor.ts";
 import { CLOUD, modelRows, pickModel, pickProvider, providerRows } from "./cli-picks.ts";
 import type { PastConversation } from "./conversations.ts";
 import { accept, MENU_HEIGHT, menuFor, move, rows } from "./cli-menu.ts";
@@ -263,6 +265,14 @@ async function main(): Promise<void> {
   }
 
   if (options.prompt) {
+    // The one-shot path prints no banner, so a fresh install would meet only the SDK's
+    // "Please run /login" with no way to act on it.
+    const problems = checkup();
+    if (!ready(problems)) {
+      report(problems, false);
+      process.stderr.write("run `agentide` on its own and type /login\n");
+      process.exit(1);
+    }
     await turn(options.prompt);
     session.dispose();
     process.exit(failed ? 1 : 0);
@@ -300,6 +310,12 @@ async function repl(
   menuHook.refresh = menu.refresh;
   const release = captureWarnings(menu.above);
   process.stdout.write(`${banner(options)}\n`);
+  // Said before the first prompt rather than after it fails: someone who has just
+  // installed this has no way to know they are not signed in, and the SDK's own answer --
+  // "Please run /login" -- names a command that only its own TUI has.
+  const problems = checkup();
+  report(problems, false);
+  if (problems.length > 0) process.stdout.write("\n");
   menu.open();
 
   for await (const line of rl) {
@@ -636,6 +652,51 @@ function attachMenu(
   };
 }
 
+/**
+ * Hand the terminal to the real `claude` binary so the browser flow can run.
+ *
+ * Spawned with the terminal inherited rather than piped: signing in is a device code the
+ * person reads and a browser they use, and a captured stdio would show neither. This
+ * blocks until they are done, which is correct — there is nothing to do until they are.
+ */
+function signIn(): void {
+  if (signedIn()) {
+    process.stdout.write(`  ${paint.accent("already signed in")}\n`);
+    process.stdout.write(paint.dim("  /login again only if you want to switch account\n"));
+    return;
+  }
+  const binary = claudeBinary();
+  if (!binary) {
+    process.stdout.write(paint.danger("  the bundled Claude Code binary is missing\n"));
+    process.stdout.write(paint.dim("  reinstall agentide; the installer ships it\n"));
+    return;
+  }
+  process.stdout.write(paint.dim("  handing over to Claude Code to sign in…\n"));
+  const done = spawnSync(binary, ["/login"], { stdio: "inherit", windowsHide: false });
+  if (done.error) {
+    process.stdout.write(paint.danger(`  could not start it: ${done.error.message}\n`));
+    return;
+  }
+  process.stdout.write(
+    signedIn()
+      ? `  ${paint.accent("signed in")} — the next turn will run\n`
+      : paint.dim("  still not signed in; /login again, or set ANTHROPIC_API_KEY\n"),
+  );
+}
+
+/** Print what is wrong with this machine. `all` also prints the clean bill of health. */
+function report(problems: readonly Problem[], all: boolean): void {
+  if (problems.length === 0) {
+    if (all) process.stdout.write(`  ${paint.accent("ready")} — nothing missing\n`);
+    return;
+  }
+  for (const problem of problems) {
+    const mark = problem.severity === "blocked" ? paint.danger("✗") : paint.dim("!");
+    process.stdout.write(`  ${mark} ${problem.title}\n`);
+    process.stdout.write(`    ${paint.dim(problem.fix)}\n`);
+  }
+}
+
 /** `/provider` lists the backends; a number or a key picks one. An unknown key is refused
  * here rather than a turn later, and `anthropic` is a row so there is a way back. */
 function chooseProvider(
@@ -810,6 +871,12 @@ async function handleLocal(
       return;
     case "resume":
       await resume(argument, options, recent);
+      return;
+    case "login":
+      signIn();
+      return;
+    case "doctor":
+      report(checkup(), true);
       return;
     case "model":
       chooseModel(argument, options, models);

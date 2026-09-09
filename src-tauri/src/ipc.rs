@@ -420,6 +420,17 @@ pub struct ProviderModel {
     pub supports_effort: bool,
 }
 
+/// One thing this install is missing, and what to do about it. Mirrors `Problem` in
+/// `sidecar/src/doctor.ts`: `blocked` means no turn can run, `degraded` means a feature is
+/// absent but the agent still works.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Problem {
+    pub severity: String,
+    pub title: String,
+    pub fix: String,
+}
+
 /// A backend from `~/.agentide/providers.json`, as the host may see it. The base URL and
 /// token stay in the sidecar; the host gets the models, the command, and where it listens.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -512,6 +523,10 @@ pub enum AgentEvent {
     /// arrive at startup and are re-sent each turn. Carries no credential: see [`ProviderInfo`].
     #[serde(rename_all = "camelCase")]
     Providers { providers: Vec<ProviderInfo> },
+    /// What this machine is missing before a turn can run. Sent once at startup, so the
+    /// window can say so before the first prompt fails.
+    #[serde(rename_all = "camelCase")]
+    Readiness { problems: Vec<Problem> },
     /// External MCP servers this turn was built without, because their application is not
     /// open. Sent every turn, empty list included: the empty list clears the last turn's chips.
     #[serde(rename_all = "camelCase")]

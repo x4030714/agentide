@@ -15,9 +15,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::fs::WorkspaceState;
 use crate::ipc::{
-    AgentEvent, DoneReason, ErrorCode, GatedServer, IpcError, JsonMap, ModelInfo,
-    PermissionDecision, PromptOptions, ProviderInfo, ReplySource, SlashCommand, ToolResult,
-    WirePath,
+    AgentEvent, DoneReason, ErrorCode, GatedServer, IpcError, JsonMap, ModelInfo, PermissionDecision, Problem, PromptOptions, ProviderInfo, ReplySource, SlashCommand, ToolResult, WirePath,
 };
 
 // --- The stdio wire --------------------------------------------------------
@@ -75,6 +73,11 @@ enum SidecarMessage {
     /// turn, and again each turn because the file is. No credential: see [`ProviderInfo`].
     #[serde(rename_all = "camelCase")]
     Providers { providers: Vec<ProviderInfo> },
+    /// What this machine is missing before a turn can run -- no credential, no git, no
+    /// language server. Sent once at startup, so the window can say so before the first
+    /// prompt fails with an error naming a command only Claude Code's own TUI has.
+    #[serde(rename_all = "camelCase")]
+    Readiness { problems: Vec<Problem> },
     /// The external MCP servers the sidecar held back this turn, because the application
     /// each one drives is not open. Sent every turn, empty list included.
     #[serde(rename_all = "camelCase")]
@@ -330,6 +333,9 @@ impl Router {
             }
             SidecarMessage::Providers { providers } => {
                 self.emit(AgentEvent::Providers { providers });
+            }
+            SidecarMessage::Readiness { problems } => {
+                self.emit(AgentEvent::Readiness { problems });
             }
             SidecarMessage::Commands { commands } => {
                 self.emit(AgentEvent::Commands { commands });

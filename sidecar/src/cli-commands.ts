@@ -11,6 +11,8 @@ export interface LocalCommand extends SlashCommand {
 
 export const LOCAL_COMMANDS: LocalCommand[] = [
   { name: "help", description: "show these commands", argumentHint: "", local: true },
+  { name: "login", description: "sign in to Claude, or check that you are", argumentHint: "", local: true },
+  { name: "doctor", description: "what this machine is missing, and how to fix it", argumentHint: "", local: true },
   { name: "exit", description: "leave", argumentHint: "", aliases: ["quit"], local: true },
   { name: "model", description: "list models, or run the next turns on one", argumentHint: "[n|id]", local: true },
   { name: "provider", description: "list backends, or run the next turns on one", argumentHint: "[n|key]", local: true },

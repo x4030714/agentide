@@ -129,6 +129,15 @@ export function toFileUri(path: WirePath): string {
   return encoded.startsWith("//") ? `file:${encoded}` : `file:///${encoded}`;
 }
 
+/** One thing this install is missing, and what to do about it. Mirrors `Problem` in
+ * `sidecar/src/doctor.ts`: `blocked` means no turn can run, `degraded` means a feature is
+ * absent but the agent still works. */
+export interface Problem {
+  severity: "blocked" | "degraded";
+  title: string;
+  fix: string;
+}
+
 // --- Agent -------------------------------------------------------------------
 // Defined once in `sidecar/src/protocol.ts`; both mirrors are checked against
 // `sidecar/protocol-fixtures.json`.
@@ -270,6 +279,7 @@ export type AgentEvent =
    * startup and are re-sent each turn. Carries no credential; see `ProviderInfo`. */
   | { t: "providers"; providers: ProviderInfo[] }
   | { t: "commands"; commands: SlashCommand[] }
+  | { t: "readiness"; problems: Problem[] }
   /** The external MCP servers this turn was built without, their gate being closed. Sent at the
    * start of every turn, empty list included — the empty list is what clears last turn's chips. */
   | { t: "mcp_gated"; sessionId: string; servers: GatedServer[] }

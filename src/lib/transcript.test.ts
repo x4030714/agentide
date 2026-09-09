@@ -813,3 +813,31 @@ describe("the answer as it arrives", () => {
     expect(reduce(initialState(), streamEvent(undefined)).streaming).toBeNull();
   });
 });
+
+describe("what a fresh install is missing", () => {
+  it("is held out of the rows, so it cannot scroll away", () => {
+    // It describes the machine, not the conversation, and someone needs it before their
+    // first prompt — which is exactly when a row would be scrolled past.
+    const state = reduce(initialState(), {
+      t: "readiness",
+      problems: [{ severity: "blocked", title: "Not signed in", fix: "Run /login" }],
+    } as never);
+    expect(state.rows).toHaveLength(0);
+    expect(state.problems).toHaveLength(1);
+    expect(state.problems[0]?.fix).toBe("Run /login");
+  });
+
+  it("a later check replaces the earlier one rather than adding to it", () => {
+    // Signing in should clear the banner, not leave a stale copy under a fresh one.
+    let state = reduce(initialState(), {
+      t: "readiness",
+      problems: [{ severity: "blocked", title: "Not signed in", fix: "Run /login" }],
+    } as never);
+    state = reduce(state, { t: "readiness", problems: [] } as never);
+    expect(state.problems).toEqual([]);
+  });
+
+  it("starts empty, so nothing is claimed before the check has run", () => {
+    expect(initialState().problems).toEqual([]);
+  });
+});

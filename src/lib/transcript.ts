@@ -3,6 +3,7 @@
 
 import type {
   AgentEvent,
+  Problem,
   ConversationEntry,
   JsonObject,
   ModelInfo,
@@ -186,6 +187,10 @@ export interface TranscriptState {
   /** When the running turn began, for the elapsed clock. Wall clock, not a tick count: a
    * counter in the reducer would reset on every row, which on a busy turn is constantly. */
   turnStartedAt: number;
+  /** What this install is missing, from the sidecar's startup check. A blocked problem means
+   * no turn can run, so the composer says so instead of letting one fail. */
+  problems: Problem[];
+
   /** The SDK's model catalogue, empty until a turn publishes it. Empty means "not known
    * yet", never "none available" — and must not gate sending. */
   models: ModelInfo[];
@@ -226,6 +231,7 @@ export function initialState(): TranscriptState {
     turnClosed: false,
     thinking: null,
     streaming: null,
+    problems: [],
     turnStartedAt: 0,
     models: [],
     providers: [],
@@ -502,6 +508,11 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
 
     case "commands":
       return { ...state, commands: action.commands };
+
+    case "readiness":
+      // Not a row. It describes the machine rather than the conversation, and a row would
+      // scroll away exactly when someone needs it -- before their first prompt.
+      return { ...state, problems: action.problems };
 
     case "mcp_gated":
       return mergeMcp(state, {

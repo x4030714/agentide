@@ -105,6 +105,14 @@ export type ModelInfo = z.infer<typeof ModelInfoSchema>;
 
 /** A configured backend as the host may see it: `baseUrl` and `token` stay in the sidecar. A key
  * that never crosses this boundary cannot be read out of the webview. */
+/** One thing wrong with this install, and what to do about it. See `doctor.ts`. */
+export const ProblemSchema = z.strictObject({
+  severity: z.enum(["blocked", "degraded"]),
+  title: z.string(),
+  fix: z.string(),
+});
+export type Problem = z.infer<typeof ProblemSchema>;
+
 export const ProviderInfoSchema = z.strictObject({
   /** The key to send back as `PromptOptions.provider`. */
   key: z.string(),
@@ -170,6 +178,8 @@ export const SidecarMessageSchema = z.discriminatedUnion("t", [
   /** The backends `providers.json` names. Refreshed every turn: the file is re-read every turn, and
    * a picker told once would go stale the moment a backend was added. */
   z.strictObject({ t: z.literal("providers"), providers: z.array(ProviderInfoSchema) }),
+  /** What this machine is missing before it can run a turn. Sent once, at startup. */
+  z.strictObject({ t: z.literal("readiness"), problems: z.array(ProblemSchema) }),
   z.strictObject({ t: z.literal("commands"), commands: z.array(SlashCommandSchema) }),
   /** The external MCP servers this turn was built without, because the application each one drives
    * is not open. Reported because an unstarted server is invisible in the SDK's own `init`. */

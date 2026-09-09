@@ -24,7 +24,7 @@
         "t": "prompt",
         "sessionId": "s-2",
         "cwd": "//server/share/project",
-        "text": "line one\nline two\ttabbed \"quoted\" \\ backslash é",
+        "text": "line one\nline two\ttabbed \"quoted\" \\ backslash \u00e9",
         "options": {
           "model": "claude-opus-5",
           "effort": "xhigh",
@@ -347,6 +347,24 @@
       "message": {
         "t": "pong",
         "id": "ping-1"
+      }
+    },
+    {
+      "name": "readiness, a fresh install",
+      "message": {
+        "t": "readiness",
+        "problems": [
+          {
+            "severity": "blocked",
+            "title": "Not signed in, so no turn can run",
+            "fix": "Run /login here, or set ANTHROPIC_API_KEY in your environment"
+          },
+          {
+            "severity": "degraded",
+            "title": "git is not on PATH, so no turn can be undone",
+            "fix": "Install Git for Windows -- checkpoints are the whole undo story"
+          }
+        ]
       }
     }
   ]

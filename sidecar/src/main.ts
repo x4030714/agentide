@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { HostLink } from "./host.ts";
 import { ModelCatalogue } from "./models.ts";
 import { LineDecoder, parseHostMessage, type HostMessage } from "./protocol.ts";
+import { checkup } from "./doctor.ts";
 import { loadProviders, publicProviders } from "./provider-config.ts";
 import { Session } from "./session.ts";
 
@@ -141,6 +142,11 @@ function main(): void {
   // Before any turn, unlike the model catalogue: providers come from a file, not from a live
   // query. That is what lets the first prompt already offer a local model.
   link.send({ t: "providers", providers: publicProviders(loadProviders()) });
+
+  // Said before the first prompt rather than after it fails. The SDK's own answer to a
+  // missing credential is "Please run /login", a command only its own TUI has -- so the
+  // window has to say what is wrong and what to do about it itself.
+  link.send({ t: "readiness", problems: checkup() });
 }
 
 main();

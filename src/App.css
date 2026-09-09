@@ -39,6 +39,16 @@
   opacity: 0.75;
 }
 
+/* What this install is missing, above the composer. Bordered rather than tinted: it has to
+   read as a condition of the app, not as something the agent said. */
+.setup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--hairline);
+}
+
 /* --- Title bar -------------------------------------------------------------- */
 
 .titlebar {

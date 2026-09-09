@@ -97,9 +97,12 @@ test("the window never runs off the end of the list", () => {
 });
 
 test("a list shorter than the window does not scroll", () => {
-  const menu = move(menuFor("/", allCommands([]))!, -1, HEIGHT);
+  // Height taken from the list rather than the constant: adding a local command must not
+  // make this fail for a reason that has nothing to do with scrolling.
+  const tall = LOCAL_COMMANDS.length + 1;
+  const menu = move(menuFor("/", allCommands([]))!, -1, tall);
   assert.equal(menu.top, 0);
-  assert.equal(visible(menu, HEIGHT).length, LOCAL_COMMANDS.length);
+  assert.equal(visible(menu, tall).length, LOCAL_COMMANDS.length);
 });
 
 test("exactly one row is highlighted, and it is the selected one", () => {
@@ -109,8 +112,10 @@ test("exactly one row is highlighted, and it is the selected one", () => {
   const open = painted.selected("x").split("x")[0] as string;
   const marked = drawn.filter((row) => row.includes(open));
   assert.equal(marked.length, 1);
-  assert.ok(marked[0]?.includes("/provider"), `highlighted the wrong row: ${marked[0]}`);
-  assert.equal(selection(menu).name, "provider", "the fourth command, counting from zero");
+  // Read off the list rather than named, so adding a local command does not fail this.
+  const expected = LOCAL_COMMANDS[3]!.name;
+  assert.ok(marked[0]?.includes(`/${expected}`), `highlighted the wrong row: ${marked[0]}`);
+  assert.equal(selection(menu).name, expected);
 });
 
 test("the footer says how many there are, not how many are shown", () => {

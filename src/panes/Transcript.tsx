@@ -435,6 +435,18 @@ export function TranscriptPane({
         )}
       </div>
 
+      {/* Above the composer, not a row: it describes the machine, and a row would scroll
+          away exactly when someone needs it — before their first prompt. */}
+      {state.problems.length > 0 && (
+        <div className="setup">
+          {state.problems.map((problem) => (
+            <p key={problem.title} className={`note is-${problem.severity === "blocked" ? "error" : "warn"}`}>
+              <strong>{problem.title}.</strong> {problem.fix}
+            </p>
+          ))}
+        </div>
+      )}
+
       <RunControls
         mode={mode}
         onMode={setMode}
