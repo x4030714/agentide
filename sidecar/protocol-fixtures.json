@@ -357,7 +357,8 @@
           {
             "severity": "blocked",
             "title": "Not signed in, so no turn can run",
-            "fix": "Run /login here, or set ANTHROPIC_API_KEY in your environment"
+            "fix": "Run /login here, or set ANTHROPIC_API_KEY in your environment",
+            "command": "\"C:/agentide/claude.exe\" /login"
           },
           {
             "severity": "degraded",

@@ -105,10 +105,16 @@ export function checkup(
   const problems: Problem[] = [];
 
   if (!signedIn(env, home) && !hasProviders) {
+    const binary = claudeBinary();
     problems.push({
       severity: "blocked",
       title: "Not signed in, so no turn can run",
-      fix: "Run /login here, or set ANTHROPIC_API_KEY in your environment",
+      fix: binary
+        ? "Sign in below, or set ANTHROPIC_API_KEY in your environment"
+        : "Set ANTHROPIC_API_KEY in your environment",
+      // The window runs this in a terminal tab. Quoted: the install path has a space in it
+      // on every default Windows install.
+      ...(binary ? { command: `"${binary}" /login` } : {}),
     });
   }
   if (!claudeBinary()) {

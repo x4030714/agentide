@@ -39,6 +39,23 @@
   opacity: 0.75;
 }
 
+/* The button that fixes a problem, on the row that names it. Inline, so the fix is where
+   the sentence describing it ends rather than somewhere else on screen. */
+.chip.is-action {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-chip);
+  background: var(--elevated);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip.is-action:hover {
+  border-color: var(--sym);
+}
+
 /* What this install is missing, above the composer. Bordered rather than tinted: it has to
    read as a condition of the app, not as something the agent said. */
 .setup {

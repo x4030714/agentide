@@ -395,6 +395,12 @@ export async function gpuVramGb(): Promise<number | null> {
 
 /** Where memory lives, resolved by Rust from `~/.agentide/memory.json` — the sidecar resolves the
  * same file, and a second guess here would drift from the folder being written to. */
+/** Whether a turn could authenticate right now. Asked after a sign-in finishes, so the
+ * readiness banner clears without waiting for a turn. */
+export async function signedIn(): Promise<boolean> {
+  return invoke<boolean>("tools_signed_in");
+}
+
 export async function memoryVault(): Promise<MemoryVault> {
   return invoke<MemoryVault>("memory_vault");
 }

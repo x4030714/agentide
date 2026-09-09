@@ -13,7 +13,9 @@ import {
   conversationRead,
   memoryVault,
   readFile,
+  signedIn,
 } from "../lib/bridge";
+import { startBackground } from "../lib/agent-shell";
 import { locateHunks, summarize, toolDiff } from "../lib/diff";
 import type { DiffHunk, LineKind } from "../lib/diff";
 import { languageForPath } from "../lib/lsp-monaco";
@@ -153,6 +155,8 @@ export function TranscriptPane({
   const [tunedAvailable, setTunedAvailable] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [startError, setStartError] = useState<string | null>(null);
+  /** Cleared once a sign-in has actually worked, so the banner goes without a turn. */
+  const [solved, setSolved] = useState<string[]>([]);
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -371,6 +375,36 @@ export function TranscriptPane({
     });
   }, []);
 
+  /**
+   * Run a problem's own fix in a terminal tab, and drop the problem once it worked.
+   *
+   * A tab rather than a hidden spawn: signing in is a device code to read and a browser to
+   * use, and PRODUCT.md's third principle is that every command has a visible home. The
+   * re-check is a fact about the machine, not a claim by this component -- the banner only
+   * clears when the credential is actually there.
+   */
+  const fix = useCallback((command: string) => {
+    void (async () => {
+      try {
+        await startBackground(command, root);
+      } catch (err) {
+        dispatch({ t: "local_notice", tone: "error", text: errorMessage(err) });
+        return;
+      }
+      // Signing in ends when the person finishes in their browser, which no exit code here
+      // reports. Poll the one fact that settles it, and give up rather than poll forever.
+      for (let tries = 0; tries < 120; tries += 1) {
+        await new Promise((wake) => setTimeout(wake, 2000));
+        if (await signedIn().catch(() => false)) {
+          setSolved((was) => [...was, "Not signed in, so no turn can run"]);
+          return;
+        }
+      }
+    })();
+  }, [root]);
+
+  const visibleProblems = state.problems.filter((problem) => !solved.includes(problem.title));
+
   return (
     <div className="pane transcript">
       <div className="pane-header">
@@ -437,11 +471,16 @@ export function TranscriptPane({
 
       {/* Above the composer, not a row: it describes the machine, and a row would scroll
           away exactly when someone needs it — before their first prompt. */}
-      {state.problems.length > 0 && (
+      {visibleProblems.length > 0 && (
         <div className="setup">
-          {state.problems.map((problem) => (
+          {visibleProblems.map((problem) => (
             <p key={problem.title} className={`note is-${problem.severity === "blocked" ? "error" : "warn"}`}>
               <strong>{problem.title}.</strong> {problem.fix}
+              {problem.command && (
+                <button type="button" className="chip is-action" onClick={() => fix(problem.command!)}>
+                  Sign in
+                </button>
+              )}
             </p>
           ))}
         </div>

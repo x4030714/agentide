@@ -81,6 +81,34 @@ pub fn on_path(program: &str) -> bool {
     })
 }
 
+/// Whether a turn could authenticate right now.
+///
+/// One fact, asked synchronously so the readiness banner can clear the moment a sign-in
+/// finishes rather than waiting for a turn. The full rule -- providers, the environment,
+/// every problem worth reporting -- lives in `sidecar/src/doctor.ts`; this is only the
+/// half that changes while the window is open.
+#[tauri::command]
+pub fn tools_signed_in() -> bool {
+    if std::env::var_os("ANTHROPIC_API_KEY").is_some()
+        || std::env::var_os("ANTHROPIC_AUTH_TOKEN").is_some()
+    {
+        return true;
+    }
+    let config = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs_home().map(|home| home.join(".claude")));
+    config
+        .map(|dir| dir.join(".credentials.json").is_file())
+        .unwrap_or(false)
+}
+
+/// The user's home, however this platform spells it.
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

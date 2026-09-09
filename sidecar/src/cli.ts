@@ -26,6 +26,7 @@ import type {
   SlashCommand,
   ToolResult,
 } from "./protocol.ts";
+import { guard, release as standDown } from "./reaper.ts";
 import { Session } from "./session.ts";
 
 /** The `ide_*` tools a terminal can honestly answer. `ide_run` is the agent's shell and the
@@ -241,6 +242,9 @@ async function main(): Promise<void> {
   }
 
   const session = new Session(link, "cli", new ModelCatalogue(link), undefined, CLI_TOOLS);
+  // Ctrl+C, a closed terminal and an unhandled throw all used to leave `claude.exe` and every
+  // MCP server it started running. See `reaper.ts` for the one case this still cannot cover.
+  guard(() => session.dispose());
 
   /** What the next turn runs with, built per turn: `/model` and `/provider` edit `options`
    * mid-session, and captured at startup they were reported as changed and then ignored. */
@@ -274,6 +278,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     await turn(options.prompt);
+    standDown();
     session.dispose();
     process.exit(failed ? 1 : 0);
   }
@@ -361,6 +366,7 @@ async function repl(
   menu.detach();
 
   rl.close();
+  standDown();
   session.dispose();
   process.exit(0);
 }

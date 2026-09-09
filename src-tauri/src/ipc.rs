@@ -429,6 +429,9 @@ pub struct Problem {
     pub severity: String,
     pub title: String,
     pub fix: String,
+    /// A command that fixes it, when one exists. The window runs it in a terminal tab.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 /// A backend from `~/.agentide/providers.json`, as the host may see it. The base URL and

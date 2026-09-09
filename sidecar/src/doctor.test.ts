@@ -47,8 +47,11 @@ test("not signed in blocks a turn, and says what to type", async () => {
   const auth = problems.find((problem) => problem.title.includes("Not signed in"));
   assert.ok(auth, "a fresh machine must be told");
   assert.equal(auth?.severity, "blocked");
-  assert.ok(auth?.fix.includes("/login"), auth?.fix);
   assert.equal(ready(problems), false);
+  // The command is what makes it actionable in the window, where there is no CLI to type
+  // `/login` into. Before this the app printed advice it could not carry out.
+  assert.ok(auth?.command?.includes("/login"), `no login command: ${auth?.command}`);
+  assert.ok(auth?.command?.includes("claude"), auth?.command);
 });
 
 test("a missing git is a warning, not a wall", async () => {

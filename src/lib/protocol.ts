@@ -136,6 +136,9 @@ export interface Problem {
   severity: "blocked" | "degraded";
   title: string;
   fix: string;
+  /** A command that fixes it, when one exists. Run in a terminal tab, so a sign-in's
+   * device code and prompts are visible and answerable. */
+  command?: string;
 }
 
 // --- Agent -------------------------------------------------------------------

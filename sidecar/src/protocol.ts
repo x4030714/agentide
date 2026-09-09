@@ -110,6 +110,9 @@ export const ProblemSchema = z.strictObject({
   severity: z.enum(["blocked", "degraded"]),
   title: z.string(),
   fix: z.string(),
+  /** A command that fixes it, when one exists. The window runs it in a terminal tab, so a
+   * sign-in's device code and prompts are visible and answerable. */
+  command: z.string().optional(),
 });
 export type Problem = z.infer<typeof ProblemSchema>;
 
