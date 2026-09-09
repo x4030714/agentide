@@ -1,11 +1,5 @@
-/**
- * What `providers.json` is allowed to say, and what happens when it says something wrong.
- *
- * The refusals matter most. A provider that loads with a half-expanded token, or with no
- * port to check, produces a turn that fails against an endpoint nobody named -- Claude Code
- * does not fall back to the cloud when the base URL is dead, so a bad entry here is not a
- * degraded feature but a broken session.
- */
+/** What `providers.json` may say, and what a wrong entry costs. The refusals matter most:
+ * Claude Code does not fall back to the cloud on a dead base URL, it just breaks. */
 
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
@@ -48,11 +42,8 @@ test("the model is named after its file, quantisation and all", () => {
 });
 
 test("the start command begins with PowerShell's call operator", () => {
-  // The terminal is PowerShell, where a quoted path in the first position is a string
-  // expression rather than a command. Without `&` this does not fail to find the program --
-  // it fails to parse, with `Unexpected token '-m'`. The model then never starts, and the
-  // only symptom upstream is the port gate reporting that the backend did not come up,
-  // which points at everything except the quoting.
+  // In PowerShell a quoted path in first position is a string, not a command. Without `&`
+  // it fails to parse (`Unexpected token '-m'`) and upstream only sees a dead port.
   const [provider] = loadProviders(homeWith({ qwen: LOCAL }));
   assert.match(provider!.start!, /^& "/);
 });

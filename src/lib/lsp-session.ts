@@ -4,13 +4,8 @@ import type { Json } from "./lsp-client";
 import { toFileUri } from "./protocol";
 import type { LspEvent, WirePath } from "./protocol";
 
-/**
- * One language server, from spawn to shutdown, with the documents it is told about.
- *
- * The client below owns the protocol; this owns the *session* — which server serves which
- * language, the initialize handshake, keeping open documents in sync, and reporting
- * honestly on a server that is alive but not yet useful.
- */
+/** One language server, from spawn to shutdown, with the documents it is told about. The client
+ * below owns the protocol; this owns the session. */
 
 export interface ServerSpec {
   /** One per language per workspace. */
@@ -21,33 +16,16 @@ export interface ServerSpec {
   languages: string[];
   /** Shown when the server cannot start, so the reason names the fix. */
   missingHint: string;
-  /**
-   * Files at the workspace root that mean this server is worth starting before any file
-   * of its language is opened.
-   *
-   * Servers start lazily from an open file, which is right for the editor and wrong for
-   * the agent: `ide_workspace_symbols` asks about a project, and until something of that
-   * language had been opened it answered "no symbols" for a project full of them. A
-   * marker at the root is the cheap, honest signal that this is that kind of project.
-   */
+  /** Root files that mean this server is worth starting before any file of its language is opened.
+   * Lazy start made `ide_workspace_symbols` answer "no symbols" for a project full of them. */
   markers: string[];
-  /**
-   * What to send as `initializationOptions`, given where the markers actually were.
-   *
-   * The workspace root and the project root are not the same thing. Open a folder holding
-   * several checkouts -- a Desktop, a `code/` directory -- and rust-analyzer is handed a
-   * root that is not a Cargo project, which it reports as `failed to find any projects in
-   * [...]` and then does nothing for the rest of the session. Naming the `Cargo.toml`
-   * files it should treat as projects is rust-analyzer's own answer to that.
-   */
+  /** `initializationOptions`, given where the markers actually were. A workspace root holding
+   * several checkouts is not a Cargo project, and rust-analyzer then does nothing all session. */
   initialization?: (markerPaths: string[]) => Json;
 }
 
-/**
- * Only the two languages PRODUCT.md names. Adding a server is adding a row here; there is
- * deliberately no table of these in Rust, because which server serves which language is a
- * frontend decision and splitting it across the boundary would put it in two places.
- */
+/** Only the two languages PRODUCT.md names. No table of these in Rust: which server serves which
+ * language is a frontend decision, and splitting it across the boundary duplicates it. */
 export const SERVERS: ServerSpec[] = [
   {
     id: "rust",
@@ -55,9 +33,8 @@ export const SERVERS: ServerSpec[] = [
     languages: ["rust"],
     missingHint: "rust-analyzer is not on PATH. It ships with the Rust toolchain.",
     markers: ["Cargo.toml"],
-    // Capped, and the cap is the point: a folder with a dozen checkouts under it would
-    // otherwise have every crate in all of them indexed at once, which is minutes of CPU
-    // for projects the person is not working in. The ones nearest the root come first.
+    // Capped: a folder with a dozen checkouts under it would index every crate in all of them.
+    // The ones nearest the root come first.
     initialization: (markerPaths) => ({ linkedProjects: markerPaths.slice(0, 8) }),
   },
   {
@@ -75,13 +52,8 @@ export function serverFor(language: string): ServerSpec | undefined {
   return SERVERS.find((spec) => spec.languages.includes(language));
 }
 
-/**
- * How ready a server is, which is not the same question as whether it is running.
- *
- * A native-codebase server is alive and useless for a long time after it starts, and
- * PRODUCT.md commits to saying so rather than pretending to be instant. `indexing` is a
- * real, common, long-lived state — not a brief blip on the way to `ready`.
- */
+/** How ready a server is, which is not whether it is running. `indexing` is a real, long-lived
+ * state on a native codebase — not a blip on the way to `ready`. */
 export type ServerStatus = "starting" | "indexing" | "ready" | "failed" | "exited";
 
 export interface SessionState {
@@ -113,14 +85,8 @@ export class LspSession {
   #state: SessionState = { status: "starting", detail: null, error: null };
   /** Progress tokens that are open, so `indexing` ends when the last one does. */
   #progress = new Set<string>();
-  /**
-   * The latest diagnostics per URI, as the server last published them.
-   *
-   * Kept because the editor is not the only consumer any more. Monaco can only draw
-   * markers on files it has a model for, but rust-analyzer reports on the whole crate --
-   * and "what else did my edit break?" is a question about the files that are *not*
-   * open. Dropping those would make the answer quietly wrong rather than short.
-   */
+  /** The latest diagnostics per URI as published. Monaco can only mark files it has a model for,
+   * but "what else did my edit break?" is a question about the files that are not open. */
   #diagnostics = new Map<string, Json[]>();
   #stderr: string[] = [];
 
@@ -266,14 +232,8 @@ export class LspSession {
     });
   }
 
-  /**
-   * Full-text sync on every change.
-   *
-   * Incremental sync is what a server prefers, but it means deriving ranges from Monaco's
-   * change events and one wrong range desynchronises the server silently — every position
-   * after it is then wrong, which is worse than the bandwidth. Whole documents are cheap
-   * at the size a person edits.
-   */
+  /** Full-text sync on every change. Incremental means deriving ranges from Monaco's change events,
+   * and one wrong range desynchronises the server silently — worse than the bandwidth. */
   changeDoc(path: WirePath, text: string) {
     const uri = toFileUri(path);
     const doc = this.#docs.get(uri);
@@ -315,19 +275,8 @@ export class LspSession {
 
 // --- URIs --------------------------------------------------------------------
 
-/**
- * The inverse of `toFileUri`, which is the app's only path-to-URI function.
- *
- * There is deliberately no second encoder here. A URI makes three trips — we build one,
- * the server echoes its own spelling of it back, and Monaco holds a third spelling on the
- * model — and any two of those disagreeing produces a diagnostic that matches no model.
- * The symptom is "diagnostics never appear", which points nowhere near the cause. So
- * nothing in the adapter compares URI strings: incoming URIs come back through here to a
- * path, and paths are what get matched.
- *
- * Which means this has to accept spellings we would never emit — rust-analyzer sends
- * `file:///c%3A/...` where we sent `file:///C:/...` — and land on the same path.
- */
+/** The inverse of `toFileUri`. Nothing compares URI strings: we, the server and Monaco each spell
+ * one differently (`file:///c%3A/...` vs `file:///C:/...`), so paths are what get matched. */
 export function uriToPath(uri: string): WirePath {
   const body = uri.startsWith("file:///")
     ? uri.slice("file:///".length)

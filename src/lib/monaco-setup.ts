@@ -1,18 +1,5 @@
-/**
- * Monaco bootstrap. Import this once, before any editor mounts.
- *
- * Two things have to be right or the editor degrades quietly:
- *
- * 1. `MonacoEnvironment.getWorker` must return real `Worker` instances. Vite's `?worker`
- *    suffix bundles each entry point and gives us a constructor, which is the only form
- *    that survives both `vite dev` and a production build with hashed asset names. With
- *    no `getWorker`, Monaco falls back to `getWorkerUrl` and fetches from a `baseUrl`
- *    that does not exist in a Tauri bundle -- syntax colouring still works but
- *    completions, diagnostics and formatting silently never appear.
- * 2. `loader.config({ monaco })` points `@monaco-editor/react` at this bundled copy.
- *    Its default is to pull Monaco off a CDN at runtime, which fails offline and inside
- *    the packaged app, leaving a permanently blank editor.
- */
+/** Monaco bootstrap; import once before any editor mounts. `getWorker` must return real `Worker`
+ * instances or completions die silently, and `loader.config` stops the CDN fetch that fails offline. */
 
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
@@ -53,19 +40,8 @@ self.MonacoEnvironment = {
   },
 };
 
-/**
- * The listing's four ink roles, applied to code.
- *
- * These are the same values as `styles/world.css`, and they carry the same meanings:
- * amber is the operation, blue is a resolved symbol, pink is an immediate, green is a
- * reference. Change one and change the other -- a colour that means one thing in the
- * tree and another in the editor breaks the premise of the world.
- */
-/**
- * The editor's palette, per theme, using the same role values as `styles/world.css`.
- * Change one and change the other: a colour that means one thing in the tree and
- * another in the editor breaks the premise the whole system rests on.
- */
+/** The editor's palette, per theme: the four ink roles from `styles/world.css`, same meanings —
+ * amber operation, blue resolved symbol, pink immediate, green reference. Change one, change both. */
 interface Role {
   /** Both transparent: the pane behind supplies the ground, and it is translucent. */
   ground: string;
@@ -228,9 +204,8 @@ function defineTheme(id: string, role: Role, base: "vs" | "vs-dark") {
 defineTheme(THEME_DARK, DARK, "vs-dark");
 defineTheme(THEME_LIGHT, LIGHT, "vs");
 
-// The webview has no network, and the workspace's own tsconfig is not loaded, so
-// cross-file type checking would only produce phantom "cannot find module" errors.
-// Syntax errors are still real and still reported.
+// The webview has no network and the workspace tsconfig is not loaded, so cross-file checking would
+// only produce phantom "cannot find module" errors. Syntax errors are still reported.
 monaco.typescript.typescriptDefaults.setDiagnosticsOptions({
   noSemanticValidation: true,
   noSyntaxValidation: false,

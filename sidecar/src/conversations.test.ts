@@ -1,11 +1,5 @@
-/**
- * That `/resume` offers this workspace's conversations and nobody else's.
- *
- * The directory name is a lossy mangling of the workspace path, so two different folders
- * can produce the same one. Resuming into a stranger's transcript because of that would be
- * hard to notice and worse to explain, which is why the confirmation against a record's
- * own `cwd` is the case pinned hardest here.
- */
+/** `/resume` offers this workspace's conversations and nobody else's. The directory name
+ * is a lossy mangling of the path, so the check against a record's own `cwd` is load-bearing. */
 
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
@@ -76,9 +70,8 @@ test("conversations come back newest first, with their opening prompt", async ()
 });
 
 test("a transcript belonging to another workspace is not offered", async () => {
-  // The collision the mangling makes possible: `C:/a.b` and `C:/a/b` mangle identically.
-  // Confirming against the record's own cwd is the only thing standing between the user
-  // and resuming a conversation from a different project.
+  // `C:/a.b` and `C:/a/b` mangle identically; the record's own cwd is the only thing
+  // stopping a resume into another project's conversation.
   const root = await home();
   const cwd = "C:/a/b";
   await transcript(root, cwd, "mine", [prompt("my question", cwd)]);

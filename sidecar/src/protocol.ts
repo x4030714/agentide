@@ -123,9 +123,7 @@ export const ProviderInfoSchema = z.strictObject({
 });
 export type ProviderInfo = z.infer<typeof ProviderInfoSchema>;
 
-// ---------------------------------------------------------------------------
 // host -> sidecar
-// ---------------------------------------------------------------------------
 
 export const HostMessageSchema = z.discriminatedUnion("t", [
   /** Run a turn. `cwd` is refilled from Rust state on every prompt, so a workspace change lands
@@ -158,9 +156,7 @@ export const HostMessageSchema = z.discriminatedUnion("t", [
 ]);
 export type HostMessage = z.infer<typeof HostMessageSchema>;
 
-// ---------------------------------------------------------------------------
 // sidecar -> host
-// ---------------------------------------------------------------------------
 
 export const SidecarMessageSchema = z.discriminatedUnion("t", [
   /** Emitted once, before any other message, when the stdio loop is listening. */
@@ -209,9 +205,7 @@ export const SidecarMessageSchema = z.discriminatedUnion("t", [
 ]);
 export type SidecarMessage = z.infer<typeof SidecarMessageSchema>;
 
-// ---------------------------------------------------------------------------
 // codec
-// ---------------------------------------------------------------------------
 
 /** Longer than this is a desynchronized stream, not a large message. Tool results carrying file
  * contents are why the ceiling is high. */

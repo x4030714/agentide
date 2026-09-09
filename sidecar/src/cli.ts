@@ -1,28 +1,5 @@
-/**
- * The agent in a terminal: `agentide run "<prompt>"`.
- *
- * The desktop app is three processes and a webview, and on a machine with 16GB that is
- * sometimes the difference between the agent running and the OS killing something. This is
- * the same agent, the same session, the same providers and memory -- with no window.
- *
- * ## It is the host, in this process
- *
- * The sidecar does not answer its own `ide_*` calls; a host does, over stdio, and in the
- * desktop app that host is the Rust core forwarding to the webview. Rather than spawn a
- * second process and talk to itself, this constructs the `HostLink` with a writer that
- * hands each outbound message straight back: a tool call is answered here and settled with
- * `link.settle`, and events are printed. One process, no protocol on the wire, and the
- * same `Session` the app uses.
- *
- * ## It declares only what it can answer
- *
- * Nine of the fifteen `ide_*` tools are questions for a language server and three are
- * instructions to an editor. There is neither here. Those are not declared at all rather
- * than declared and refused: a tool the model can see and call that always fails is broken
- * forever and silently, and it costs its description in every prompt on the way. What is
- * left is the terminal, which is real -- and `Read`, `Edit` and the rest still come from
- * the SDK's own preset, so this is not a crippled agent, it is one without an IDE attached.
- */
+/** The agent in a terminal, no window. This process is also the host: the `HostLink` writer
+ * loops straight back, and only the three `ide_*` tools a terminal can answer are declared. */
 
 import { spawn } from "node:child_process";
 import { clearLine, clearScreenDown, createInterface, cursorTo, moveCursor } from "node:readline";
@@ -49,12 +26,8 @@ import type {
 } from "./protocol.ts";
 import { Session } from "./session.ts";
 
-/**
- * The `ide_*` tools a terminal can honestly answer.
- *
- * `ide_run` is the agent's shell and the reason `Bash` is disallowed; the other two read
- * and stop what it started. Everything else needs an editor or a language server.
- */
+/** The `ide_*` tools a terminal can honestly answer. `ide_run` is the agent's shell and the
+ * reason `Bash` is disallowed; everything else needs an editor or a language server. */
 const CLI_TOOLS = ["ide_run", "ide_terminal_read", "ide_terminal_stop"] as const;
 
 /** How long a command may run before it is killed, matching the app's own default. */
@@ -118,14 +91,8 @@ function parseArgs(argv: string[]): Options {
   };
 }
 
-/**
- * Run one command and report it the way `ide_run` does in the app.
- *
- * Through the shell, because that is what the tool promises: the model writes a command
- * line, not an argv. Output is captured rather than streamed to the terminal -- it is the
- * tool's answer, and interleaving it with the assistant's prose would make neither
- * readable.
- */
+/** Run one command the way `ide_run` does in the app. Through the shell, because the model
+ * writes a command line and not an argv; output is captured, since it is the tool's answer. */
 function runCommand(command: string, cwd: string): Promise<ToolResult> {
   return new Promise((settle) => {
     const started = Date.now();
@@ -190,28 +157,15 @@ async function main(): Promise<void> {
   let agentModels: ModelInfo[] = [];
   /** The backends `providers.json` configures, re-sent on every turn as the file is re-read. */
   let agentProviders: ProviderInfo[] = [];
-  /**
-   * Redraw an open menu. Replaced by `repl` once there is one to redraw.
-   *
-   * The list arrives a second or two after the prompt appears, and someone who typed `/`
-   * inside that window would otherwise sit looking at six commands with no reason to press
-   * a key -- the menu would be stale and look final.
-   */
+  /** Redraw an open menu; replaced by `repl` once there is one. The command list lands a second
+   * or two late, and a menu opened before then would sit there stale and look final. */
   const menuHook = { refresh: () => {} };
 
-  /**
-   * The host, as a function.
-   *
-   * Every message the session would have written to stdout arrives here instead. Tool
-   * calls are answered and settled; permission requests are allowed, because a terminal
-   * the person is watching and chose to run is not a place to ask -- the app is where
-   * approval lives, and this is the deliberate other mode.
-   */
+  /** The host, as a function: everything the session would write to stdout lands here. Permission
+   * requests are allowed outright -- approval lives in the app, and this is the other mode. */
   const link: HostLink = new HostLink((line: string) => {
-    // Not schema-checked: this line was encoded by the link a microsecond ago, and
-    // validating our own output would buy nothing. The wire format is still the wire
-    // format -- going through it rather than around it is what keeps this host the same
-    // shape as the Rust one.
+    // Not schema-checked -- the link encoded this a microsecond ago. Still routed through the
+    // wire format, which is what keeps this host the same shape as the Rust one.
     void handle(JSON.parse(line) as SidecarMessage);
   });
 
@@ -219,10 +173,8 @@ async function main(): Promise<void> {
     switch (message.t) {
       case "tool_call": {
         const result = await answer(message.name, message.args, options.cwd);
-        // The call itself is printed from the assistant's own message, so this prints only
-        // what came back -- under it, the way the app's transcript nests a result beneath
-        // the call it answers. A failure is shown whether or not `--verbose` asked, because
-        // a tool that failed is the reason the next thing the model says looks wrong.
+        // The call is printed from the assistant's own message, so this prints only what came
+        // back. Failures show without `--verbose`: they explain the model's next reply.
         if (options.verbose || !result.ok) {
           const body = result.ok ? result.text : result.error;
           process.stdout.write(`${paint.dim(`  ⎿  ${firstLines(body, 4)}`)}\n`);
@@ -235,22 +187,21 @@ async function main(): Promise<void> {
         return;
       }
       case "commands": {
-        // The list lives on a live query, so it lands when the warm-up's query finishes
-        // connecting -- and again if the installation pushes a new one mid-session, which
-        // it does when skills are discovered in a subdirectory.
+        // Lands when the warm-up's query connects, and again mid-session when the
+        // installation pushes a new list -- it does that on skills found in a subdirectory.
         agentCommands = message.commands;
         menuHook.refresh();
         return;
       }
       case "providers": {
-        // Sent on every turn, not once: `providers.json` is re-read each time, so a
-        // backend added while this was open reaches the list on the next prompt.
+        // Sent every turn, not once: `providers.json` is re-read each time, so a backend
+        // added while this was open reaches the list on the next prompt.
         agentProviders = message.providers;
         return;
       }
       case "models": {
-        // Asked at the same moment as the command list and for the same reason: both
-        // describe the installation rather than the turn.
+        // Asked with the command list, for the same reason: both describe the installation
+        // rather than the turn.
         agentModels = message.models;
         return;
       }
@@ -271,14 +222,8 @@ async function main(): Promise<void> {
     }
   }
 
-  /**
-   * The assistant's prose, and nothing else unless asked.
-   *
-   * A bullet in the accent colour opens each block and its continuation lines are indented
-   * under it, so a four-paragraph answer reads as one answer rather than as four. Tool
-   * calls get the same bullet in dim with their arguments after the name -- the shape the
-   * app's transcript uses, and the shape anyone arriving from Claude Code already reads.
-   */
+  /** The assistant's prose, and nothing else unless asked. One bullet per block with the rest
+   * indented under it, so four paragraphs read as one answer -- the app's shape, and Claude Code's. */
   function print(msg: JsonObject): void {
     if (msg.type !== "assistant") return;
     const content = (msg.message as { content?: unknown } | undefined)?.content;
@@ -295,13 +240,8 @@ async function main(): Promise<void> {
 
   const session = new Session(link, "cli", new ModelCatalogue(link), undefined, CLI_TOOLS);
 
-  /**
-   * What the next turn runs with, read fresh each time.
-   *
-   * Built per turn rather than once, because `/model` and `/provider` change `options`
-   * mid-session -- captured at startup they were reported as changed and then ignored,
-   * which is the silent-success failure this project keeps paying for.
-   */
+  /** What the next turn runs with, built per turn: `/model` and `/provider` edit `options`
+   * mid-session, and captured at startup they were reported as changed and then ignored. */
   const promptOptions = () => ({
     ...(options.model ? { model: options.model } : {}),
     ...(options.provider ? { provider: options.provider } : {}),
@@ -309,10 +249,8 @@ async function main(): Promise<void> {
     // Edits land. There is nobody to review them here, and a terminal that asked would
     // hang on a question with no answer.
     permissionMode: "acceptEdits" as const,
-    // Deliberately not `includePartialMessages`. The terminal renders `**bold**` and
-    // backtick spans, and a delta splits those markers across writes -- streaming here
-    // would put raw asterisks back on screen, which is the thing that was just fixed.
-    // The window streams instead; see `streaming` in `src/lib/transcript.ts`.
+    // Deliberately not `includePartialMessages`: deltas split `**bold**` across writes and
+    // put raw asterisks back on screen. The window streams instead.
   });
 
   /** One turn, and the wait for its `done`. */
@@ -330,24 +268,15 @@ async function main(): Promise<void> {
     process.exit(failed ? 1 : 0);
   }
 
-  // Interactive only, and not awaited. `/` has to offer every command the installation
-  // has, and that list only exists on a live query -- so the query is built now, with the
-  // same shape the first turn will ask for, instead of the menu being six entries long
-  // until a turn has been spent. It costs the CLI spawn that turn would have paid anyway.
+  // Interactive only, not awaited: the command list exists only on a live query, so build it
+  // now with the shape the first turn will ask for rather than a six-entry menu.
   void session.warm(options.cwd, promptOptions());
 
   await repl(turn, options, session, () => agentCommands, menuHook, () => agentModels, () => agentProviders);
 }
 
-/**
- * The interactive mode: `agentide` with nothing after it.
- *
- * One session for the whole conversation, which is the point. The query behind it stays
- * alive between turns -- ~2.5s of CLI startup and every MCP server, paid once -- so the
- * second prompt reaches the model in milliseconds where a fresh process would pay it all
- * again. That is the same reason the app keeps one, and it is worth more here: a terminal
- * is where people ask six short questions in a row.
- */
+/** The interactive mode: `agentide` with nothing after it. One session for the whole
+ * conversation, so the ~2.5s CLI startup and its MCP servers are paid once, not per prompt. */
 async function repl(
   turn: (text: string) => Promise<void>,
   options: Options,
@@ -361,8 +290,8 @@ async function repl(
     input: process.stdin,
     output: process.stdout,
     prompt: `${paint.dim("│")} ${paint.accent(">")} `,
-    // Tab completes a slash command and nothing else; see `complete`. Kept for the piped
-    // case, where there is no live menu to Tab into.
+    // Tab completes a slash command and nothing else; kept for the piped case, where there
+    // is no live menu to Tab into.
     completer: (line: string) => complete(line, allCommands(known())),
   });
   /** What `/resume` last printed, so `/resume 3` means that third row. */
@@ -388,10 +317,8 @@ async function repl(
         menu.open();
         continue;
       }
-      // No exact match means this is a search, not a command: show what it found rather
-      // than sending something the agent will reject. With a live menu this is only
-      // reached on a name that matched nothing, or when input is piped and there is no
-      // menu at all.
+      // No exact match is a search, not a command. Only reached on a name that matched
+      // nothing, or on piped input where there is no menu.
       if (!exact) {
         list(matches, known().length === 0);
         menu.open();
@@ -422,24 +349,13 @@ async function repl(
   process.exit(0);
 }
 
-/**
- * Send everything written to stderr above the prompt instead of through it.
- *
- * The warnings are worth keeping -- "MCP server github was ignored, ${GITHUB_TOKEN} is not
- * set" is exactly what someone needs to know -- but they arrive seconds after the prompt is
- * drawn, from the warm-up, from a turn, from the SDK. Writing them straight out lands them
- * inside the input box. This is the one place that knows how to move it out of the way.
- *
- * One warning is dropped rather than moved: the SDK's `CAN_USE_TOOL_SHADOWED`. It fires
- * because the CLI auto-approves its three tools on purpose -- there is no one at a terminal
- * to ask -- so it reports a decision rather than a problem, on every single start.
- */
+/** Move stderr above the prompt, since a warning written straight out lands inside the input
+ * box. `CAN_USE_TOOL_SHADOWED` is dropped: auto-approval here is the decision, not a problem. */
 function captureWarnings(above: (text: string) => void): () => void {
   const original = process.stderr.write.bind(process.stderr);
   const shadowed = /CAN_USE_TOOL_SHADOWED|trace-warnings/;
-  // The MCP and provider configs are re-read every turn on purpose, so an unset
-  // `${GITHUB_TOKEN}` is reported every turn. Said once it is useful; said before every
-  // answer it is what the person learns to scroll past.
+  // The configs are re-read every turn, so the same warning would repeat before every
+  // answer -- which is what people learn to scroll past.
   const said = new Set<string>();
   process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
     const text = typeof chunk === "string" ? chunk : String(chunk);
@@ -457,13 +373,8 @@ function captureWarnings(above: (text: string) => void): () => void {
   };
 }
 
-/**
- * The welcome box.
- *
- * It answers the three questions someone opening a terminal agent has -- where am I, what
- * is going to run, and how do I find anything -- and then gets out of the way. Everything
- * in it is a fact about this session, so there is nothing to read twice.
- */
+/** The welcome box: where am I, what is going to run, how do I find anything. Facts about this
+ * session only, so there is nothing to read twice. */
 function banner(options: Options): string {
   const terminal = process.stdout.columns || 80;
   const inner = boxWidth(terminal) - 2;
@@ -493,38 +404,23 @@ function short(path: string, room: number): string {
 /** How the whole CLI is coloured. Decided once: the terminal does not change mid-run. */
 const paint: Theme = theme(process.stdout);
 
-/**
- * A glyph, then text whose later lines line up under the first.
- *
- * Without the indent a wrapped paragraph starts hard against the left margin and the
- * bullet stops meaning anything -- it has to mark a block, not a line.
- */
+/** A glyph, then text whose later lines line up under the first: without the indent the bullet
+ * marks a line rather than a block. */
 function bullet(glyph: string, text: string): string {
   const [first = "", ...rest] = text.split("\n");
   return [`${glyph} ${first}`, ...rest.map((line) => `  ${line}`)].join("\n");
 }
 
-/**
- * The little markdown the model actually uses in a sentence.
- *
- * Only `**bold**` and `` `code` ``, and only because leaving them raw is worse than either
- * rendering or stripping them -- "the repo is on the **master** branch" is the model
- * emphasising a word, and the asterisks are noise it did not intend. Everything else is
- * left alone: this is a terminal, not a markdown renderer, and half-rendering headings and
- * lists would be its own kind of wrong.
- */
+/** Only `**bold**` and `` `code` ``, the markdown a model uses mid-sentence. Everything else is
+ * left raw: this is a terminal, and half-rendering headings and lists is its own kind of wrong. */
 function emphasis(text: string): string {
   return text
     .replace(/\*\*([^*\n]+)\*\*/g, (_, inner: string) => paint.bold(inner))
     .replace(/`([^`\n]+)`/g, (_, inner: string) => paint.accent(inner));
 }
 
-/**
- * A tool's name as the model would say it out loud.
- *
- * `mcp__agentide__ide_run` is how the SDK addresses it and there is no reason to make
- * anyone read the routing. The prefix is stripped, never the name.
- */
+/** A tool's name without the SDK's routing: `mcp__agentide__ide_run` becomes `ide_run`. The
+ * prefix is stripped, never the name. */
 function plainName(name: string | undefined): string {
   return (name ?? "tool").replace(/^mcp__[^_]+__/, "");
 }
@@ -544,43 +440,21 @@ function brief(input: JsonObject | undefined): string {
   return `(${flat.length > 60 ? `${flat.slice(0, 59)}…` : flat})`;
 }
 
-/**
- * The line above and below the input.
- *
- * The prompt is a box because that is the one piece of Claude Code's layout that does real
- * work: it separates what you are writing from everything already written, which in a
- * terminal that has just printed forty lines of tool output is the difference between
- * finding the cursor and hunting for it.
- */
+/** The line above and below the input. The box is the one piece of Claude Code's layout that
+ * does real work: after forty lines of tool output it is how you find the cursor. */
 function rule(kind: "top" | "bottom", terminal: number): string {
   const inner = boxWidth(terminal) - 2;
   return paint.dim(kind === "top" ? `╭${"─".repeat(inner)}╮` : `╰${"─".repeat(inner)}╯`);
 }
 
-/**
- * How wide every box is.
- *
- * One function, because the welcome box and the prompt box are read as the same object and
- * two different widths look like a rendering fault rather than a choice. Capped, because a
- * box drawn across a 200-column terminal is a line with a corner on it.
- */
+/** One width for every box -- two of them differing reads as a rendering fault. Capped, because
+ * a box across a 200-column terminal is a line with a corner on it. */
 function boxWidth(terminal: number): number {
   return Math.max(24, Math.min(terminal - 1, 100));
 }
 
-/**
- * Draw the command menu under the prompt as the line is typed.
- *
- * `_ttyWrite` is readline's own key handler and this wraps it. There is no public hook: a
- * `completer` fires only on Tab, and a `keypress` listener on stdin runs *beside*
- * readline's rather than in front of it, so Up would move the selection and recall history
- * at the same time. Wrapping is the only place a key can be taken before readline sees it.
- * The underscore says it is not public API; it has been stable for a decade and the
- * fallback below covers it being gone.
- *
- * Does nothing unless stdin is a TTY. Piped input has no cursor to draw around, and the
- * REPL's own `/` handling answers there.
- */
+/** Draws the menu by wrapping readline's private `_ttyWrite`: `completer` only fires on Tab and a
+ * `keypress` listener runs beside readline, so Up would both move the selection and recall history. */
 function attachMenu(
   rl: Interface,
   commands: () => SlashCommand[],
@@ -624,13 +498,8 @@ function attachMenu(
     drawn = 0;
   }
 
-  /**
-   * Everything below the input line: the box's bottom edge, then the menu if it is open.
-   *
-   * One writer for both, because they share the same arithmetic -- the count of rows
-   * written is the count the cursor has to come back up -- and two writers would each be
-   * right on their own and wrong together.
-   */
+  /** Everything below the input line: bottom edge, then the menu. One writer for both, because
+   * rows written is rows the cursor comes back up, and two writers would disagree. */
   function draw(): void {
     const terminal = out.columns || 100;
     const body: string[] = [rule("bottom", terminal)];
@@ -640,32 +509,24 @@ function attachMenu(
       body.push(...rows(menu, { terminal: boxWidth(terminal), height: height(), theme: paint }));
     }
     erase();
-    // The box's right edge, painted onto the row readline has just finished drawing. It
-    // cannot be part of the prompt -- that is a prefix -- and it is skipped once what is
-    // typed reaches it, because the text is worth more than the border.
+    // The right edge, painted onto the row readline just drew -- it cannot be part of the
+    // prompt, which is a prefix. Skipped once the text reaches it.
     const edge = boxWidth(terminal) - 1;
     if (caret() < edge) {
       cursorTo(out, edge);
       out.write(paint.dim("│"));
       cursorTo(out, caret());
     }
-    // A newline rather than `moveCursor` down: at the bottom of the screen this scrolls,
-    // and the input line scrolls with it, so moving back up by the same count still lands
-    // on it. `moveCursor` would refuse to scroll and every row would overwrite the last.
+    // A newline, not `moveCursor` down: at the bottom of the screen this scrolls and the input
+    // line scrolls with it. `moveCursor` refuses to scroll and every row overwrites the last.
     out.write(`\n${body.join("\n")}`);
     moveCursor(out, 0, -body.length);
     cursorTo(out, caret());
     drawn = body.length;
   }
 
-  /**
-   * Print something that arrived on its own, above the prompt rather than across it.
-   *
-   * The warm-up's config warnings land a few seconds after the box is drawn, and a plain
-   * write puts them halfway through the input line -- the box's left edge, then a warning,
-   * then whatever was being typed, on one row. So the box is taken down, the line is
-   * printed, and the box goes back with what was typed still in it.
-   */
+  /** Print something that arrived on its own, above the prompt rather than across it: a plain
+   * write lands halfway through the input line. The box comes down and goes back, text intact. */
   function above(text: string): void {
     erase();
     // The input line and the top rule, in that order: `clearLine` only clears the row the
@@ -682,13 +543,8 @@ function attachMenu(
     draw();
   }
 
-  /**
-   * Start a fresh prompt: the box's top edge, the input line, and whatever goes below it.
-   *
-   * `rl.prompt()` is not called anywhere else in the interactive path. The top edge has to
-   * be printed immediately before the line it belongs to, and a bare `rl.prompt()` would
-   * leave a box with no lid.
-   */
+  /** Start a fresh prompt: top edge, input line, everything below. The only `rl.prompt()` in the
+   * interactive path -- the edge must print immediately before its line or the box has no lid. */
   function open(): void {
     out.write(`${rule("top", out.columns || 100)}\n`);
     rl.prompt();

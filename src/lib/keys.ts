@@ -1,17 +1,7 @@
 import { useEffect, useRef } from "react";
 
-/**
- * Every global keybinding in the app, in one table and behind one listener.
- *
- * PRODUCT.md puts keyboard reach above discoverability, which only pays off if the keys
- * are worth learning -- and they are only worth learning if they are consistent. Scattered
- * `keydown` handlers drift: two panes claim the same chord, one forgets to check whether
- * a text field has focus, and a binding stops working in a way nobody can locate. So there
- * is one listener, and adding a binding means adding a row here.
- *
- * Bindings deliberately do *not* fire while typing, unless they say otherwise. A shortcut
- * that swallows a keystroke in the middle of a commit message is worse than no shortcut.
- */
+/** Every global keybinding in one table behind one listener — scattered `keydown` handlers
+ * drift and collide. Bindings do not fire while typing unless they opt in. */
 
 export interface Binding {
   /** Lower-case `event.key`, or a `Digit1`-style `event.code` for the number row. */
@@ -19,12 +9,8 @@ export interface Binding {
   ctrl?: boolean;
   shift?: boolean;
   alt?: boolean;
-  /**
-   * Fire even when a text field has focus.
-   *
-   * Only for chords a text field cannot mean itself -- Escape to interrupt a turn, or a
-   * Ctrl chord no editor binds. Never for a bare letter.
-   */
+  /** Fire even when a text field has focus. Only for chords a text field cannot mean itself:
+   * Escape, or a Ctrl chord no editor binds. Never a bare letter. */
   whileTyping?: boolean;
   /** What it does, in the app's own words. Shown nowhere yet; the table is the reference. */
   describe: string;
@@ -33,9 +19,8 @@ export interface Binding {
 
 /** Whether the event's target is somewhere the user is entering text. */
 function isTyping(target: EventTarget | null): boolean {
-  // Not every target is an element: with nothing focused the event targets the document,
-  // and a dispatched one can target the window. Neither has `closest`, and calling it
-  // threw inside the handler -- which killed every binding, not just this check.
+  // Not every target is an element: with nothing focused the event targets the document. No
+  // `closest` there, and the throw killed every binding, not just this check.
   if (!(target instanceof Element)) return false;
   const element = target as HTMLElement;
   const tag = element.tagName;
@@ -43,9 +28,8 @@ function isTyping(target: EventTarget | null): boolean {
     tag === "INPUT" ||
     tag === "TEXTAREA" ||
     element.isContentEditable ||
-    // Monaco puts focus on a hidden textarea, and xterm on its own helper textarea; both
-    // are covered above. This catches the wrappers, so a click into the editor body and
-    // then a bare key does not trigger a binding meant for the app.
+    // Monaco and xterm focus hidden textareas, covered above. This catches their wrappers, so a
+    // click into the editor body then a bare key does not fire an app binding.
     element.closest(".monaco-editor, .xterm") !== null
   );
 }
@@ -60,13 +44,8 @@ function matches(binding: Binding, event: KeyboardEvent): boolean {
   return event.key.toLowerCase() === binding.key;
 }
 
-/**
- * Install the app's bindings for as long as the component lives.
- *
- * The list is read from a ref, so a binding closing over fresh state does not tear down
- * and re-add the listener on every render -- which would drop a keypress that arrived
- * mid-render.
- */
+/** Install the app's bindings for as long as the component lives. The list is read from a ref,
+ * so re-adding the listener each render cannot drop a keypress that arrived mid-render. */
 export function useKeybindings(bindings: Binding[]): void {
   const current = useRef(bindings);
   useEffect(() => {
@@ -109,14 +88,8 @@ export function describeChord(binding: Binding): string {
 
 // --- Focus -----------------------------------------------------------------------
 
-/**
- * Moving focus between panes, as a subscription rather than a prop.
- *
- * The alternative is threading a "focus this" value from the app through every component
- * between it and the thing that actually calls `.focus()`. That works and it is a chore,
- * and every new pane pays it again. A pane declaring what it answers to is the shorter
- * description of the same behaviour.
- */
+/** Moving focus between panes, as a subscription rather than a prop threaded through every
+ * component between the app and whatever finally calls `.focus()`. */
 export type Pane = "tree" | "composer" | "editor" | "terminal";
 
 const listeners = new Map<Pane, () => void>();
@@ -126,12 +99,8 @@ export function requestFocus(pane: Pane): void {
   listeners.get(pane)?.();
 }
 
-/**
- * Answer focus requests for `pane` while mounted.
- *
- * One listener per pane, last mount wins: two things claiming to be the editor is a bug,
- * and the newer one is the one on screen.
- */
+/** Answer focus requests for `pane` while mounted. One listener per pane, last mount wins: two
+ * things claiming to be the editor is a bug, and the newer one is on screen. */
 export function useFocusTarget(pane: Pane, focus: () => void): void {
   const current = useRef(focus);
   useEffect(() => {

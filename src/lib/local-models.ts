@@ -1,32 +1,5 @@
-/**
- * The models you can run here, and what it takes to run one.
- *
- * A `.gguf` is only weights; llama.cpp runs them. "Use local model" therefore means three
- * downloads and a config entry, and this module is the part with judgement in it: which
- * models are worth offering, how big each one is, and whether the machine in front of you
- * can actually hold it.
- *
- * ## Why a fixed list rather than a search box
- *
- * Hugging Face has hundreds of thousands of repositories and most of them are a bad idea
- * here: base models with no instruction tuning, merges nobody has evaluated, and quants of
- * models that cannot call a tool. agentide is unusable on a model that cannot call tools --
- * the `ide_*` calls are how it does everything -- so a wrong choice does not read as a
- * weaker model, it reads as a broken IDE. A short list of things known to work is worth
- * more than a search over everything.
- *
- * Every size and filename below was read from the Hugging Face API rather than remembered.
- * A wrong filename is a 404 at the end of a long download.
- *
- * ## Fitting
- *
- * A model runs fastest entirely in VRAM. What does not fit spills to system RAM and runs
- * an order of magnitude slower -- still useful for a mixture-of-experts model, where only
- * a few billion parameters are active per token, and painful for a dense one. So `fitsIn`
- * reports a degree rather than a yes or no, and the list stays complete either way: a
- * machine that cannot run the best model today may be a different machine next month, and
- * hiding it would only hide the reason to upgrade.
- */
+/** The models you can run here. A fixed list: agentide is unusable on a model that cannot call
+ * tools, and sizes and filenames come from the HF API — a wrong one is a 404 after 17GB. */
 
 /** How well a model fits the hardware in front of you. */
 export type Fit = "vram" | "spills" | "too-big";
@@ -41,42 +14,18 @@ export interface LocalModel {
   file: string;
   /** On-disk size, from the API. */
   gigabytes: number;
-  /**
-   * The context the model was trained with, from the GGUF metadata.
-   *
-   * A hard ceiling, not a preference: llama.cpp caps a larger request rather than honouring
-   * it -- "the slot context (65536) exceeds the training context of the model (32768) -
-   * capping" -- so a model below what agentide's prompt needs cannot be made to work by
-   * configuring anything. Read from the Hugging Face API per model; never guessed.
-   */
+  /** Trained context, from the GGUF metadata. A hard ceiling: llama.cpp caps a larger request
+   * ("exceeds the training context of the model") rather than honouring it. Never guessed. */
   trainedContext: number;
-  /**
-   * Whether only a fraction of the weights are active per token. A mixture-of-experts
-   * model tolerates spilling to system RAM far better than a dense one of the same size,
-   * which is the difference between "slow" and "unusable".
-   */
+  /** Whether only a fraction of the weights are active per token. Mixture-of-experts tolerates
+   * spilling to system RAM far better than a dense model of the same size. */
   mixture: boolean;
   /** What it is for, in the one line the list has room for. */
   note: string;
 }
 
-/**
- * The ten most downloaded open models that can drive this IDE, plus two small ones.
- *
- * Ordered by how widely they are actually used, not by what suits any one machine. That is
- * deliberate: the list is the same on a 6GB laptop and a 24GB workstation, and `fitsIn`
- * says which of them the hardware in front of you can hold. Curating by the author's own
- * GPU would quietly make the catalogue smaller for everyone else.
- *
- * The last two are not in the top ten and are here anyway. Popularity skews large -- the
- * most downloaded models want 16GB and up -- and a list where nothing runs on a modest card
- * is a list that helps nobody who has one.
- *
- * Excluded on purpose: embedding and speech models, which are popular and are not chat
- * models; "uncensored" and "abliterated" merges, which are popular and unevaluated; and
- * anything whose weights are split across shards, because the downloader fetches one file
- * and would report a fifth of a model as complete.
- */
+/** The ten most downloaded open models that can drive this IDE, plus two small ones, since
+ * popularity skews large. Excluded: embedding, speech, unevaluated merges, and sharded weights. */
 export const LOCAL_MODELS: LocalModel[] = [
   {
     id: "qwen3-coder-30b",
@@ -200,22 +149,12 @@ export const LOCAL_MODELS: LocalModel[] = [
   },
 ];
 
-/**
- * Headroom the context window needs beside the weights.
- *
- * The KV cache grows with the context, and 64k of it on a model this size is over a
- * gigabyte. Counting only the file would call a model a fit and then fail to load it,
- * which is the worst moment to find out.
- */
+/** Headroom the context window needs beside the weights: 64k of KV cache on a model this size is
+ * over a gigabyte, and counting only the file calls a model a fit that then fails to load. */
 const CONTEXT_OVERHEAD_GB = 2;
 
-/**
- * Whether `model` fits in `vramGb`, and how badly it does not.
- *
- * `null` VRAM means nothing could be detected -- no NVIDIA card, or `nvidia-smi` absent.
- * Everything then reads as `spills`, which is honest: it will run on the CPU, and it will
- * be slow.
- */
+/** Whether `model` fits in `vramGb`, and how badly it does not. `null` VRAM means nothing was
+ * detected, so everything reads as `spills` — it will run on the CPU, slowly. */
 export function fitsIn(model: LocalModel, vramGb: number | null): Fit {
   if (vramGb === null) return "spills";
   if (model.gigabytes + CONTEXT_OVERHEAD_GB <= vramGb) return "vram";
@@ -232,18 +171,8 @@ export function fitLabel(fit: Fit): string {
   return "too big for this machine";
 }
 
-/**
- * The port a model's server listens on, derived from its id.
- *
- * From the id and not from its position in the list, which is what this replaced. A
- * position-derived port moves when the catalogue is reordered -- so a model installed last
- * month keeps the port it was written with while a newly installed one is handed the same
- * number, and then two entries gate on one port: starting either satisfies both, and a turn
- * runs against whichever model happens to be loaded. Rare, silent, and very hard to see.
- *
- * A hash rather than a counter because nothing here remembers what is already installed;
- * the same id must produce the same port on every machine and every run.
- */
+/** The port a model's server listens on, hashed from its id. A position-derived port moves when
+ * the catalogue is reordered, and then two entries gate on one port. */
 export function portFor(model: LocalModel): number {
   let hash = 0;
   for (const character of model.id) {
@@ -273,13 +202,8 @@ export function enginePath(home: string): string {
   return `${installRoot(home)}/engine/llama-server.exe`;
 }
 
-/**
- * The provider entry a downloaded model becomes.
- *
- * Written before the download finishes on purpose. The entry is gated on its port, so
- * until llama.cpp is there and running it simply reports as not answering -- which is the
- * truth, and better than a picker that stays empty while 17GB arrives.
- */
+/** The provider entry a downloaded model becomes. Written before the download finishes: the entry
+ * is gated on its port, so it reads as not answering — truer than an empty picker for 17GB. */
 export function providerEntry(
   home: string,
   model: LocalModel,
@@ -295,20 +219,8 @@ export function providerEntry(
   };
 }
 
-/**
- * The command that runs a downloaded model, for the entry the picker uses before the
- * sidecar has read `providers.json` for itself.
- *
- * This is deliberately the second copy of a string built in `sidecar/src/provider-config.ts`,
- * and the duplication is the lesser evil. The sidecar owns the file and derives the command
- * from it; the frontend needs the same command one turn earlier, because a model installed
- * mid-session is launched from here before the sidecar has looked. Without it the first
- * prompt after installing a model starts nothing at all and fails on the gate, which is the
- * worst possible moment for that.
- *
- * They must agree, and the `&` is the part that matters -- see the note in
- * `provider-config.ts` for why PowerShell needs it.
- */
+/** The command that runs a downloaded model, before the sidecar has read `providers.json`. Second
+ * copy of a string in `sidecar/src/provider-config.ts`; the `&` is the part that matters. */
 export function startCommandFor(
   home: string,
   model: LocalModel,
@@ -318,28 +230,8 @@ export function startCommandFor(
   return `& "${enginePath(home)}" -m "${modelPath(home, model)}" -c ${context} --port ${port} --host 127.0.0.1`;
 }
 
-/**
- * The script that fetches everything a model needs, for a terminal tab.
- *
- * PowerShell rather than a Rust downloader, and visible rather than quiet, for the same
- * reason `ide_run` exists: this is minutes of work with several ways to fail -- no disk
- * space, a proxy, a driver too old for the CUDA build -- and every one of them is one
- * legible line here and an opaque error bar anywhere else. It also means no new
- * dependency and nothing to reimplement: `curl.exe` and `Expand-Archive` ship with
- * Windows.
- *
- * Three properties matter and all three are tested:
- *
- * **Idempotent.** Every step is skipped when its output already exists, so pressing the
- * button twice does not download 17GB twice, and a failed run resumes rather than restarts.
- *
- * **Resumable.** `curl -C -` continues a partial file. A 17GB download that has to start
- * over because a laptop slept is the difference between a feature and a nuisance.
- *
- * **Self-dating.** llama.cpp tags a release per build, so the version is resolved from the
- * GitHub API at run time. A URL pinned here would rot, and it would rot silently -- into a
- * 404 at the start of a long operation.
- */
+/** The script that fetches everything a model needs, in a visible tab. Idempotent (steps skipped
+ * when their output exists), resumable (`curl -C -`), and self-dating (a pinned tag rots to 404). */
 export function installScript(home: string, model: LocalModel, cuda: boolean): string {
   const root = installRoot(home);
   const engineDir = `${root}/engine`;
@@ -398,53 +290,21 @@ export function installScript(home: string, model: LocalModel, cuda: boolean): s
   ].join("\n");
 }
 
-/**
- * The smallest context agentide can actually run in.
- *
- * Measured, not chosen. A turn whose entire user message was "hi" produced a request of
- * **41,476 tokens** before the model saw a word of it: the `claude_code` preset, the tuned
- * prompt, thirteen `ide_*` tool descriptions, and every tool of every configured MCP server
- * -- 51 of them on the machine this was measured on. A 32k window does not fail gracefully
- * against that; llama.cpp refuses the request outright with `exceeds the available context
- * size`, and every turn fails identically no matter what you ask.
- *
- * So 64k is the floor here even though 32k is the usual advice for local coding models.
- * agentide's prompt is bigger than most, and the number that matters is this app's, not the
- * general one. Below 64k the honest answer is that a smaller model with more room beats a
- * bigger one with none.
- */
+/** The smallest context agentide can run in. Measured: a turn whose message was "hi" sent 41,476
+ * tokens of prefix, and a 32k window refuses that outright rather than degrading. */
 const MIN_CONTEXT = 65_536;
 
-/**
- * How much context to load a model with.
- *
- * Bounded above by what is left after the weights, because a context the card cannot hold
- * fails at load time rather than degrading -- and bounded below by `MIN_CONTEXT`, because a
- * context that cannot hold the prompt fails on every turn, which is worse. When those two
- * conflict the floor wins: llama.cpp will keep what does not fit in system RAM and run
- * slowly, and slow beats a window that refuses the request.
- */
+/** How much context to load a model with. Bounded above by what is left after the weights, below
+ * by `MIN_CONTEXT`. The floor wins a conflict: spilling to RAM is slow, a small window refuses. */
 export function contextFor(model: LocalModel, vramGb: number | null): number {
   const wanted = vramGb !== null && vramGb - model.gigabytes >= 6 ? 131_072 : MIN_CONTEXT;
-  // Never above what the model was trained for. Asking is not refused, it is silently
-  // capped -- llama.cpp says so in one line and then runs at the smaller size -- so a
-  // config that asked for more would look applied and change nothing.
+  // Never above what the model was trained for. Asking is not refused, it is silently capped, so
+  // a config asking for more would look applied and change nothing.
   return Math.min(wanted, model.trainedContext);
 }
 
-/**
- * Whether agentide's prompt fits in this model at all.
- *
- * Not a matter of hardware or configuration: `trainedContext` is a property of the weights,
- * and a model below the floor caps every request at its own size and rejects each one. The
- * symptom is identical whatever you ask -- `request (41476 tokens) exceeds the available
- * context size` -- which reads as agentide being broken rather than as the model being too
- * small for it.
- *
- * So it is said in the list, before the download rather than after it. Qwen2.5 Coder 7B was
- * the model that taught this: 4.4GB fetched, installed, launched, and structurally unable to
- * answer a single turn.
- */
+/** Whether agentide's prompt fits in this model at all — a property of the weights, so it is said
+ * before the download. Qwen2.5 Coder 7B: 4.4GB fetched, unable to answer a single turn. */
 export function runsAgentide(model: LocalModel): boolean {
   return model.trainedContext >= MIN_CONTEXT;
 }

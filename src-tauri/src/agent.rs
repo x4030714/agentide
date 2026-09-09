@@ -1,25 +1,5 @@
-//! The agent sidecar: spawn, JSON-lines codec, request routing.
-//!
-//! The Claude Agent SDK is a Node library, so the agent loop runs in a child process and
-//! talks newline-delimited JSON over stdio. This module owns that child: its lifetime,
-//! its wire, and the routing between it and the webview.
-//!
-//! ## The wire
-//!
-//! Defined once, in `sidecar/src/protocol.ts`. [`HostMessage`] and [`SidecarMessage`]
-//! below are the Rust half of that mirror; the parts the frontend also sees live in
-//! `ipc.rs`. `sidecar/protocol-fixtures.json` holds one canonical message per variant and
-//! both sides round-trip it in their own tests, so a field renamed on one side and not
-//! the other fails a test rather than a session.
-//!
-//! ## Who answers
-//!
-//! The sidecar computes nothing that belongs to the IDE: a permission prompt and an IDE
-//! tool both arrive here as a request with an id and block until something replies with
-//! that id. [`AgentStartOptions`] is where the frontend declares what it is able to
-//! answer. Anything it does not claim, this module answers itself -- immediately, and
-//! honestly -- so a missing backend produces a tool error the model can route around
-//! rather than a turn that never ends.
+//! The agent sidecar: spawn a Node child, talk newline-delimited JSON over its stdio, and
+//! route between it and the webview. Whatever the frontend does not claim, this answers.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -40,9 +20,7 @@ use crate::ipc::{
     WirePath,
 };
 
-// ---------------------------------------------------------------------------
-// The stdio wire
-// ---------------------------------------------------------------------------
+// --- The stdio wire --------------------------------------------------------
 
 /// Host to sidecar. Mirror of `HostMessage` in `sidecar/src/protocol.ts`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,9 +71,8 @@ enum SidecarMessage {
     /// Sent with the models, for the same reason: both describe the installation.
     #[serde(rename_all = "camelCase")]
     Commands { commands: Vec<SlashCommand> },
-    /// The backends `providers.json` names. Sent at startup, so the picker is useful
-    /// before any turn has run, and again each turn because the file is re-read each
-    /// turn. Carries no credential: see [`ProviderInfo`].
+    /// The backends `providers.json` names. Sent at startup so the picker works before any
+    /// turn, and again each turn because the file is. No credential: see [`ProviderInfo`].
     #[serde(rename_all = "camelCase")]
     Providers { providers: Vec<ProviderInfo> },
     /// The external MCP servers the sidecar held back this turn, because the application
@@ -130,9 +107,7 @@ enum SidecarMessage {
     Pong { id: String },
 }
 
-// ---------------------------------------------------------------------------
-// Codec
-// ---------------------------------------------------------------------------
+// --- Codec -----------------------------------------------------------------
 
 /// Read buffer for the sidecar's stdout. Messages far larger than this are routine --
 /// an `event` carrying a tool result carries whatever the tool read.
@@ -142,13 +117,8 @@ const READ_BUFFER: usize = 16 * 1024;
 /// desynchronized rather than merely large, and buffering more of it helps nobody.
 const MAX_LINE_BYTES: usize = 32 * 1024 * 1024;
 
-/// Reassembles newline-delimited lines from arbitrary byte chunks.
-///
-/// Mirror of `LineDecoder` in `sidecar/src/protocol.ts`. A pipe read boundary falls
-/// wherever the OS puts it: mid-message, mid-line and mid-UTF-8-character are all
-/// normal. Buffering bytes rather than text means the split character needs no special
-/// case; the carry buffer covers the split line. Neither a chunk smaller than a message
-/// nor a message larger than a chunk is exceptional.
+/// Reassembles newline-delimited lines from arbitrary byte chunks; mirror of `LineDecoder`
+/// in `sidecar/src/protocol.ts`. Buffers bytes, so a split character needs no special case.
 struct LineDecoder {
     carry: Vec<u8>,
     max_line_bytes: usize,
@@ -162,10 +132,8 @@ impl LineDecoder {
         }
     }
 
-    /// Append `chunk` and push every complete line it finishes onto `out`.
-    ///
-    /// Returns an error once the unterminated tail passes the ceiling; the carry is
-    /// dropped, so a caller that keeps going resynchronizes at the next newline.
+    /// Append `chunk` and push every complete line it finishes onto `out`. Past the ceiling
+    /// the carry is dropped and an error returned, so a caller resyncs at the next newline.
     fn push(&mut self, chunk: &[u8], out: &mut Vec<String>) -> Result<(), IpcError> {
         let mut rest = chunk;
         while let Some(at) = rest.iter().position(|byte| *byte == b'\n') {
@@ -211,9 +179,7 @@ fn take_utf8(bytes: &mut Vec<u8>) -> Result<String, IpcError> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Process
-// ---------------------------------------------------------------------------
+// --- Process ---------------------------------------------------------------
 
 /// How long the sidecar gets to exit after its stdin closes, before it is killed.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(1500);
@@ -228,16 +194,12 @@ const STDERR_TAIL: usize = 40;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartOptions {
-    /// Names of `ide_*` tools the frontend will answer with `agent_tool_reply`.
-    ///
-    /// Anything not named here is answered by this module immediately, with a message
-    /// saying which backend is missing. That keeps an unbuilt tool a one-line tool error
-    /// instead of a thirty-second stall in every turn that touches it.
+    /// Names of `ide_*` tools the frontend will answer with `agent_tool_reply`. Anything not
+    /// named is answered here at once, so an unbuilt tool is a tool error, not a stalled turn.
     #[serde(default)]
     pub host_tools: Vec<String>,
-    /// The frontend will answer permission requests with `agent_permission_reply`. When
-    /// false -- which is the case until Phase 2 ships the approval UI -- every prompt is
-    /// denied at once with an explanation, rather than left waiting on nobody.
+    /// The frontend will answer permission requests with `agent_permission_reply`. When false
+    /// every prompt is denied at once with an explanation, rather than left waiting on nobody.
     #[serde(default)]
     pub host_permissions: bool,
 }
@@ -275,8 +237,7 @@ impl Router {
             .and_then(|()| stdin.write_all(b"\n"))
             .and_then(|()| stdin.flush());
         if let Err(err) = written {
-            // A broken pipe means the child is gone. Drop the handle so the next caller
-            // gets the clear error above instead of a second io failure.
+            // A broken pipe means the child is gone. Drop the handle for the error above.
             *slot = None;
             return Err(IpcError::from_io(&err, "cannot reach the agent host"));
         }
@@ -354,9 +315,8 @@ impl Router {
         Ok(())
     }
 
-    /// Forward one sidecar message to the frontend, answering it here when nobody else
-    /// will. Called only from the reader thread, so the frontend sees events in the
-    /// order the sidecar produced them.
+    /// Forward one sidecar message to the frontend, answering it here when nobody else will.
+    /// Reader thread only, so the frontend sees events in the order the sidecar made them.
     fn dispatch(&self, message: SidecarMessage) {
         match message {
             SidecarMessage::Ready { pid, sdk_version } => {
@@ -451,10 +411,8 @@ impl Router {
     }
 }
 
-/// What the model is told when a tool has no backend in this build.
-///
-/// Phrased as a fact plus an instruction: a model that is told only "unavailable" retries
-/// the call, and a model that is told nothing invents an answer.
+/// What the model is told when a tool has no backend in this build. A fact plus an
+/// instruction: told only "unavailable" a model retries, told nothing it invents an answer.
 fn unavailable(name: &str) -> String {
     let blocker = match name {
         "ide_open" | "ide_selection" | "ide_open_editors" => {
@@ -488,9 +446,8 @@ impl Drop for Agent {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::SeqCst);
         self.router.close_stdin();
-        // Closing stdin is the sidecar's shutdown signal, and it is the path that also
-        // tears down the SDK's own child process. Killing outright would leave that one
-        // behind on Windows, where there is no process group to signal.
+        // Closing stdin is the sidecar's shutdown signal, and the path that also tears down
+        // the SDK's own child. A kill leaves that one behind: Windows has no process group.
         if await_exit(&self.process, Instant::now() + SHUTDOWN_GRACE).is_none() {
             let mut child = self.process.lock().expect("agent process poisoned");
             let _ = child.kill();
@@ -499,10 +456,8 @@ impl Drop for Agent {
     }
 }
 
-/// Poll until the child exits or `deadline` passes. `None` means it is still running.
-///
-/// The lock is released around each sleep so this can run on the reader thread and the
-/// shutdown path at the same time without either blocking the other.
+/// Poll until the child exits or `deadline` passes. `None` means it is still running. The
+/// lock is released around each sleep, so the reader thread and shutdown can both wait.
 fn await_exit(process: &Mutex<Child>, deadline: Instant) -> Option<Option<i32>> {
     loop {
         {
@@ -525,13 +480,8 @@ fn await_exit(process: &Mutex<Child>, deadline: Instant) -> Option<Option<i32>> 
 #[derive(Default)]
 pub struct AgentState(Mutex<Option<Agent>>);
 
-/// How to run the sidecar.
-///
-/// Development runs the esbuild bundle under the system `node`. `std::process::Command`
-/// is not gated by a Tauri capability, so this needs no `shell:allow-execute` entry and
-/// there is no `"sidecar": true` permission to forget. Release will ship the bundle plus
-/// a Node runtime as a `bundle.externalBin` and this function will return that binary
-/// with no script argument instead; nothing else in this module changes.
+/// How to run the sidecar. `std::process::Command` needs no Tauri capability, so there is no
+/// `shell:allow-execute` or `"sidecar": true` to forget. Release ships the bundle plus Node.
 fn resolve_command() -> Result<Command, IpcError> {
     let script = sidecar_script();
     if !script.is_file() {
@@ -545,9 +495,8 @@ fn resolve_command() -> Result<Command, IpcError> {
     }
     let mut command = Command::new(node_runtime());
     command.arg(&script);
-    // The child inherits this process's environment deliberately: ANTHROPIC_API_KEY, or
-    // the credentials of an existing Claude Code login, is how the SDK authenticates.
-    // Nothing here reads, stores or logs either.
+    // The child inherits this process's environment deliberately: ANTHROPIC_API_KEY, or an
+    // existing Claude Code login, is how the SDK authenticates. Nothing here reads or logs it.
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -558,11 +507,8 @@ fn resolve_command() -> Result<Command, IpcError> {
     Ok(command)
 }
 
-/// Where the packaged app keeps its resources, learned once at startup.
-///
-/// A `OnceLock` rather than plumbing an `AppHandle` down here: the path is a property of
-/// the installation, fixed before the first command runs, and threading a handle through
-/// every call site to read a constant would be worse than saying so once.
+/// Where the packaged app keeps its resources, learned once at startup. A `OnceLock` rather
+/// than an `AppHandle` threaded down here to read what is fixed before the first command.
 static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Called from `lib.rs`'s setup, where the `AppHandle` exists.
@@ -578,10 +524,8 @@ fn sidecar_script() -> PathBuf {
     if let Some(resources) = RESOURCE_DIR.get() {
         let bundled = resources.join("sidecar/main.mjs");
         if bundled.is_file() {
-            // Through `WirePath` to strip the `\\?\` verbatim prefix Tauri hands back.
-            // Node cannot resolve a main module through one: it gives up partway and
-            // reports `EISDIR ... lstat 'C:'`, which says nothing about the real cause.
-            // Every other path in this app is normalized for the same reason.
+            // Through `WirePath` to strip the `\\?\` verbatim prefix Tauri hands back: Node
+            // cannot resolve a main module through one, and reports `EISDIR ... lstat 'C:'`.
             return WirePath::from_path(&bundled)
                 .map(|path| path.to_path())
                 .unwrap_or(bundled);
@@ -591,13 +535,8 @@ fn sidecar_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/dist/main.mjs")
 }
 
-/// The Node that runs the sidecar.
-///
-/// The packaged app ships its own next to the executable, so it does not depend on the
-/// machine having Node installed, or on the version it happens to have. Falling back to
-/// `node` on PATH is the development path -- and the honest failure when a bundle is
-/// somehow incomplete, since the error it produces names a missing program rather than
-/// something subtler.
+/// The Node that runs the sidecar: the packaged app ships its own rather than depend on the
+/// machine's. Falling back to `node` on PATH is development, and an honestly named failure.
 fn node_runtime() -> PathBuf {
     if let Some(overridden) = std::env::var_os("AGENTIDE_NODE") {
         return PathBuf::from(overridden);
@@ -614,9 +553,8 @@ fn node_runtime() -> PathBuf {
     PathBuf::from("node")
 }
 
-/// Start the sidecar and stream its events to `on_event`.
-///
-/// Replaces any agent already running, which stops the old one first.
+/// Start the sidecar and stream its events to `on_event`. Replaces any agent already
+/// running, stopping the old one first.
 #[tauri::command]
 pub async fn agent_start(
     state: State<'_, AgentState>,
@@ -748,10 +686,8 @@ pub fn agent_tool_reply(
     })
 }
 
-/// Stop the sidecar on the way out of the app.
-///
-/// Tauri does not guarantee that managed state is dropped on exit, and an agent host left
-/// running would keep a Node process and its SDK child alive with no window attached.
+/// Stop the sidecar on the way out. Tauri does not guarantee managed state is dropped on
+/// exit, and an agent host left running keeps Node and its SDK child alive with no window.
 pub fn shutdown(app: &AppHandle) {
     let state = app.state::<AgentState>();
     let previous = state.0.lock().expect("agent state poisoned").take();
@@ -794,12 +730,8 @@ fn spawn_thread(
         })
 }
 
-/// Read the sidecar's stdout until it ends, then report that it is gone.
-///
-/// Every path out of the read loop -- clean exit, crash, unreadable stream -- lands in
-/// the same place: reap the child, close the input side so no later command writes into
-/// a dead pipe, and tell the frontend which requests will never be answered. A pending
-/// permission prompt or tool call fails with the sidecar rather than outliving it.
+/// Read the sidecar's stdout until it ends, then report that it is gone. Every way out lands
+/// here: reap, close the input side, and fail the requests that will never be answered.
 fn supervise(
     stdout: ChildStdout,
     router: &Arc<Router>,
@@ -909,9 +841,8 @@ mod tests {
         serde_json::from_str(FIXTURES).expect("protocol-fixtures.json is not readable")
     }
 
-    /// Parse each fixture into the Rust type and serialize it back. A field this side
-    /// renamed, retyped or dropped shows up as a difference; an extra field in the
-    /// fixture disappears on the way back out and shows up too.
+    /// Parse each fixture into the Rust type and serialize it back. A field renamed, retyped
+    /// or dropped shows up as a difference; so does an extra one, which vanishes on the way out.
     fn round_trip<T>(cases: &[Fixture])
     where
         T: Serialize + serde::de::DeserializeOwned,
@@ -938,12 +869,8 @@ mod tests {
         round_trip::<SidecarMessage>(&fixtures().sidecar_to_host);
     }
 
-    /// The tags a mirror declares, read out of serde's own complaint about one it does
-    /// not know.
-    ///
-    /// Derived rather than written out here: a list kept by hand gets updated in the
-    /// same edit that adds the variant, which leaves the coverage check agreeing with
-    /// whatever was just written instead of demanding a fixture for it.
+    /// The tags a mirror declares, read out of serde's own complaint about one it does not
+    /// know. Derived, not listed: a hand-kept list is updated in the edit that adds the variant.
     fn declared_tags<T: std::fmt::Debug + serde::de::DeserializeOwned>() -> Vec<String> {
         let unknown = serde_json::json!({ "t": "no_such_variant" });
         let complaint = serde_json::from_value::<T>(unknown)
@@ -1095,10 +1022,8 @@ mod tests {
         );
     }
 
-    /// Spawn the real sidecar and round-trip a message over its real stdio.
-    ///
-    /// `ping` exists so this can prove the whole path -- spawn, encode, pipe, decode --
-    /// without a prompt, a model or a token spent.
+    /// Spawn the real sidecar and round-trip a message over its real stdio. `ping` proves the
+    /// whole path -- spawn, encode, pipe, decode -- with no prompt, no model, no token spent.
     #[test]
     fn built_sidecar_answers_over_its_real_stdio() {
         let script = sidecar_script();
@@ -1125,9 +1050,8 @@ mod tests {
         stdin.write_all(b"\n").expect("write failed");
         stdin.flush().expect("flush failed");
 
-        // Read until the pong rather than a fixed count. The sidecar volunteers what it
-        // knows at startup -- `ready`, then the configured providers -- and a loop that
-        // stopped after two messages would consume those and report the answer missing.
+        // Read until the pong rather than a fixed count: the sidecar volunteers `ready` and
+        // the providers at startup, and a two-message loop would eat those and report a miss.
         let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
         let mut seen = Vec::new();
         for _ in 0..8 {
@@ -1151,10 +1075,8 @@ mod tests {
             "the first message must be `ready`, got {:?}",
             seen[0]
         );
-        // Somewhere after it, not immediately after it. The sidecar volunteers what it
-        // knows at startup — the configured providers today, more later — and pinning the
-        // pong to index 1 made this test fail every time it learned to say something new,
-        // which is a false alarm about the thing it is not testing.
+        // Somewhere after it, not immediately after it: the sidecar volunteers what it knows
+        // at startup, so pinning the pong to index 1 failed whenever it learned to say more.
         assert!(
             seen.iter().any(
                 |message| matches!(message, SidecarMessage::Pong { id } if id == "smoke")

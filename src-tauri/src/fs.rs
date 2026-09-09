@@ -220,9 +220,8 @@ pub async fn read_file(path: WirePath) -> Result<FileContents, IpcError> {
     })
 }
 
-/// Write a text file, creating parent directories as needed.
-///
-/// `bom` re-adds the byte-order mark the file was read with; see [`FileContents`].
+/// Write a text file, creating parent directories as needed. `bom` re-adds the byte-order
+/// mark the file was read with; see [`FileContents`].
 #[tauri::command]
 pub async fn write_file(
     path: WirePath,

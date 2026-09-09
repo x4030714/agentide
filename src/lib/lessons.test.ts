@@ -1,10 +1,5 @@
-/**
- * When a fix counts as a lesson, and when it does not.
- *
- * Both halves matter equally. A missed transition is a lesson lost, and a false one is a
- * note in the vault forever, costing prompt tokens on every later turn to say something
- * that was never true. The retry case below is the one that would produce those.
- */
+/** When a fix counts as a lesson and when it does not — the retry case is the one that would
+ * produce a false note, which costs prompt tokens forever. */
 
 import { beforeEach, describe, expect, test } from "vitest";
 

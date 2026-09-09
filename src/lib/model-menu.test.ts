@@ -1,10 +1,5 @@
-/**
- * The picker's grouping rules.
- *
- * Each case is a way the menu was wrong before: two rows meaning "default", a version
- * choice that disappeared once the catalogue arrived, and an alias that would not say
- * which model it was.
- */
+/** The picker's grouping rules — each case is a way the menu was wrong: two "default" rows, a
+ * version choice lost once the catalogue arrived, an alias that would not say which model. */
 
 import { describe, expect, test } from "vitest";
 

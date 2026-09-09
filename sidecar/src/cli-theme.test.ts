@@ -1,10 +1,5 @@
-/**
- * That colour is off when it should be off, and that padding counts columns not bytes.
- *
- * Both failures are invisible until someone else hits them: escape codes in a piped log
- * are only noticed by whoever greps it, and a column short by the length of its own colour
- * only looks wrong once a row is coloured differently from its neighbour.
- */
+/** Colour is off when it should be off, and padding counts columns not bytes. Both
+ * failures are invisible until someone greps a piped log or diffs two coloured rows. */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";

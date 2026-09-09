@@ -1,18 +1,5 @@
-/**
- * The `agentide` MCP server: the tools that make this an IDE agent rather than a terminal
- * agent in a window.
- *
- * Every handler here is a proxy. It computes nothing, reads nothing and caches nothing;
- * it emits a `tool_call` and waits for the host's `tool_reply`. The data these tools
- * return -- what you have selected, which files are open, what the language server
- * currently believes -- lives in the webview and the Rust core, and a copy of it in this
- * process would be a stale copy. Keeping the boundary this thin is what let the backends
- * land without touching the model-facing surface: the descriptions and schemas below are
- * the contract, and the phases that followed only changed who answers.
- *
- * The host answers a tool it does not implement with an explicit error rather than
- * silence, which the model sees as a failed tool and can route around.
- */
+/** The `agentide` MCP server. Every handler is a pure proxy -- emit `tool_call`, await
+ * `tool_reply` -- because the truth lives in the webview and Rust core, not here. */
 
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
@@ -20,13 +7,8 @@ import { z } from "zod";
 import { HostLink, TOOL_TIMEOUT_MS } from "./host.ts";
 import type { JsonObject, ToolResult } from "./protocol.ts";
 
-/**
- * The MCP server name. Tools reach the model as `mcp__agentide__<tool>`.
- *
- * Not "ide": Claude Code ships its own MCP server under that name for editor integration,
- * and ours was being shadowed by it -- connecting successfully and then contributing zero
- * tools, with no error on either side. The name has to be one nothing else claims.
- */
+/** Tools reach the model as `mcp__agentide__<tool>`. Not "ide" -- Claude Code ships its own
+ * server under that name and silently shadowed ours down to zero tools. */
 export const IDE_SERVER_NAME = "agentide";
 
 const INSTRUCTIONS = [
@@ -43,13 +25,8 @@ const INSTRUCTIONS = [
   "yourself: the server has usually already computed the correct one.",
 ].join(" ");
 
-/**
- * Ask the host to run a tool and turn its answer into an MCP result.
- *
- * A timeout, a dead host and a host-side failure all arrive as `isError` content rather
- * than a thrown exception, so one unavailable IDE feature degrades the turn instead of
- * ending it.
- */
+/** Ask the host to run a tool. Timeouts, a dead host and host-side failures all come back as
+ * `isError` content, never a throw, so one dead feature degrades the turn instead of ending it. */
 async function callHost(
   link: HostLink,
   sessionId: string,
@@ -75,13 +52,8 @@ async function callHost(
   }
 }
 
-/**
- * Build the `agentide` server for one session.
- *
- * One server per session rather than one per process: the handlers close over the
- * session id, which is what lets the host attribute a `tool_call` to the transcript that
- * caused it and cancel it when that session is interrupted.
- */
+/** One server per session, not per process: the handlers close over the session id, which is
+ * how the host attributes a `tool_call` to a transcript and cancels it on interrupt. */
 export function createIdeServer(
   link: HostLink,
   sessionId: string,
@@ -531,36 +503,8 @@ export function createIdeServer(
     name: IDE_SERVER_NAME,
     version: "0.1.0",
     instructions: INSTRUCTIONS,
-    /**
-     * Whether these fifteen sit in the prompt or behind tool search. On by default,
-     * and `session.ts` turns it off for a local backend.
-     *
-     * It used to be unconditional, because without it the tools did not reach the model
-     * at all: MCP startup is non-blocking, so at the moment the first prompt was built
-     * this server had not connected, its tools were not in the search index, and a model
-     * looking for `ide_definition` found nothing and fell back to Grep with no error
-     * anywhere to say why.
-     *
-     * That is no longer what happens, and it was re-measured rather than assumed. Two
-     * runs deferred, on a turn that could only be answered by calling `ide_run`: the
-     * model issued a ToolSearch, found the tool and called it, both times.
-     *
-     * What the measurement left is an ordinary trade, and it goes opposite ways on the
-     * two backends:
-     *
-     *   loaded    34,443 tokens in-window, turn 6,537ms
-     *   deferred  31,254 tokens in-window, turn 7,959-9,215ms
-     *
-     * 3,163 tokens against roughly two seconds. On Anthropic the tokens are cached and
-     * cost almost nothing after the first turn, so paying two seconds a turn to save them
-     * is the wrong way round -- keep them loaded. On a local backend there is no prompt
-     * cache: those 3,163 tokens are prefill compute on *every* turn, including the ones
-     * that touch no tool, and they are 5% of the 64k window `contextFor` floors at. There
-     * the round trip is the cheaper half.
-     *
-     * The cost of loading is that startup waits for this server, capped at 5s. It is
-     * in-process, so that wait is nothing.
-     */
+    /** Loaded on Anthropic, deferred locally. Measured: 3,163 tokens against ~2s a turn --
+     * cached those tokens are free, uncached they are prefill and 5% of a 64k window. */
     alwaysLoad,
     tools: keep(answers, [
       ideOpen,
@@ -582,15 +526,8 @@ export function createIdeServer(
   });
 }
 
-/**
- * Only the tools the host in front of this server can actually answer.
- *
- * `undefined` means all of them, which is the desktop app: it answers every one. A
- * headless host -- the CLI -- has no editor to open a file in and no language server to
- * ask, and a tool it cannot answer must not be declared. This project has already paid
- * for the other arrangement once: a tool the model can see and call, that always fails,
- * is broken forever and silently, and it costs its description in every prompt on the way.
- */
+/** Only the tools this host can answer; `undefined` means all of them (the desktop app). A
+ * declared tool that always fails is broken silently and costs its description every prompt. */
 function keep<T extends { name: string }>(
   answers: readonly string[] | undefined,
   tools: T[],
@@ -600,16 +537,8 @@ function keep<T extends { name: string }>(
   return tools.filter((entry) => allowed.has(entry.name));
 }
 
-/**
- * The names these tools reach the model under: `mcp__agentide__ide_open` and so on.
- *
- * Used to auto-approve them. Most only read state the user is already looking at, or move
- * the cursor in their own editor -- there is nothing to approve. The ones that do write
- * (rename, code actions) write through the language server and are inside the turn's
- * checkpoint, so the undo is one keystroke. Prompting anyway would be worse than not
- * prompting: a dialog that is always answered "Allow" teaches the habit of allowing
- * without reading, and then the prompts that matter get the same reflex.
- */
+/** Prefixed names (`mcp__agentide__ide_open`), used to auto-approve. The writers go through
+ * the language server inside the turn's checkpoint, and always-Allow dialogs teach a reflex. */
 export function ideToolNames(answers?: readonly string[]): string[] {
   const names = answers ? IDE_TOOL_NAMES.filter((name) => answers.includes(name)) : IDE_TOOL_NAMES;
   return names.map((name) => `mcp__${IDE_SERVER_NAME}__${name}`);

@@ -1,9 +1,5 @@
-/**
- * The model catalogue: asked once, forwarded narrow, and never able to fail a turn.
- *
- * No SDK and no network here -- `publish` only needs something shaped like a `Query`,
- * and a stub says more about the caching rule than a real one would.
- */
+/** The model catalogue: asked once, forwarded narrow, and never able to fail a turn. No SDK
+ * and no network -- `publish` only needs something shaped like a `Query`. */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -27,13 +23,8 @@ const SDK_ROW = {
   supportsAutoMode: true,
 };
 
-/**
- * Just enough `Query` to publish from.
- *
- * `commands` defaults to an empty list rather than being left off: `publish` asks for
- * both catalogues, and a stub missing one would fail for a reason that has nothing to do
- * with the model list the test is about.
- */
+/** Just enough `Query` to publish from. `commands` defaults to empty because `publish` asks
+ * for both catalogues and would fail on the missing one instead of the case under test. */
 function fakeQuery(
   answer: () => Promise<unknown>,
   commands: () => Promise<unknown> = async () => [],
@@ -49,12 +40,8 @@ function fakeQuery(
   return { query: query as unknown as Query, calls: () => calls };
 }
 
-/**
- * The model lines out of everything that was sent.
- *
- * `publish` sends the command catalogue too, so "nothing was sent" is no longer the same
- * claim as "no model list was sent" -- and it is the second one these tests are about.
- */
+/** The model lines out of everything sent. `publish` also sends commands, so "nothing was
+ * sent" is not the same claim as "no model list was sent". */
 function modelLines(lines: string[]): string[] {
   return lines.filter((line) => line.includes(String.raw`"t":"models"`));
 }

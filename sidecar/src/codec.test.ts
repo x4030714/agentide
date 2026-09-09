@@ -1,9 +1,5 @@
-/**
- * Codec and mirror tests for the wire protocol.
- *
- * The fixture tests are half of a pair: `src-tauri/src/agent.rs` runs the same file
- * through the Rust types. Both must pass for the mirror to be honest.
- */
+/** Codec and mirror tests for the wire protocol. Half of a pair: `src-tauri/src/agent.rs`
+ * runs the same fixture through the Rust types, and both must pass. */
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -31,12 +27,8 @@ const fixtures = JSON.parse(
 
 const allFixtures = [...fixtures.hostToSidecar, ...fixtures.sidecarToHost];
 
-/**
- * The other half of the mirror: `agent::tests::fixtures_*` runs the same file through the
- * Rust types. Validating against the schema rather than round-tripping the raw object is
- * what makes this a real check -- TypeScript types erase, so only the schema notices a
- * field this side renamed, retyped or dropped.
- */
+/** Validates against the schema, not the raw object: TypeScript types erase, so only the
+ * schema notices a field renamed, retyped or dropped on this side. */
 function checkAgainstSchema(cases: Fixture[], schema: typeof HostMessageSchema | typeof SidecarMessageSchema) {
   assert.notEqual(cases.length, 0, "no fixtures to check");
   for (const fixture of cases) {
@@ -65,13 +57,8 @@ test("every fixture survives an encode/decode round trip unchanged", () => {
   }
 });
 
-/**
- * The tags a schema actually declares, read off the discriminator.
- *
- * Derived rather than written out: a list kept by hand is updated in the same edit that
- * adds the variant, which makes the coverage test agree with whatever was just written
- * instead of demanding a fixture for it.
- */
+/** Tags read off the discriminator. Derived, not hand-listed: a hand-kept list gets updated
+ * in the same edit that adds the variant, so it would never demand a fixture. */
 function declaredTags(schema: { options: readonly { shape: { t: { value: string } } }[] }): string[] {
   return schema.options.map((option) => option.shape.t.value).sort();
 }

@@ -1,10 +1,5 @@
-/**
- * That the menu under the prompt points at what it looks like it points at.
- *
- * All of this is arithmetic no screenshot would catch: a window that scrolls a row late,
- * a highlight left on the wrong entry after wrapping, a footer claiming eight commands
- * when there are ninety. The last one is how this feature was reported broken.
- */
+/** The menu under the prompt points at what it looks like it points at: scroll window,
+ * highlight after wrapping, and the footer count that shipped wrong. */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";

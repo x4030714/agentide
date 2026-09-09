@@ -16,24 +16,8 @@ import { monaco } from "./monaco-setup";
 import { baseName, toFileUri } from "./protocol";
 import type { WirePath } from "./protocol";
 
-/**
- * Where the language servers meet the editor.
- *
- * `lsp-client` owns the protocol and `lsp-session` owns one server; this owns the join:
- * which models are synced, where diagnostics are drawn, and which Monaco providers ask
- * which server. It is the only file that imports both sides.
- *
- * Two decisions shape it:
- *
- * 1. **Document sync is driven off Monaco's model events, not off the editor pane.** The
- *    server is then told about exactly the text Monaco holds, by construction. Driving it
- *    from the pane instead means every new way of opening a file is a new way to forget,
- *    and a server that is one edit behind reports errors on lines that have moved.
- * 2. **A provider that cannot answer returns null, quietly.** These run on every
- *    keystroke, and a server mid-index legitimately refuses requests (`ContentModified`
- *    is normal, not a fault). Surfacing that would be noise on a schedule; server health
- *    is reported once, by status, instead.
- */
+/** Where the language servers meet the editor. Sync is driven off Monaco's model events so the
+ * server sees exactly the text Monaco holds; a provider that cannot answer returns null quietly. */
 
 export interface WorkspaceHandlers {
   /** Server health, per server id, for the status surface. */
@@ -42,11 +26,8 @@ export interface WorkspaceHandlers {
   openFile: (path: WirePath, line?: number, column?: number) => void;
 }
 
-/**
- * Monaco's provider registry is global and per-language, so two attached workspaces would
- * register two of every provider and every completion would arrive twice. One at a time
- * is not a convenience here, it is the shape of the thing being wrapped.
- */
+/** Monaco's provider registry is global and per-language, so two attached workspaces would
+ * register two of every provider and every completion would arrive twice. */
 let attached: LspWorkspace | null = null;
 
 export class LspWorkspace {
@@ -86,23 +67,8 @@ export class LspWorkspace {
     void this.#startForMarkers();
   }
 
-  /**
-   * Start the servers this project's root says it needs, without waiting for a file.
-   *
-   * Lazy start is right for the editor -- a workspace with no Rust in it should never pay
-   * for rust-analyzer -- and wrong for the agent. `ide_workspace_symbols` asks about the
-   * project, and before this it answered "no symbols" for a project full of them simply
-   * because nobody had opened a `.rs` file yet. That is a wrong answer wearing the shape
-   * of a right one, which is the kind this codebase tries hardest not to give.
-   *
-   * Markers are looked for a few levels down, not only at the root, because the root is
-   * often not where they live: this project keeps its `Cargo.toml` under `src-tauri`, and
-   * a workspace of crates keeps one per crate directory. A root-only check would have
-   * missed agentide itself, which is a good sign it was the wrong check.
-   *
-   * One `listFiles` call rather than a walk per directory: the list is already capped in
-   * Rust and already respects the same ignore rules, so this costs one round trip.
-   */
+  /** Start the servers this project's root needs, without waiting for a file: lazy start made
+   * `ide_workspace_symbols` answer "no symbols". Markers are looked for a few levels down. */
   async #startForMarkers(): Promise<void> {
     /** Deep enough for `src-tauri/Cargo.toml` and `crates/thing/Cargo.toml`. */
     const MAX_DEPTH = 3;
@@ -147,9 +113,8 @@ export class LspWorkspace {
   async dispose(): Promise<void> {
     this.#disposed = true;
     if (attached === this) attached = null;
-    // Models outlive us -- Monaco owns them globally, and switching workspace does not
-    // dispose them. Leaving our markers behind would show the last project's errors on
-    // this project's files, with no server running to ever correct them.
+    // Models outlive us; switching workspace does not dispose them. Markers left behind would show
+    // the last project's errors with no server running to correct them.
     for (const model of monaco.editor.getModels()) {
       for (const spec of SERVERS) monaco.editor.setModelMarkers(model, `lsp:${spec.id}`, []);
     }
@@ -197,13 +162,8 @@ export class LspWorkspace {
     });
   }
 
-  /**
-   * Tell the server a file was written.
-   *
-   * Not derivable from Monaco: a model has no notion of saved. It matters because
-   * rust-analyzer's `cargo check` diagnostics — the type errors, as opposed to the
-   * parse errors — are produced on save and on nothing else.
-   */
+  /** Tell the server a file was written. Not derivable from Monaco — a model has no notion of
+   * saved — and rust-analyzer's `cargo check` diagnostics are produced on save and nothing else. */
   didSave(path: WirePath, text: string): void {
     for (const session of this.#sessions.values()) session.saveDoc(path, text);
   }
@@ -214,18 +174,10 @@ export class LspWorkspace {
   }
 
   // --- For the agent's tools ---------------------------------------------------
-  //
-  // The editor only ever asks about a model it already has. A tool asks about a path,
-  // which may be a file nobody has opened -- so everything below starts by making sure
-  // some server has been told the file exists.
+  // A tool asks about a path, not a model, so everything below first opens the document.
 
-  /**
-   * Get a server ready to answer about `path`, opening the document if needed.
-   *
-   * Returns the reason it cannot, rather than throwing, because "no server for .py" and
-   * "rust-analyzer is still indexing" are both answers the model can act on, and an
-   * exception here would read to it as a broken tool.
-   */
+  /** Get a server ready to answer about `path`, opening the document if needed. Returns the reason
+   * it cannot rather than throwing: to the model an exception reads as a broken tool. */
   async ensureOpen(path: WirePath): Promise<{ session: LspSession } | { error: string }> {
     if (!this.#inWorkspace(path)) {
       return { error: `${path} is outside the open workspace.` };
@@ -280,12 +232,8 @@ export class LspWorkspace {
     return results.flatMap((result) => (Array.isArray(result) ? result : []));
   }
 
-  /**
-   * Every diagnostic every server currently holds, by path.
-   *
-   * Not read from Monaco's markers: those exist only for files with a model, and the
-   * question a tool is asking is usually about the files that are not open.
-   */
+  /** Every diagnostic every server holds, by path. Not read from Monaco's markers, which exist
+   * only for files with a model — and a tool is usually asking about files nobody opened. */
   diagnostics(): Map<WirePath, Json[]> {
     const merged = new Map<WirePath, Json[]>();
     for (const session of this.#sessions.values()) {
@@ -312,13 +260,8 @@ export class LspWorkspace {
 
   // --- Servers -----------------------------------------------------------------
 
-  /**
-   * Where each server's markers were found, absolute. Empty until the scan finishes.
-   *
-   * `#ensureSession` waits for it, because a server started before the scan would be
-   * initialised with no projects named -- which is the bug this exists to fix, just
-   * moved to whichever file the person happened to open first.
-   */
+  /** Where each server's markers were found, absolute. Empty until the scan finishes; `#ensureSession`
+   * waits for it, or a server starts with no projects named. */
   #markerPaths = new Map<string, string[]>();
   #scanned!: () => void;
   #scanDone = new Promise<void>((resolve) => {
@@ -365,11 +308,8 @@ export class LspWorkspace {
     return session;
   }
 
-  /**
-   * The `textDocument` a request is about, or `null` when the model is not a file --
-   * a diff view or a scratch buffer can carry a language we serve, and asking a server
-   * about a document it was never told exists is a protocol error, not a missing answer.
-   */
+  /** The `textDocument` a request is about, or `null` when the model is not a file — asking a server
+   * about a diff view or scratch buffer it was never told about is a protocol error. */
   #doc(model: MonacoNs.ITextModel): Json | null {
     const path = modelPath(model);
     return path ? { uri: toFileUri(path) } : null;
@@ -445,9 +385,8 @@ export class LspWorkspace {
 
     this.#disposables.push(
       monaco.languages.registerCompletionItemProvider(language, {
-        // A conservative superset: servers advertise their own in
-        // `completionProvider.triggerCharacters`, but that arrives after registration,
-        // and re-registering per server would leave a window with no completions at all.
+        // A conservative superset: servers advertise their own, but only after registration, and
+        // re-registering per server would leave a window with no completions at all.
         triggerCharacters: [".", ":", ">", "-", "&", "#", "<", '"', "/", "'", "(", "@"],
         async provideCompletionItems(model, position, _context, _token) {
           const doc = self.#doc(model);
@@ -568,19 +507,10 @@ export class LspWorkspace {
 }
 
 // --- Conversions ---------------------------------------------------------------
-//
-// LSP counts lines and characters from zero; Monaco counts from one. Every boundary
-// crossing below is that off-by-one, and getting one wrong puts a squiggle on the line
-// above the mistake -- which looks like the server being wrong, not us.
+// LSP counts lines and characters from zero, Monaco from one; a wrong crossing squiggles a line up.
 
-/**
- * The language id Monaco would give this file, asked of Monaco itself rather than kept
- * as a second extension table here. A tool can name a file nobody has opened, so there
- * is no model to read the language off -- but the answer still has to match the one the
- * editor would produce, or a tool and the editor would disagree about which server owns
- * a file. Exported for the transcript's diff, which colours files nobody has opened for
- * the same reason and must not answer this question a second way.
- */
+/** The language id Monaco would give this file, asked of Monaco rather than kept as a second
+ * extension table. Exported for the transcript's diff, which must not answer this a second way. */
 export function languageForPath(path: WirePath): string | null {
   const name = baseName(path).toLowerCase();
   const dot = name.lastIndexOf(".");
@@ -668,11 +598,8 @@ function toMarker(diagnostic: Json): MonacoNs.IMarkerData {
   };
 }
 
-/**
- * LSP and Monaco both have a `CompletionItemKind`, and they number them differently.
- * Mapping by name rather than by value, so a new kind in either enum cannot silently
- * turn a method into a colour swatch.
- */
+/** LSP and Monaco both have a `CompletionItemKind` and number them differently. Mapped by name, so
+ * a new kind in either enum cannot silently turn a method into a colour swatch. */
 const LSP_COMPLETION_KINDS = [
   "Text", "Method", "Function", "Constructor", "Field", "Variable", "Class", "Interface",
   "Module", "Property", "Unit", "Value", "Enum", "Keyword", "Snippet", "Color", "File",
@@ -746,10 +673,8 @@ function toMarkdown(value: unknown): IMarkdownString | undefined {
   return undefined;
 }
 
-/**
- * `Hover.contents` has four shapes across LSP versions, and rust-analyzer and clangd do
- * not pick the same one. All four collapse to markdown.
- */
+/** `Hover.contents` has four shapes across LSP versions and rust-analyzer and clangd disagree on
+ * which. All four collapse to markdown. */
 function hoverContents(value: unknown): IMarkdownString[] {
   const one = (entry: unknown): IMarkdownString | null => {
     if (typeof entry === "string") return entry ? { value: entry } : null;

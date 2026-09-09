@@ -1,32 +1,8 @@
 import { ptyKill, ptySpawn } from "./bridge";
 import type { WirePath } from "./protocol";
 
-/**
- * The agent's terminal: a real pty the user can watch, running one command at a time.
- *
- * ## Why a process per command, and not a shell to type into
- *
- * The obvious design is to keep an interactive shell open and write command lines into
- * it. It is also the one that does not work: a pty is a byte stream with no notion of a
- * command ending, so knowing when to stop reading -- and what the exit code was -- means
- * appending a sentinel (`cmd; echo __done_$?`) and scanning the output for it. That
- * breaks on anything interactive, mixes the shell's prompt and echo into what the model
- * reads, and gives a wrong answer whenever the command prints the sentinel itself.
- *
- * Spawning the shell fresh per command removes the whole problem. The pty already reports
- * a real exit code when the child exits, so completion and status are facts rather than
- * inferences, and the output is the command's own with no prompt around it.
- *
- * What it costs is shell state between commands: no persistent `cd`, no exported
- * variables. That is a fair trade and arguably the safer half -- `cd` inside one command
- * still works, and an agent cannot leave the terminal somewhere the user did not expect.
- *
- * ## Why it is a separate terminal from the user's
- *
- * The user's shell has a person typing into it. Sharing one means their keystrokes land
- * in the middle of the agent's command and vice versa. This session is beside theirs,
- * visible in its own tab, and only the agent writes to it.
- */
+/** The agent's terminal: a real pty, its own session, a fresh shell per command. An
+ * interactive shell would need a `cmd; echo __done_$?` sentinel to know when a command ended. */
 
 /** The pty id for the agent's session. One session, so one id. */
 export const AGENT_PTY_ID = "agent-shell";
@@ -48,13 +24,8 @@ export interface RunResult {
 
 type OutputListener = (chunk: Uint8Array) => void;
 
-/**
- * Who is rendering the agent's terminal, if anyone.
- *
- * A module-level listener rather than a prop: the pane that draws this comes and goes
- * with a tab, and the session has to outlive it. A command run while the tab has never
- * been opened still runs, and still ends up in the scrollback the pane replays.
- */
+/** Who is rendering the agent's terminal, if anyone. A module-level listener, not a prop:
+ * the session outlives the tab, so a command run with the tab never opened still runs. */
 let listener: OutputListener | null = null;
 const scrollback: Uint8Array[] = [];
 let scrollbackBytes = 0;
@@ -87,13 +58,8 @@ function banner(text: string): Uint8Array {
 
 let running = false;
 
-/**
- * Run one command in the agent's terminal and wait for it to finish.
- *
- * Serialised: two commands at once would interleave in one terminal and neither output
- * could be attributed. The second waits rather than being refused, because a model that
- * gets "busy" back will usually just try again.
- */
+/** Run one command in the agent's terminal and wait. Serialised — two at once would
+ * interleave in one terminal. The second waits rather than being refused. */
 export async function runInAgentTerminal(
   command: string,
   cwd: WirePath | null,
@@ -137,9 +103,8 @@ export async function runInAgentTerminal(
   }
 
   timer = setTimeout(() => {
-    // Killed rather than left running: a turn waiting forever on `npm run dev` is worse
-    // than one told the command did not finish. The partial output still goes back,
-    // because it is usually the part that says why.
+    // Killed, not left running: a turn hung forever on `npm run dev` is worse than one told
+    // the command did not finish. Partial output still goes back; it usually says why.
     void ptyKill(AGENT_PTY_ID).catch(() => {});
     finish({ exitCode: null, timedOut: true });
   }, timeoutMs);
@@ -158,18 +123,8 @@ export async function runInAgentTerminal(
 
 // --- Processes that outlive the call that started them ----------------------------
 
-/**
- * A command the agent started and did not wait for.
- *
- * `runInAgentTerminal` kills anything still alive at its timeout, which is right for a
- * build and wrong for everything that is supposed to keep running: a dev server, a
- * watcher, a REPL. Those are not slow commands, they are commands with no end, and
- * reporting one as "did not finish within its timeout" is reporting the wrong thing.
- *
- * Each gets its own pty and its own tab, so it stays visible in the sense PRODUCT.md
- * means -- a person can watch a dev server's log while it runs, which is exactly when it
- * is worth watching.
- */
+/** A command the agent started and did not wait for. `runInAgentTerminal` kills at its
+ * timeout, which is wrong for things with no end — a dev server, a watcher, a REPL. */
 export interface BackgroundProcess {
   id: string;
   command: string;
@@ -184,14 +139,8 @@ interface Entry extends BackgroundProcess {
   /** Everything written, so opening the tab late still shows the log. */
   scrollback: Uint8Array[];
   bytes: number;
-  /**
-   * Written but not yet handed to the model.
-   *
-   * The cursor lives here rather than being passed in by the caller, because the useful
-   * question is always "what is new since I last looked". A model that had to track an
-   * offset would re-read the whole log whenever it lost track, which on a watcher that
-   * has been up for an hour is the single most expensive mistake it could make.
-   */
+  /** Written but not yet handed to the model. The cursor lives here, not in the caller: a
+   * model tracking its own offset re-reads an hour of watcher log whenever it loses track. */
   pending: Uint8Array[];
   listener: OutputListener | null;
 }
@@ -282,13 +231,8 @@ export function readBackground(
   return { output, process: { id, command, running, exitCode, startedAt } };
 }
 
-/**
- * Kill a background process.
- *
- * The entry stays in the map with `running: false`. A handle that vanished the moment it
- * was stopped would turn a second call, or a read racing the stop, into "no such
- * process", which reads as the handle having been wrong all along.
- */
+/** Kill a background process. The entry stays with `running: false` — a handle that vanished
+ * on stop would turn a second call, or a racing read, into a misleading "no such process". */
 export async function stopBackground(id: string): Promise<boolean> {
   const entry = processes.get(id);
   if (!entry) return false;
@@ -300,13 +244,8 @@ export async function stopBackground(id: string): Promise<boolean> {
   return true;
 }
 
-/**
- * Stop a background process and drop it entirely.
- *
- * What closing its tab does. Separate from `stopBackground` because the model stopping a
- * dev server and the person closing the tab are different intents: the first should leave
- * a handle that still answers, the second is saying they are done looking at it.
- */
+/** Stop a background process and drop it entirely — what closing its tab does. Separate from
+ * `stopBackground`: that one should leave a handle that still answers. */
 export async function forgetBackground(id: string): Promise<void> {
   await stopBackground(id);
   processes.delete(id);
@@ -324,14 +263,8 @@ export function attachBackground(id: string, next: OutputListener): () => void {
   };
 }
 
-/**
- * Bytes to text the model can read.
- *
- * Escape sequences are stripped, because a progress bar that redraws itself with `\r` and
- * colour codes is thousands of tokens describing one line the user already saw. What is
- * kept is what a person would see if they scrolled back: the characters, not the
- * choreography.
- */
+/** Bytes to text the model can read. Escape sequences stripped: a carriage-return progress bar is
+ * thousands of tokens for one line. Keeps what a person scrolling back would see. */
 function decode(chunks: Uint8Array[]): string {
   const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
   const joined = new Uint8Array(total);
@@ -345,14 +278,8 @@ function decode(chunks: Uint8Array[]): string {
   return clamp(plain.trim());
 }
 
-/**
- * CSI, OSC and the single-character escapes, removed.
- *
- * Deliberately not a general terminal emulator: this does not replay cursor movement, so
- * a program that draws by moving the cursor leaves its intermediate states in the text.
- * That is the honest failure -- extra lines the model can read past -- rather than
- * silently reconstructing a screen that might be wrong.
- */
+/** CSI, OSC and single-character escapes, removed. Not a terminal emulator — cursor movement
+ * is not replayed, so redrawn screens leave their intermediate states as extra lines. */
 function stripAnsi(text: string): string {
   // Built from its code point rather than written literally: a raw escape byte in
   // source is invisible, and every tool that touches the file is a chance to lose it.
@@ -372,12 +299,8 @@ function stripAnsi(text: string): string {
   );
 }
 
-/**
- * Keep both ends when there is too much.
- *
- * The head says what was run and how it started; the tail carries the error and the
- * summary. It is the middle of a long build that carries nothing, so that is what goes.
- */
+/** Keep both ends when there is too much: the head says what was run, the tail carries the
+ * error. Only the middle of a long build carries nothing. */
 function clamp(text: string): string {
   if (text.length <= MAX_OUTPUT) return text;
   const half = Math.floor(MAX_OUTPUT / 2);
@@ -385,11 +308,6 @@ function clamp(text: string): string {
   return `${text.slice(0, half)}\n\n… ${dropped} characters omitted …\n\n${text.slice(-half)}`;
 }
 
-/**
- * The two pure functions above, for tests.
- *
- * Exported through one named object rather than individually, so it is obvious at the
- * import site that these are reachable only because they are worth pinning -- not part of
- * how the rest of the app talks to this module.
- */
+/** The two pure functions above, for tests. One named object so the import site shows these
+ * are exported only to be pinned, not part of the module's API. */
 export const __testing = { stripAnsi, clamp };

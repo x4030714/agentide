@@ -1,10 +1,5 @@
-/**
- * Typed wrappers over the Rust commands in `src-tauri/src/fs.rs`.
- *
- * Every path argument is sent as a plain string and normalized by `ipc.rs` on the way
- * in, so callers may pass whatever the OS dialog gave them; everything coming back is a
- * `WirePath`.
- */
+/** Typed wrappers over the Rust commands in `src-tauri/src/fs.rs`. Paths go out as plain strings
+ * and are normalized by `ipc.rs`; everything coming back is a `WirePath`. */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -54,12 +49,8 @@ export async function pickFolder(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
-/**
- * Open a folder as the workspace and subscribe to its changes.
- *
- * Batches arrive debounced from the Rust watcher, so `onChanges` runs once per burst
- * rather than once per OS notification. Opening again replaces the previous watcher.
- */
+/** Open a folder as the workspace and subscribe to its changes. Batches arrive debounced from the
+ * Rust watcher, so `onChanges` runs per burst. Opening again replaces the previous watcher. */
 export async function openWorkspace(
   path: string,
   onChanges: (changes: FsEvent[]) => void,
@@ -77,13 +68,8 @@ export async function listDir(path: WirePath): Promise<DirListing> {
   return invoke<DirListing>("list_dir", { path });
 }
 
-/**
- * Every file in the workspace, for quick open.
- *
- * One call, not a lazy walk: the palette ranks the whole project on each keystroke. Empty
- * when no workspace is open. Capped in Rust, so a huge repository returns a prefix rather
- * than a hang.
- */
+/** Every file in the workspace, for quick open. One call, not a lazy walk — the palette ranks the
+ * whole project per keystroke. Capped in Rust, so a huge repository returns a prefix, not a hang. */
 export async function listFiles(limit?: number): Promise<WirePath[]> {
   return invoke<WirePath[]>("list_files", { limit });
 }
@@ -100,18 +86,10 @@ export async function writeFile(
   return invoke<FileStat>("write_file", { path, contents, bom });
 }
 
-// ---------------------------------------------------------------------------
-// Agent -- wrappers over `src-tauri/src/agent.rs`
-// ---------------------------------------------------------------------------
+// --- Agent -- wrappers over `src-tauri/src/agent.rs` ------------------------
 
-/**
- * Start the agent sidecar and subscribe to its events.
- *
- * Starting again replaces the running sidecar and its channel. The workspace root is not
- * passed here: the Rust core reads it from its own state on every prompt, so opening a
- * different folder needs no restart. Prompting before a folder is open fails with an
- * `agent` error.
- */
+/** Start the agent sidecar and subscribe to its events. Starting again replaces it. The workspace
+ * root is not passed: Rust reads it per prompt, so opening a different folder needs no restart. */
 export async function agentStart(
   onEvent: (event: AgentEvent) => void,
   options: AgentStartOptions = {},
@@ -129,12 +107,8 @@ export async function agentStop(): Promise<void> {
   return invoke("agent_stop");
 }
 
-/**
- * Run a turn. Resolves once the prompt has been handed to the sidecar, not when the turn
- * ends -- watch the channel for `done` with this `sessionId`.
- *
- * `sessionId` is the frontend's own handle for a conversation; reusing one continues it.
- */
+/** Run a turn. Resolves once the prompt is handed to the sidecar, not when the turn ends — watch
+ * the channel for `done`. `sessionId` is the frontend's handle; reusing one continues it. */
 export async function agentPrompt(
   sessionId: string,
   text: string,
@@ -148,10 +122,8 @@ export async function agentInterrupt(sessionId: string): Promise<void> {
   return invoke("agent_interrupt", { sessionId });
 }
 
-/**
- * Answer a `permission_request`. Rejects with an `agent` error if something already
- * answered it -- which is the normal outcome when `hostPermissions` was left false.
- */
+/** Answer a `permission_request`. Rejects with an `agent` error if something already answered it,
+ * which is the normal outcome when `hostPermissions` was left false. */
 export async function agentPermissionReply(
   id: string,
   decision: PermissionDecision,
@@ -165,23 +137,15 @@ export async function agentPermissionReply(
   });
 }
 
-/**
- * Answer a `tool_call`. Rejects with an `agent` error if something already answered it,
- * which is what happens for any tool not named in `agentStart`'s `hostTools`.
- */
+/** Answer a `tool_call`. Rejects with an `agent` error if something already answered it, which is
+ * what happens for any tool not named in `agentStart`'s `hostTools`. */
 export async function agentToolReply(id: string, result: ToolResult): Promise<void> {
   return invoke("agent_tool_reply", { id, result });
 }
 
 
-// ---------------------------------------------------------------------------
-// Window chrome -- wrappers over `src-tauri/src/window.rs`
-//
-// The window is frameless (`decorations: false`) and transparent, so the title bar is
-// ours to draw. Give the bar a `data-tauri-drag-region` attribute to make dragging it
-// move the window; Tauri handles double-click-to-maximize on that element itself.
-// Resizing is still the OS's: the frame is invisible, but its hit-testing is not gone.
-// ---------------------------------------------------------------------------
+// --- Window chrome -- wrappers over `src-tauri/src/window.rs` ---------------
+// Frameless and transparent: the title bar is ours, and needs `data-tauri-drag-region` to drag.
 
 export const windowChrome = {
   /** Send the window to the taskbar. */
@@ -204,29 +168,20 @@ export const windowChrome = {
     return invoke<boolean>("window_is_maximized");
   },
 
-  /**
-   * Run `handler` whenever the window is maximized or restored, whoever did it -- the
-   * title bar's button, a double click on the drag region, a Win+Arrow snap, a drag to
-   * the top of the screen. Resolves to the unsubscribe function.
-   */
+  /** Run `handler` whenever the window is maximized or restored, whoever did it — button, double
+   * click, Win+Arrow, drag to the top. Resolves to the unsubscribe function. */
   async onMaximizedChange(handler: (maximized: boolean) => void): Promise<() => void> {
     return listen<boolean>(MAXIMIZED_EVENT, (event) => handler(event.payload));
   },
 
-  /**
-   * Whether the translucent backdrop applied. False on a machine whose Windows is too
-   * old for it, and on any non-Windows build: the window is then an ordinary opaque one
-   * and the CSS has to supply its own background rather than tinting the desktop.
-   */
+  /** Whether the translucent backdrop applied. False on older Windows and every non-Windows build,
+   * where the CSS has to supply its own background instead of tinting the desktop. */
   async effectActive(): Promise<boolean> {
     return invoke<boolean>("window_effect_active");
   },
 
-  /**
-   * Put the backdrop back, or take it away, for the Transparency setting. Resolves to
-   * whether it is on afterwards -- which is not the same as what was asked for: applying
-   * can fail, and the honest answer is what the CSS has to be told.
-   */
+  /** Put the backdrop back, or take it away. Resolves to whether it is on afterwards, which is not
+   * what was asked for: applying can fail, and the CSS needs the honest answer. */
   async setBackdrop(enabled: boolean): Promise<boolean> {
     return invoke<boolean>("window_set_backdrop", { enabled });
   },
@@ -235,12 +190,8 @@ export const windowChrome = {
 // ---------------------------------------------------------------------------
 // Checkpoints
 
-/**
- * Commit the current tree to the shadow repository.
- *
- * Cheap enough to run before every turn, which is the point: a turn without a
- * checkpoint before it is a turn that cannot be undone.
- */
+/** Commit the current tree to the shadow repository. Cheap enough to run before every turn, which
+ * is the point: a turn without a checkpoint before it cannot be undone. */
 export async function checkpointCreate(label: string): Promise<Checkpoint> {
   return invoke<Checkpoint>("checkpoint_create", { label });
 }
@@ -250,11 +201,8 @@ export async function checkpointList(limit?: number): Promise<Checkpoint[]> {
   return invoke<Checkpoint[]>("checkpoint_list", { limit });
 }
 
-/**
- * Every changed file between a checkpoint and `to` — or, with `to` omitted, between it
- * and the working tree as it stands. Files whose text is too large or not text at all
- * come back flagged rather than dropped.
- */
+/** Every changed file between a checkpoint and `to`, or the working tree when `to` is omitted.
+ * Files too large or not text come back flagged rather than dropped. */
 export async function checkpointDiff(from: string, to?: string): Promise<CheckpointDiff> {
   return invoke<CheckpointDiff>("checkpoint_diff", { from, to });
 }
@@ -283,10 +231,8 @@ export async function checkpointRevertFile(
   return invoke<RevertOutcome>("checkpoint_revert_file", { checkpoint, path });
 }
 
-/**
- * Put selected hunks back. All-or-nothing: if any id is stale, or the subset will not
- * reverse-apply, nothing is written and this rejects with `"stale"`.
- */
+/** Put selected hunks back. All-or-nothing: a stale id, or a subset that will not reverse-apply,
+ * writes nothing and rejects with `"stale"`. */
 export async function checkpointRevertHunks(
   checkpoint: string,
   path: WirePath,
@@ -295,14 +241,8 @@ export async function checkpointRevertHunks(
   return invoke<RevertOutcome>("checkpoint_revert_hunks", { checkpoint, path, hunks });
 }
 
-/**
- * Restore the whole work tree to a checkpoint.
- *
- * Takes a safety checkpoint first, so the rewind is itself undoable. `deleteCreated`
- * defaults to true — files made since the checkpoint are removed, and every one of them
- * is in the safety checkpoint. Pass false to keep them; they come back in `kept`.
- * Nothing the ignore rules exclude is ever deleted, captured or restored.
- */
+/** Restore the whole work tree to a checkpoint, taking a safety checkpoint first so the rewind is
+ * undoable. `deleteCreated` defaults to true; ignored files are never touched either way. */
 export async function checkpointRewind(
   checkpoint: string,
   deleteCreated?: boolean,
@@ -310,23 +250,10 @@ export async function checkpointRewind(
   return invoke<RewindResult>("checkpoint_rewind", { checkpoint, deleteCreated });
 }
 
-// ---------------------------------------------------------------------------
-// Terminal -- wrappers over `src-tauri/src/pty.rs`
-// ---------------------------------------------------------------------------
+// --- Terminal -- wrappers over `src-tauri/src/pty.rs` ------------------------
 
-/**
- * Start a shell -- or `options.command` -- in a pty and subscribe to it.
- *
- * `onOutput` receives bytes, not text, and must go straight to xterm.js:
- * `terminal.write(chunk)` takes a `Uint8Array` and keeps the decoder state that a chunk
- * ending mid-character needs. Decoding it here instead would corrupt those characters.
- * Chunks are already coalesced by the Rust side (~12ms, up to 64 KiB), so there is
- * nothing to gain by batching them again.
- *
- * `onEvent` fires once, with `exited`, after the last output of the session. Spawning
- * onto an id that is already running replaces it and kills the process that was there,
- * which the old session reports on its own channel.
- */
+/** Start a shell — or `options.command` — in a pty and subscribe. `onOutput` gets bytes and must go
+ * straight to `terminal.write`: decoding here corrupts a chunk that ends mid-character. */
 export async function ptySpawn(
   options: PtySpawnOptions,
   onOutput: (chunk: Uint8Array) => void,
@@ -342,52 +269,29 @@ export async function ptySpawn(
   return invoke<PtyInfo>("pty_spawn", { options, onEvent: channel });
 }
 
-/**
- * Send input to the shell. This is what xterm.js's `onData` hands you, unchanged --
- * keystrokes, pasted text and the escape sequences the terminal generates.
- *
- * Rejects with a `"pty"` error once the session has exited, so input is never silently
- * dropped into a dead terminal.
- */
+/** Send input to the shell — xterm's `onData` unchanged. Rejects with a `"pty"` error once the
+ * session has exited, so input is never silently dropped into a dead terminal. */
 export async function ptyWrite(id: string, data: string): Promise<void> {
   return invoke("pty_write", { id, data });
 }
 
-/**
- * Tell the shell the terminal changed shape -- from the fit addon, on every pane resize.
- * A pty that is never resized keeps wrapping at 24x80.
- */
+/** Tell the shell the terminal changed shape, from the fit addon. A pty that is never resized
+ * keeps wrapping at 24x80. */
 export async function ptyResize(id: string, rows: number, cols: number): Promise<void> {
   return invoke("pty_resize", { id, rows, cols });
 }
 
-/**
- * End a session and everything running in it. Safe to call twice, and safe to call on a
- * session that has already exited -- closing a tab should not have to check first.
- */
+/** End a session and everything in it. Safe to call twice, and on one that already exited —
+ * closing a tab should not have to check first. */
 export async function ptyKill(id: string): Promise<void> {
   return invoke("pty_kill", { id });
 }
 
-// ---------------------------------------------------------------------------
-// Language servers -- wrappers over `src-tauri/src/lsp.rs`
-//
+// --- Language servers -- wrappers over `src-tauri/src/lsp.rs` ----------------
 // Rust owns the process and the `Content-Length` framing; the LSP client is on this side.
-// See the language-server notes in `protocol.ts` for what that division means.
-// ---------------------------------------------------------------------------
 
-/**
- * Start a language server and subscribe to it.
- *
- * `onEvent` receives batches: `messages` carries an array in the order the server wrote
- * them, so loop over it. Messages arrive already parsed -- Rust copies the server's bytes
- * verbatim into the channel payload, so the channel's own parse is the only one -- and
- * must not be `JSON.parse`d again.
- *
- * Rejects with `"notFound"` when the program is not installed and `"lsp"` when it is
- * there but will not start. Nothing about `initialize` happens here: send it yourself as
- * the first `lspSend`, with `options.root` as the workspace folder.
- */
+/** Start a language server and subscribe. `onEvent` gets batches of already-parsed `messages` —
+ * do not `JSON.parse` them again. Send `initialize` yourself as the first `lspSend`. */
 export async function lspStart(
   options: LspStartOptions,
   onEvent: (event: LspEvent) => void,
@@ -397,46 +301,28 @@ export async function lspStart(
   return invoke<LspInfo>("lsp_start", { options, onEvent: channel });
 }
 
-/**
- * Send one JSON-RPC message -- request, response or notification. Pass the object; the
- * framing is added in Rust and nothing there reads what is inside it.
- *
- * Rejects with an `"lsp"` error once the server has exited, so a request is never
- * silently written into a dead pipe and left waiting for a reply that cannot come.
- */
+/** Send one JSON-RPC message; framing is added in Rust, which never reads inside it. Rejects with
+ * `"lsp"` once the server has exited, so a request never waits on a reply that cannot come. */
 export async function lspSend(id: string, message: LspMessage): Promise<void> {
   return invoke("lsp_send", { id, message });
 }
 
-/**
- * Stop a server and everything it spawned. Safe to call twice, and safe to call on one
- * that has already exited.
- *
- * Closes the server's stdin and gives it a moment before killing it, which is how a
- * language server is asked to leave -- and what keeps rust-analyzer from orphaning a
- * `cargo` process it had running. Send `shutdown`/`exit` first if you want the protocol's
- * own handshake; this works either way. The session reports `exited` regardless.
- */
+/** Stop a server and everything it spawned; safe to call twice. Closes stdin and waits a moment
+ * before killing, which keeps rust-analyzer from orphaning a `cargo` process. */
 export async function lspStop(id: string): Promise<void> {
   return invoke("lsp_stop", { id });
 }
 
-// ---------------------------------------------------------------------------
-// The user's own git repository -- wrappers over `src-tauri/src/git.rs`
-//
-// Every one of these runs git in the user's working tree with their config, so a commit
-// made here runs their hooks and signs the way theirs do. See that module's header.
-// ---------------------------------------------------------------------------
+// --- The user's own git repository -- wrappers over `src-tauri/src/git.rs` ---
+// Runs git in their working tree with their config, so a commit here runs their hooks and signs.
 
 /** Never throws for "not a repository"; that comes back as `isRepo: false`. */
 export async function gitStatus(): Promise<GitStatus> {
   return invoke<GitStatus>("git_status");
 }
 
-/**
- * One file's two sides. `staged` picks the comparison -- index against HEAD, or working
- * tree against index -- so a row and the diff it opens always describe the same change.
- */
+/** One file's two sides. `staged` picks the comparison — index against HEAD, or working tree
+ * against index — so a row and the diff it opens describe the same change. */
 export async function gitFileDiff(rel: string, staged: boolean): Promise<GitFileDiff> {
   return invoke<GitFileDiff>("git_file_diff", { rel, staged });
 }
@@ -464,26 +350,16 @@ export async function gitSwitch(name: string): Promise<void> {
   return invoke("git_switch", { name });
 }
 
-// ---------------------------------------------------------------------------
-// Past conversations -- wrappers over `src-tauri/src/conversations.rs`
-//
-// These read the agent SDK's own transcripts, which are also the Claude Code CLI's. No
-// existing transcript is ever modified: the SDK owns those files and resumes from them.
-// `conversationImport` writes, but only a new file — it copies one in rather than
-// editing it where it lies.
-// ---------------------------------------------------------------------------
+// --- Past conversations -- wrappers over `src-tauri/src/conversations.rs` ----
+// The agent SDK's own transcripts. No existing one is ever modified; `conversationImport` copies.
 
 /** Most recently active first. Empty for a workspace that has never had a turn. */
 export async function conversationsList(): Promise<ConversationSummary[]> {
   return invoke<ConversationSummary[]>("conversations_list");
 }
 
-/**
- * One conversation's messages, for reading.
- *
- * `fromDir` reads out of another project's directory instead of this workspace's, which
- * is how a conversation is previewed before importing it.
- */
+/** One conversation's messages, for reading. `fromDir` reads out of another project's directory,
+ * which is how a conversation is previewed before importing it. */
 export async function conversationRead(
   id: string,
   fromDir?: string,
@@ -491,12 +367,8 @@ export async function conversationRead(
   return invoke<ConversationEntry[]>("conversation_read", { id, fromDir: fromDir ?? null });
 }
 
-/**
- * Every project directory under `~/.claude/projects`, newest first.
- *
- * Cheap by design — one head-of-file read per directory, not per transcript — because the
- * store is hundreds of megabytes and this opens a settings panel.
- */
+/** Every project directory under `~/.claude/projects`, newest first. One head-of-file read per
+ * directory, not per transcript: the store is hundreds of megabytes and this opens a panel. */
 export async function claudeProjectsList(): Promise<ClaudeProject[]> {
   return invoke<ClaudeProject[]>("claude_projects_list");
 }
@@ -506,43 +378,23 @@ export async function claudeConversationsList(dir: string): Promise<Conversation
   return invoke<ConversationSummary[]>("claude_conversations_list", { dir });
 }
 
-/**
- * Copy a conversation from another project into this workspace and return its new id.
- *
- * A copy under a fresh session id, so the original keeps working where it is. The result
- * is a separate conversation that starts with the same history — resuming it here does
- * not continue the one it came from.
- */
+/** Copy a conversation from another project into this workspace, under a fresh session id. The
+ * result starts with the same history but does not continue the original. */
 export async function conversationImport(id: string, fromDir: string): Promise<string> {
   return invoke<string>("conversation_import", { id, fromDir });
 }
 
-// ---------------------------------------------------------------------------
-// The memory vault -- wrappers over `src-tauri/src/memory.rs`
-//
-// The notes are written by the model through ordinary `Write` calls, which is why there
-// is no write command here. These four only locate the folder, make it, measure it and
-// show it.
-// ---------------------------------------------------------------------------
+// --- The memory vault -- wrappers over `src-tauri/src/memory.rs` -------------
+// The model writes notes through ordinary `Write` calls, which is why there is no write command.
 
-/**
- * Where memory lives, resolved from `~/.agentide/memory.json` or the default.
- *
- * Asked of Rust rather than worked out here: the sidecar resolves the same file for the
- * SDK, and a second guess in the frontend would eventually disagree with the folder being
- * written to. It also comes back as a `WirePath`, which is what makes it comparable
- * against the paths the model types.
- */
-/**
- * Video memory in whole gigabytes, or null when there is no NVIDIA GPU to ask.
- *
- * Used to say which local models fit before one is downloaded. Absent is not an error:
- * llama.cpp runs on the CPU, and the list says what that costs rather than refusing.
- */
+/** Video memory in whole gigabytes, or null when there is no NVIDIA GPU. Absent is not an error:
+ * llama.cpp runs on the CPU, and the model list says what that costs rather than refusing. */
 export async function gpuVramGb(): Promise<number | null> {
   return invoke<number | null>("gpu_vram_gb");
 }
 
+/** Where memory lives, resolved by Rust from `~/.agentide/memory.json` — the sidecar resolves the
+ * same file, and a second guess here would drift from the folder being written to. */
 export async function memoryVault(): Promise<MemoryVault> {
   return invoke<MemoryVault>("memory_vault");
 }

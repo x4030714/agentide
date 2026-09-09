@@ -223,9 +223,8 @@ describe("system subtypes are not one variant", () => {
   });
 
   it("keeps the held-back servers whichever message lands second", () => {
-    // The two halves of the strip arrive at the start of the same turn and nothing
-    // orders them. Both directions, because the bug only shows in one of them: an init
-    // carrying no `mcp_servers` at all used to erase the gated chips on its way past.
+    // Both halves of the strip arrive at the start of a turn unordered; both directions, because an
+    // init carrying no `mcp_servers` used to erase the gated chips on its way past.
     const gated = {
       t: "mcp_gated" as const,
       sessionId: "s1",
@@ -603,9 +602,8 @@ describe("continuing a past conversation", () => {
 
 describe("a turn with no checkpoint", () => {
   it("says so on its own line rather than leaving it unsaid", () => {
-    // A workspace whose checkpoint cannot be taken -- a drive root, or a tree too large
-    // to walk before the prompt -- still runs. What must not happen is running as if the
-    // safety net were there.
+    // A workspace whose checkpoint cannot be taken still runs — what must not happen is running as
+    // if the safety net were there.
     const state = reduce(initialState(), {
       t: "local_notice",
       tone: "warn",
@@ -638,9 +636,8 @@ describe("opening the file the agent is editing", () => {
   });
 
   it("spells the path the way the rest of the app does", () => {
-    // The model types Windows paths. The editor and the watcher match by string, so one
-    // spelling reaching one and a different one reaching the other means the file opens
-    // and then never refreshes.
+    // The model types Windows paths and the editor and watcher match by string, so two spellings
+    // mean the file opens and then never refreshes.
     expect(editedFile(assistant("Edit", { file_path: "c:\\work\\a.rs" }))).toBe("C:/work/a.rs");
   });
 
@@ -672,9 +669,8 @@ describe("opening the file the agent is editing", () => {
   });
 
   it("matches the vault whatever case the model typed it in", () => {
-    // The core normalizes the vault to an upper-case drive; the model types back whatever
-    // it inferred. A case-sensitive compare would read `c:\users\...` as a different tree
-    // and let every note through.
+    // The core normalizes the vault to an upper-case drive; a case-sensitive compare would read a
+    // lower-case drive letter as a different tree and let every note through.
     expect(editedFile(assistant("Edit", { file_path: "c:\\users\\tung\\agentide-vault\\a.md" }), VAULT)).toBeNull();
   });
 

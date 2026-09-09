@@ -52,12 +52,10 @@ pub struct MemoryStats {
     pub newest_ms: Option<i64>,
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-//
-// `async` throughout: a synchronous command runs on the thread the webview draws from, and
-// a walk of a large tree froze the window.
-// ---------------------------------------------------------------------------
+// --- Commands --------------------------------------------------------------
+
+// `async` throughout: a synchronous command runs on the thread the webview draws from,
+// and a walk of a large tree froze the window.
 
 /// The configured vault, expanded and normalized.
 #[tauri::command]
@@ -84,9 +82,7 @@ pub async fn memory_reveal(vault: WirePath) -> Result<(), IpcError> {
     reveal(&vault)
 }
 
-// ---------------------------------------------------------------------------
-// The work
-// ---------------------------------------------------------------------------
+// --- The work --------------------------------------------------------------
 
 fn resolve() -> Result<MemoryVault, IpcError> {
     let home = home_dir()?;

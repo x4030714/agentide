@@ -1,21 +1,5 @@
-/**
- * The line diff behind an edit row in the transcript.
- *
- * Built from the tool's *input*, never from its result. `Edit` answers with a sentence
- * of prose, so the only place the change exists in a shape worth drawing is the
- * `old_string`/`new_string` pair the model sent — and reading it from there means the
- * diff is ready the moment the call is drawn, before the write has landed.
- *
- * Line numbers are the one thing the input cannot supply: a hunk knows its own shape and
- * nothing about where it sits. `locateHunks` rebases them against the file on disk, and
- * everything here works without it — a hunk that cannot be placed is numbered from 1 and
- * still reads. That degradation is the point: the file may have moved, a later edit may
- * have rewritten the anchor, the read may simply fail, and none of those are worth
- * withholding the diff over.
- *
- * No dependency and no Monaco. The colouring is applied over the result by the pane; this
- * runs in Node under the tests.
- */
+/** The line diff behind an edit row. Built from the tool's *input*, never its result — `Edit`
+ * answers in prose, and the input is drawable before the write has even landed. */
 
 import type { JsonObject } from "./protocol";
 
@@ -28,20 +12,15 @@ export interface Change {
 }
 
 export interface DiffLine extends Change {
-  /**
-   * The line's own address: the new file's numbering for a context or added line, the
-   * old file's for a removed one. A removed line's number is where it *was*, which is
-   * the number a reviewer is looking for.
-   */
+  /** The line's own address: new-file numbering for context and added lines, old-file for a
+   * removed one — where it *was* is the number a reviewer wants. */
   number: number;
 }
 
 export interface DiffHunk {
   lines: DiffLine[];
-  /**
-   * What to search for to place this hunk once the edit has landed — its new side,
-   * verbatim. Empty for a pure deletion, which leaves nothing on disk to find.
-   */
+  /** What to search for to place this hunk once the edit lands — its new side, verbatim.
+   * Empty for a pure deletion, which leaves nothing on disk to find. */
   anchor: string;
 }
 
@@ -53,20 +32,12 @@ export interface FileDiff {
   removed: number;
 }
 
-/**
- * Above this the LCS table costs more than the drawing is worth, and a rewrite that big
- * reads as a replacement anyway. The table is `before x after` cells; a real Edit is tens
- * of lines on each side, and the common prefix and suffix are trimmed off before it.
- */
+/** Above this the `before x after` LCS table costs more than the drawing is worth, and a
+ * rewrite that big reads as a replacement anyway. */
 const MAX_CELLS = 250_000;
 
-/**
- * The diff of the tool call, or `null` for anything whose input is not a file change.
- *
- * Returning `null` rather than throwing is load-bearing: a tool this does not recognise
- * still has a transcript row, and that row falls back to its result text. New mutating
- * tools appear without warning.
- */
+/** The diff of the tool call, or `null` for anything whose input is not a file change.
+ * `null` not a throw: an unrecognised tool still gets a row, falling back to its result text. */
 export function toolDiff(name: string, input: JsonObject | undefined): FileDiff | null {
   if (!input) return null;
   const path = str(input.file_path);
@@ -74,15 +45,13 @@ export function toolDiff(name: string, input: JsonObject | undefined): FileDiff 
 
   switch (name) {
     case "Edit":
-      // `replace_all` can land the same hunk in several places. One is drawn: the others
-      // are identical by definition, and the count in the summary would be the only
-      // honest thing a second copy added.
+      // `replace_all` can land the same hunk in several places. Draw one — the rest are
+      // identical by definition, and only the summary's count would differ.
       return assemble(path, [hunkOf(str(input.old_string) ?? "", str(input.new_string) ?? "")]);
 
     case "Write": {
-      // Nothing to compare against. The previous content is on disk and already
-      // overwritten by the time this is read back, so diffing against a re-read would
-      // report the change as no change. The file arriving whole is the honest drawing.
+      // Nothing to compare against: the old content is already overwritten by read-back time,
+      // so diffing against a re-read would report the change as no change.
       const content = str(input.content);
       return content === null ? null : assemble(path, [hunkOf("", content)]);
     }
@@ -103,14 +72,8 @@ export function toolDiff(name: string, input: JsonObject | undefined): FileDiff 
   }
 }
 
-/**
- * A line-level diff, longest common subsequence, removals before the additions that
- * replace them.
- *
- * The common prefix and suffix come off first. That is not only speed: it keeps the
- * shared lines of a hunk as context in the order they appear, which is what makes the
- * result readable as a diff rather than as a block replacement.
- */
+/** Line-level LCS diff, removals before the additions that replace them. Common prefix and
+ * suffix come off first — that keeps shared lines as in-order context, not a block swap. */
 export function diffLines(before: string, after: string): Change[] {
   const a = splitLines(before);
   const b = splitLines(after);
@@ -134,13 +97,8 @@ export function diffLines(before: string, after: string): Change[] {
   ];
 }
 
-/**
- * The 1-based line `needle` starts on, or `null` when the file does not contain it.
- *
- * Line endings are normalised on both sides. The model sends `\n` in an edit and the file
- * on disk may hold `\r\n`; without this every diff on a CRLF file would quietly fall back
- * to relative numbering, which looks like the feature not working.
- */
+/** The 1-based line `needle` starts on, or `null`. Line endings normalised both sides: the model
+ * sends LF and disk may hold CRLF, or every CRLF file would silently lose its numbering. */
 export function lineOf(text: string, needle: string): number | null {
   if (needle === "") return null;
   const hay = unixEndings(text);
@@ -188,11 +146,8 @@ function hunkOf(before: string, after: string): DiffHunk {
   return { lines: numberFrom(diffLines(before, after), 1), anchor: after };
 }
 
-/**
- * Numbers a hunk from `start`, both sides at once. The two counters diverge as soon as
- * the hunk adds or removes a line, which is exactly what makes a removed line's number
- * differ from the added one under it.
- */
+/** Numbers a hunk from `start`, both sides at once. The counters diverge the moment a line is
+ * added or removed, which is what makes a removed line's number differ from the one under it. */
 function numberFrom(changes: Change[], start: number): DiffLine[] {
   let oldLine = start;
   let newLine = start;
@@ -242,11 +197,8 @@ function middle(a: string[], b: string[]): Change[] {
   return out;
 }
 
-/**
- * Lines, with the empty one a trailing newline produces dropped: a hunk ending in a
- * newline is not a hunk with a blank last line, and drawing one puts a phantom `+` under
- * every insertion.
- */
+/** Lines, minus the empty one a trailing newline produces — otherwise every insertion draws a
+ * phantom `+` under it. */
 function splitLines(text: string): string[] {
   if (text === "") return [];
   const out = unixEndings(text).split("\n");

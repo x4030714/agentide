@@ -1,41 +1,5 @@
-//! Terminal sessions: a real shell in a pseudo-terminal, streamed to the webview.
-//!
-//! One [`Session`] is one pty and one child process, keyed by an id the frontend picks
-//! so several can exist at once. `portable-pty` is the pty itself -- ConPTY on Windows,
-//! `openpty` elsewhere -- and everything above it here is lifetime and transport.
-//!
-//! ## Output is bytes
-//!
-//! A pty produces bytes, and a read boundary falls wherever the OS puts it: mid-escape
-//! sequence and mid-UTF-8-character are both normal. Decoding a chunk in isolation
-//! corrupts the character that straddles it, so nothing here decodes. Output crosses to
-//! the frontend as [`InvokeResponseBody::Raw`], which arrives in JavaScript as an
-//! `ArrayBuffer`; xterm.js's `write(Uint8Array)` carries the incomplete tail of one
-//! chunk into the next, which is exactly the state this module would otherwise have to
-//! keep. Nothing is buffered here beyond the current batch -- scrollback belongs to the
-//! terminal, which already has it.
-//!
-//! The same channel carries [`PtyEvent`] as JSON, so a session's output and its
-//! lifecycle stay in order relative to each other. The frontend tells them apart by
-//! type: an `ArrayBuffer` is output, an object is an event.
-//!
-//! ## Batching
-//!
-//! A build emits a lot, fast, and one channel message per pipe read would melt the
-//! webview. Reads go to a forwarding thread over an mpsc queue; it coalesces them and
-//! sends at most one message per [`DEBOUNCE`], or sooner once [`FLUSH_BYTES`] have piled
-//! up. That is a ceiling of ~80 messages a second per session whatever the volume, and
-//! 12ms of added latency on an echoed keystroke -- under one frame. Tauri sends a raw
-//! payload over 1 KiB through its binary fetch path rather than an `eval`, so the
-//! batched case is also the cheap one.
-//!
-//! ## Lifetime
-//!
-//! A pty is a child process, and nothing else stops it: it dies when its session is
-//! killed, when a new session takes its id, and when the app exits (see [`shutdown`],
-//! wired to `RunEvent::Exit` in `lib.rs` beside the agent's). When the child exits on
-//! its own the session takes itself out of the state and reports the code, so a dead
-//! terminal fails a write instead of silently swallowing it.
+//! Terminal sessions: a real shell in a pseudo-terminal. Output crosses as raw bytes and
+//! is never decoded here -- a read lands mid-character, and xterm.js carries the tail on.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -61,9 +25,8 @@ const FLUSH_BYTES: usize = 64 * 1024;
 /// How long output waits for more output before being sent. See the module docs.
 const DEBOUNCE: Duration = Duration::from_millis(12);
 
-/// How often an idle session checks whether its child is still there. The cost is one
-/// non-blocking wait per session per tick; the benefit is that a terminal says its
-/// process has exited within this long rather than whenever it next prints something.
+/// How often an idle session checks whether its child is still there. One non-blocking wait
+/// per session per tick, so an exit is reported this soon rather than at the next print.
 const EXIT_POLL: Duration = Duration::from_millis(100);
 
 /// What a terminal is until the frontend measures itself and resizes.
@@ -74,38 +37,23 @@ const DEFAULT_COLS: u16 = 80;
 /// this is a fact rather than a guess.
 const TERM: &str = "xterm-256color";
 
-// ---------------------------------------------------------------------------
-// The ConPTY startup handshake
-// ---------------------------------------------------------------------------
+// --- The ConPTY startup handshake ------------------------------------------
 
-/// The cursor-position query conhost writes as a session's first output, and the answer
-/// it waits for.
-///
-/// `portable-pty` creates every pseudoconsole with `PSEUDOCONSOLE_INHERIT_CURSOR` and
-/// does not expose the flag. That flag makes conhost ask the terminal where the cursor
-/// is and *hold the child process* until something answers: measured on Windows 10
-/// 19045, an unanswered query stalls the child for around thirty seconds before conhost
-/// gives up on it. So the answer is written at spawn, before anything is attached, and
-/// the query is taken back out of the stream on the way to the frontend -- xterm.js
-/// would answer it too, and conhost, no longer waiting for one, would hand that second
-/// answer to the shell as if it had been typed.
+/// The cursor query conhost writes as a session's first output, and the answer it waits for.
+/// `portable-pty` always sets `PSEUDOCONSOLE_INHERIT_CURSOR`: unanswered, the child stalls ~30s.
 #[cfg(windows)]
 const CURSOR_QUERY: &[u8] = b"\x1b[6n";
 #[cfg(windows)]
 const CURSOR_REPLY: &[u8] = b"\x1b[1;1R";
 
-/// Drop the startup query from the first chunk of a session's output.
-///
-/// Only ever applied to that first chunk: a program running in the pty may legitimately
-/// ask for the cursor position later, and that one has to reach the terminal.
+/// Drop the startup query from the first chunk only -- a program may legitimately ask for the
+/// cursor later. Left in, xterm.js answers too and the shell reads that answer as input.
 #[cfg(windows)]
 fn strip_cursor_query(chunk: &[u8]) -> &[u8] {
     chunk.strip_prefix(CURSOR_QUERY).unwrap_or(chunk)
 }
 
-// ---------------------------------------------------------------------------
-// Sessions
-// ---------------------------------------------------------------------------
+// --- Sessions --------------------------------------------------------------
 
 /// Distinguishes a session from its replacement under the same id, so the thread
 /// watching the old one cannot evict the new one when it notices its child has died.
@@ -124,13 +72,8 @@ struct Session {
 }
 
 impl Session {
-    /// End the child, and the tree under it.
-    ///
-    /// Both halves matter on Windows: `kill` terminates the shell and nothing else,
-    /// because there is no process group to signal, while dropping the master closes the
-    /// pseudoconsole, which is what makes conhost send a close event to everything still
-    /// attached to it. A `cargo build` started from the shell is reached by the second,
-    /// not the first.
+    /// End the child and the tree under it. Both halves matter on Windows: `kill` reaches the
+    /// shell alone; dropping the master closes the pseudoconsole, and conhost tells the rest.
     fn kill(mut self) {
         let _ = self.killer.kill();
     }
@@ -141,18 +84,13 @@ impl Session {
 #[derive(Default)]
 pub struct PtyState(Sessions);
 
-// ---------------------------------------------------------------------------
-// Commands
-//
-// Each one is a thin wrapper over a function taking the sessions directly: `State` has
-// no constructor outside a running app, and these are worth testing.
-// ---------------------------------------------------------------------------
+// --- Commands --------------------------------------------------------------
 
-/// Start a shell -- or `options.command` -- in a pty and stream it to `on_event`.
-///
-/// Spawning onto an id that is already running replaces it, killing the old one first.
-/// `cwd` defaults to the open workspace and then to the home directory: a terminal is
-/// useful before a folder is open, so this does not insist on one.
+// Each is a thin wrapper over a function taking the sessions directly: `State` has no
+// constructor outside a running app, and these are worth testing.
+
+/// Start a shell -- or `options.command` -- in a pty and stream it to `on_event`; a live id
+/// is replaced. `cwd` falls back to workspace then home: a terminal is useful before a folder.
 #[tauri::command]
 pub async fn pty_spawn(
     state: State<'_, PtyState>,
@@ -163,19 +101,15 @@ pub async fn pty_spawn(
     spawn(&state.0, workspace.root(), options, on_event)
 }
 
-/// Send keystrokes -- or anything else -- to the child's input.
-///
-/// Fails once the session is gone, which is the point: a terminal whose process has
-/// exited must say so rather than absorb what is typed into it.
+/// Send keystrokes -- or anything else -- to the child's input. Fails once the session is
+/// gone: a terminal whose process has exited must say so rather than absorb what is typed.
 #[tauri::command]
 pub fn pty_write(state: State<'_, PtyState>, id: String, data: String) -> Result<(), IpcError> {
     write_input(&state.0, &id, &data)
 }
 
-/// Tell the child the terminal changed shape.
-///
-/// Not optional: a pty that is never resized keeps wrapping at the size it was opened
-/// with, and the first time the pane changes width its output turns to garbage.
+/// Tell the child the terminal changed shape. Not optional: a pty that is never resized keeps
+/// wrapping at its opening size, and output turns to garbage the first time the pane moves.
 #[tauri::command]
 pub fn pty_resize(
     state: State<'_, PtyState>,
@@ -193,11 +127,8 @@ pub fn pty_kill(state: State<'_, PtyState>, id: String) {
     kill(&state.0, &id);
 }
 
-/// Kill every session on the way out of the app.
-///
-/// Tauri does not guarantee that managed state is dropped on exit, and a pty left
-/// running keeps a shell -- and whatever it was building -- alive with no window
-/// attached. Wired to `RunEvent::Exit` beside the agent sidecar's shutdown.
+/// Kill every session on the way out. Tauri does not guarantee managed state is dropped on
+/// exit, and a pty left running keeps a shell -- and whatever it was building -- alive.
 pub fn shutdown(app: &AppHandle) {
     let state = app.state::<PtyState>();
     let open: Vec<Session> = state
@@ -212,9 +143,7 @@ pub fn shutdown(app: &AppHandle) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The work
-// ---------------------------------------------------------------------------
+// --- The work --------------------------------------------------------------
 
 fn spawn(
     sessions: &Sessions,
@@ -248,9 +177,8 @@ fn spawn(
             format!("cannot start {} in a terminal: {err:#}", argv[0]),
         )
     })?;
-    // A shell, and everything the person or the agent runs inside it -- a dev server, a
-    // watcher, a build. `process_id` is None once the child has already exited, which is
-    // not a case worth reporting: there is nothing left to outlive anything.
+    // A shell, and everything run inside it -- a dev server, a watcher, a build. `process_id`
+    // is None once the child has already exited, which is not worth reporting: nothing is left.
     if let Some(pid) = child.process_id() {
         crate::reaper::adopt(pid);
     }
@@ -401,12 +329,8 @@ fn home_directory() -> Option<PathBuf> {
     std::env::var_os(key).map(PathBuf::from)
 }
 
-/// The shell to run, as argv.
-///
-/// `AGENTIDE_SHELL` overrides everything -- one path, no arguments -- so this choice is
-/// not baked in for good. Otherwise Windows prefers PowerShell 7, falls back to the
-/// Windows PowerShell every install has, and lastly to `cmd.exe`; elsewhere it is
-/// `$SHELL`.
+/// The shell to run, as argv. `AGENTIDE_SHELL` overrides everything -- one path, no arguments;
+/// otherwise PowerShell 7, then Windows PowerShell, then `cmd.exe`, and `$SHELL` elsewhere.
 fn resolve_shell() -> Vec<String> {
     if let Some(overridden) = std::env::var_os("AGENTIDE_SHELL") {
         return vec![overridden.to_string_lossy().into_owned()];
@@ -434,16 +358,8 @@ fn resolve_shell() -> Vec<String> {
     }
 }
 
-/// The same shell as [`resolve_shell`], told to run one command line and then exit.
-///
-/// The flag differs by shell and getting it wrong is not a compile error -- PowerShell
-/// takes `-Command`, `cmd.exe` takes `/C`, and a POSIX shell takes `-c` -- so the choice
-/// is made here, once, from the argv that function already resolved rather than from a
-/// second guess about which shell is in use.
-///
-/// `-NoLogo` is dropped and `-NoProfile` added for PowerShell: a profile can print a
-/// banner, change the prompt, or take a second to load, and every byte of that would
-/// arrive as if it were the command's own output.
+/// The same shell as [`resolve_shell`], running one command line and exiting. The flag differs
+/// (`-Command`, `/C`, `-c`) so it comes from that argv; `-NoProfile` keeps a banner out of it.
 fn shell_running(line: &str) -> Vec<String> {
     let shell = resolve_shell();
     let program = shell.first().cloned().unwrap_or_default();
@@ -487,10 +403,8 @@ fn spawn_thread(name: &str, body: impl FnOnce() + Send + 'static) -> Result<(), 
         })
 }
 
-/// Read the pty until it ends, handing every chunk to the forwarder.
-///
-/// Deliberately does no batching of its own: it has to be back in `read` as soon as it
-/// can, because the pipe it is draining is what the child blocks on when it fills.
+/// Read the pty until it ends, handing every chunk to the forwarder. No batching of its own:
+/// it has to be back in `read` at once, because the pipe it drains is what the child blocks on.
 fn read_output(mut reader: Box<dyn Read + Send>, tx: &Sender<Vec<u8>>) {
     let mut buffer = vec![0u8; READ_BUFFER];
     #[cfg(windows)]
@@ -500,9 +414,8 @@ fn read_output(mut reader: Box<dyn Read + Send>, tx: &Sender<Vec<u8>>) {
         let read = match reader.read(&mut buffer) {
             Ok(0) => return,
             Ok(read) => read,
-            // A pty that has been closed reads as an error rather than as EOF on
-            // Windows. Either way there is nothing more to read, and the exit path
-            // explains what happened.
+            // A closed pty reads as an error rather than as EOF on Windows. Either way there
+            // is nothing more to read, and the exit path explains what happened.
             Err(_) => return,
         };
         let chunk = &buffer[..read];
@@ -523,16 +436,8 @@ fn read_output(mut reader: Box<dyn Read + Send>, tx: &Sender<Vec<u8>>) {
     }
 }
 
-/// Coalesce output onto the frontend channel, watch for the child to end, and report
-/// how it did.
-///
-/// Owns the child so that the exit code is read on the thread that already knows the
-/// output has finished -- which is what makes `exited` the last thing a session sends.
-///
-/// It has to *watch*: on Windows the write end of the output pipe belongs to conhost,
-/// not to the child, so the reader sees no EOF when the child exits and would sit there
-/// forever. Closing the pty is what ends the read, and closing it is this thread's job
-/// once it has seen the child go.
+/// Coalesce output onto the frontend channel, watch for the child to end, and report how it
+/// did. It must watch: conhost owns the write end, so the reader sees no EOF -- closing does.
 fn forward_output(
     rx: &Receiver<Vec<u8>>,
     mut child: Box<dyn Child + Send + Sync>,
@@ -569,18 +474,16 @@ fn forward_output(
 
         deadline = None;
         if flush(&mut pending, channel).is_err() {
-            // The webview is gone. Nobody can see this terminal or type into it, and the
-            // queue behind us would grow without limit, so end the session -- by killing
-            // rather than only closing, because the wait below has to come back.
+            // The webview is gone: nobody can see this terminal and the queue behind us would
+            // grow without limit. Kill rather than only close, so the wait below comes back.
             let _ = child.kill();
             break;
         }
         if status.is_none() {
             status = child.try_wait().ok().flatten();
             if status.is_some() {
-                // Closing the pty here rather than after the loop: the reader drains
-                // whatever conhost still had buffered, then sees EOF, and its last chunk
-                // arrives on the next turn of this loop instead of being dropped.
+                // Closed here rather than after the loop: the reader drains what conhost had
+                // buffered, sees EOF, and its last chunk arrives on the next turn.
                 close(sessions, id, serial);
             }
         }
@@ -607,9 +510,7 @@ fn forward_output(
 }
 
 /// Take a session out of the state, unless its id has already been given to a new one.
-///
-/// Dropping what comes back closes the pty, which is the point: a terminal that is over
-/// must not keep a pseudoconsole open, and the read side does not end until it does.
+/// Dropping what comes back closes the pty -- the read side does not end until it does.
 fn close(sessions: &Sessions, id: &str, serial: u64) {
     let mut sessions = sessions.lock().expect("pty sessions poisoned");
     if sessions.get(id).is_some_and(|open| open.serial == serial) {

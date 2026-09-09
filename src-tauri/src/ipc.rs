@@ -1,17 +1,5 @@
-//! Types that cross the Tauri IPC boundary.
-//!
-//! Every type here is mirrored in `src/lib/protocol.ts`; change one and change the other.
-//!
-//! ## Path policy
-//!
-//! Windows hands the same directory to us in at least three shapes -- `C:\a\b`,
-//! `\\?\C:\a\b` and `c:/a/b` -- and later phases each want a different one again (the
-//! agent SDK wants a plain path, the language server wants a `file://` URI, git wants
-//! forward slashes). Rather than convert at every call site, every path that crosses
-//! this boundary is a [`WirePath`]: absolute, `/`-separated, no verbatim prefix, drive
-//! letter upper-cased, no trailing slash. `WirePath` normalizes on `Deserialize`, so a
-//! raw `PathBuf` string cannot reach the frontend and an unnormalized string cannot
-//! reach the rest of the crate. Use [`WirePath::to_path`] to get a native path back.
+//! Types that cross the Tauri IPC boundary, each mirrored in `src/lib/protocol.ts` --
+//! change one and change the other. Paths cross as [`WirePath`], normalized on the way in.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -19,16 +7,14 @@ use std::path::{Path, PathBuf};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// A normalized absolute path. See the module docs for the exact shape.
+/// A normalized absolute path: `/`-separated, no verbatim prefix, upper-case drive letter,
+/// no trailing slash. Windows names one directory three ways; `Deserialize` settles it once.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct WirePath(String);
 
 impl WirePath {
-    /// Normalize a path string that came from outside (the frontend, a CLI argument).
-    ///
-    /// This is purely lexical: it never touches the filesystem, so it works for paths
-    /// that do not exist yet. Use [`WirePath::canonical`] when the path must exist and
-    /// symlinks matter.
+    /// Normalize a path string from outside (the frontend, a CLI argument). Purely lexical,
+    /// so it works for paths that do not exist yet; [`WirePath::canonical`] when they must.
     pub fn parse(raw: &str) -> Result<Self, IpcError> {
         normalize(raw)
     }
@@ -45,9 +31,7 @@ impl WirePath {
     }
 
     /// Resolve `..`, symlinks and short names against the filesystem. The path must exist.
-    ///
-    /// Used once per workspace, on the root, so that every path derived from it is
-    /// comparable by string equality.
+    /// Used once per workspace root, so every path derived from it compares by string.
     pub fn canonical(path: &Path) -> Result<Self, IpcError> {
         let resolved = std::fs::canonicalize(path)
             .map_err(|err| IpcError::from_io(&err, format!("cannot resolve {}", path.display())))?;
@@ -208,9 +192,8 @@ pub enum ErrorCode {
     /// A language server that cannot be started, or is no longer running. A server that
     /// is not installed comes back as `NotFound` instead, so the two are distinguishable.
     Lsp,
-    /// The user's own repository refused an operation, or git said no. The message is
-    /// git's own -- a hook that rejects a commit has already explained itself better
-    /// than this app could.
+    /// The user's own repository refused an operation. The message is git's own -- a hook
+    /// that rejects a commit has already explained itself better than this app could.
     Git,
 }
 
@@ -318,13 +301,10 @@ pub struct FsEvent {
     pub path: WirePath,
 }
 
-// ---------------------------------------------------------------------------
-// Agent
-//
-// The stdio wire between `agent.rs` and the sidecar is defined once, in
-// `sidecar/src/protocol.ts`. The types below are the parts of it the frontend also sees,
-// plus the events `agent.rs` adds on its own. `agent.rs` holds the stdio-only halves.
-// ---------------------------------------------------------------------------
+// --- Agent -----------------------------------------------------------------
+
+// The stdio wire is defined once, in `sidecar/src/protocol.ts`. Below are the parts the
+// frontend sees too, plus the events `agent.rs` adds; `agent.rs` holds the stdio-only half.
 
 /// A JSON object carried through without being interpreted -- tool arguments, tool
 /// inputs. Only the transcript UI knows what is inside.
@@ -343,10 +323,8 @@ pub enum PermissionMode {
     Auto,
 }
 
-/// How much reasoning the model spends on a turn. Mirrors the SDK's `EffortLevel`.
-///
-/// Not every model accepts every level; [`ModelInfo::supported_effort_levels`] carries
-/// the ones a given model takes, which is what a picker should offer.
+/// How much reasoning the model spends on a turn. Mirrors the SDK's `EffortLevel`; not every
+/// model takes every level, so a picker offers [`ModelInfo::supported_effort_levels`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum EffortLevel {
@@ -385,9 +363,8 @@ pub struct PromptOptions {
     /// Sent per prompt, because picking one is something the user does mid-session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_conversation: Option<String>,
-    /// Which backend runs this turn: a key from `~/.agentide/providers.json`, or `None`
-    /// for Anthropic's own. The core only carries it; the sidecar resolves it, because
-    /// that is where the file's secrets are expanded.
+    /// Which backend runs this turn: a key from `~/.agentide/providers.json`, or `None` for
+    /// Anthropic's own. Only carried here -- the sidecar resolves it, where the secrets are.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
 }
@@ -409,11 +386,8 @@ pub enum DoneReason {
     Error,
 }
 
-/// One model the installation can run.
-///
-/// The subset of the SDK's `ModelInfo` a picker needs. Deserialized rather than carried
-/// as opaque JSON because the frontend chooses effort levels from these fields, so a
-/// rename in the SDK should fail a fixture here rather than empty a menu at runtime.
+/// One model the installation can run: the subset of the SDK's `ModelInfo` a picker needs.
+/// Deserialized, not opaque JSON, so an SDK rename fails a fixture instead of emptying a menu.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlashCommand {
@@ -427,11 +401,8 @@ pub struct SlashCommand {
     pub aliases: Option<Vec<String>>,
 }
 
-/// One external MCP server the sidecar held back, and where its application would be.
-///
-/// `host` and `port` travel with the name because the chip drawn for this has to say
-/// what to open: a name on its own reads as a broken server rather than a closed
-/// program.
+/// One external MCP server the sidecar held back, and where its application would be. `host`
+/// and `port` travel with the name so the chip can say what to open, not just what is broken.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatedServer {
@@ -449,11 +420,8 @@ pub struct ProviderModel {
     pub supports_effort: bool,
 }
 
-/// A backend from `~/.agentide/providers.json`, as the host is allowed to see it.
-///
-/// The base URL and the token are absent on purpose: they stay in the sidecar, which is
-/// the only process that reads the file's secrets. The host needs the models, the command
-/// that starts the backend, and where it listens — none of which is the credential.
+/// A backend from `~/.agentide/providers.json`, as the host may see it. The base URL and
+/// token stay in the sidecar; the host gets the models, the command, and where it listens.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderInfo {
@@ -486,11 +454,8 @@ pub struct ModelInfo {
     pub supported_effort_levels: Option<Vec<EffortLevel>>,
 }
 
-/// The answer to an `ide_*` tool call.
-///
-/// `ok` decides which of the other two fields is present. A successful result is
-/// produced by the frontend and arrives here already built; the Rust core only ever
-/// constructs the failure case, which is what [`ToolResult::error`] is for.
+/// The answer to an `ide_*` tool call; `ok` decides which other field is present. Success is
+/// built by the frontend, failure only ever here -- that is what [`ToolResult::error`] is for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolResult {
@@ -511,11 +476,8 @@ impl ToolResult {
     }
 }
 
-/// Who answered a permission request or a tool call.
-///
-/// `Host` means the Rust core answered on the frontend's behalf, which is what happens
-/// for every tool whose backend has not been built yet. The transcript renders those
-/// differently from a decision the user actually made.
+/// Who answered a permission request or a tool call. `Host` means the Rust core answered for
+/// the frontend -- every tool with no backend yet -- and the transcript renders those apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplySource {
@@ -523,17 +485,8 @@ pub enum ReplySource {
     Host,
 }
 
-/// What the frontend receives over the agent `Channel`.
-///
-/// Most variants forward a sidecar message unchanged. `PermissionDecided`,
-/// `ToolResult` and `Exited` are added by `agent.rs`: the first two report an answer
-/// going back down to the sidecar whoever produced it, and the last reports that there
-/// is no sidecar any more.
-///
-/// Ordering: everything on this channel is written by one thread in the order the
-/// sidecar produced it, so a `tool_call` always precedes its `tool_result`, and a
-/// session's `done` always follows every `event` of that turn. Nothing is reordered and
-/// nothing is dropped.
+/// What the frontend receives over the agent `Channel`. One thread writes it in the order the
+/// sidecar produced it: nothing reordered, nothing dropped, a `done` after every `event`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum AgentEvent {
@@ -555,16 +508,12 @@ pub enum AgentEvent {
     /// same reason: both describe the installation, and both need a live query to read.
     #[serde(rename_all = "camelCase")]
     Commands { commands: Vec<SlashCommand> },
-    /// The backends `~/.agentide/providers.json` names. Unlike the models, these need no
-    /// live query — they are a file — so they arrive at startup and the picker can offer
-    /// a local model before the first turn. Re-sent each turn, because the file is
-    /// re-read each turn. Carries no credential: see [`ProviderInfo`].
+    /// The backends `~/.agentide/providers.json` names -- a file, not a live query, so they
+    /// arrive at startup and are re-sent each turn. Carries no credential: see [`ProviderInfo`].
     #[serde(rename_all = "camelCase")]
     Providers { providers: Vec<ProviderInfo> },
-    /// The external MCP servers this turn was built without, because the application
-    /// each one drives is not open. Arrives at the start of every turn, empty list
-    /// included -- the empty list is what clears the previous turn's chips. Held back
-    /// means never started, so none of these appear in the SDK's own init message.
+    /// External MCP servers this turn was built without, because their application is not
+    /// open. Sent every turn, empty list included: the empty list clears the last turn's chips.
     #[serde(rename_all = "camelCase")]
     McpGated {
         session_id: String,
@@ -688,12 +637,10 @@ mod tests {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Checkpoints
-//
-// The shadow git repository at `.agentide/checkpoints.git` is what makes every agent
-// edit reversible. These are the shapes it hands the frontend; the mechanism lives in
-// `checkpoints.rs`.
+// --- Checkpoints -----------------------------------------------------------
+
+// The shadow git repository at `.agentide/checkpoints.git` makes every agent edit
+// reversible. These are the shapes it hands the frontend; the mechanism is `checkpoints.rs`.
 
 /// One commit in the shadow repository.
 #[derive(Debug, Clone, Serialize)]
@@ -763,11 +710,8 @@ pub struct CheckpointDiff {
     pub files: Vec<DiffFile>,
 }
 
-/// One hunk of a file's patch.
-///
-/// `id` is content-derived, not positional: it is recomputed from the file as it stands
-/// whenever hunks are requested, so an id that no longer matches anything is a stale
-/// hunk and reverting it fails with `ErrorCode::Stale` rather than applying elsewhere.
+/// One hunk of a file's patch. `id` is content-derived and recomputed whenever hunks are
+/// asked for, so a stale id fails with `ErrorCode::Stale` rather than reverting elsewhere.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hunk {
@@ -814,10 +758,8 @@ pub struct RevertOutcome {
     pub hunks: u32,
 }
 
-/// The result of rewinding the work tree to a checkpoint.
-///
-/// `safety` is taken *before* the rewind, so the rewind is itself undoable — the one
-/// operation here that can remove work needs an escape hatch of its own.
+/// The result of rewinding the work tree to a checkpoint. `safety` is taken *before* the
+/// rewind, so the one operation here that can remove work is itself undoable.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RewindResult {
@@ -831,12 +773,10 @@ pub struct RewindResult {
     pub kept: Vec<WirePath>,
 }
 
-// ---------------------------------------------------------------------------
-// Terminal
-//
-// The shapes `pty.rs` hands the frontend. Output itself is not one of them: it crosses
-// as raw bytes on the same channel, because a pty produces bytes and decoding a chunk
-// that ends mid-character corrupts it. See the `pty.rs` module docs.
+// --- Terminal --------------------------------------------------------------
+
+// The shapes `pty.rs` hands the frontend. Output is not one of them: it crosses as raw
+// bytes on the same channel, because decoding a chunk that ends mid-character corrupts it.
 
 /// What to start. Everything but the id has a default: the workspace root, the user's
 /// shell, and a terminal the size of a terminal.
@@ -850,12 +790,8 @@ pub struct PtySpawnOptions {
     pub cwd: Option<WirePath>,
     /// argv, where `command[0]` is the program. Omitted means an interactive shell.
     pub command: Option<Vec<String>>,
-    /// One command line for the user's own shell to run and then exit, instead of an
-    /// interactive session. Takes precedence over `command`.
-    ///
-    /// Exists so the agent runs what a person here would run, in the shell a person here
-    /// uses, without the frontend having to know which shell that is. Which shell it is
-    /// stays decided in one place, next to the interactive one.
+    /// One command for the user's own shell to run and then exit, instead of an interactive
+    /// session. Takes precedence over `command`; the frontend never learns which shell it is.
     pub shell_command: Option<String>,
     pub rows: Option<u16>,
     pub cols: Option<u16>,
@@ -892,34 +828,24 @@ pub enum PtyEvent {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Language servers
-//
-// The shapes `lsp.rs` hands the frontend. Nothing here models LSP itself: a protocol
-// message crosses as [`RawJson`], which is the server's own bytes spliced verbatim into
-// the channel payload. The frontend is the LSP client and owns every bit of the
-// semantics -- ids, capabilities, `initialize`, the lot. See the `lsp.rs` module docs.
+// --- Language servers ------------------------------------------------------
 
-/// One JSON document, carried without being understood.
-///
-/// `Box<RawValue>` serializes as the JSON it already is rather than as a string of it, so
-/// a server's message is copied into the channel payload byte for byte: no `Value` tree
-/// is built on the way through, key order and number spelling survive, and the webview's
-/// single `JSON.parse` of the payload is the only parse anyone performs. The one thing
-/// Rust does check is that it *is* well-formed JSON -- a scan, not a parse tree.
+// The shapes `lsp.rs` hands the frontend. Nothing here models LSP: a message crosses as
+// [`RawJson`] and the frontend is the client -- ids, capabilities, `initialize`, the lot.
+
+/// One JSON document, carried without being understood. `Box<RawValue>` serializes as the
+/// JSON it already is: no `Value` tree, key order and number spelling survive, one parse.
 pub type RawJson = Box<serde_json::value::RawValue>;
 
 /// What to start.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LspStartOptions {
-    /// The frontend's handle for this server -- in practice one per language per
-    /// workspace. Starting onto an id that is already running replaces it, killing the
-    /// process that was there.
+    /// The frontend's handle for this server, in practice one per language per workspace.
+    /// Starting onto an id that is already running replaces it, killing what was there.
     pub id: String,
-    /// argv, where `command[0]` is the program. Resolved against `PATH`; there is no
-    /// table of known servers here, because which server serves which language is the
-    /// frontend's decision, not this crate's.
+    /// argv, where `command[0]` is the program, resolved against `PATH`. No table of known
+    /// servers here: which server serves which language is the frontend's decision.
     pub command: Vec<String>,
     /// The directory the server is started in, and which the frontend will name as the
     /// workspace folder in `initialize`. Defaults to the open workspace.
@@ -937,12 +863,8 @@ pub struct LspInfo {
     pub pid: Option<u32>,
 }
 
-/// What arrives on a language server's channel.
-///
-/// Ordering holds *within* a variant and not across them: `messages` arrive in the order
-/// the server wrote them and `stderr` likewise, but the two are separate pipes with
-/// separate OS buffers, so their relative order was never ours to preserve. `exited` is
-/// the last thing a server sends.
+/// What arrives on a language server's channel. Order holds within a variant, not across:
+/// `messages` and `stderr` are separate pipes. `exited` is the last thing a server sends.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum LspEvent {
@@ -950,17 +872,12 @@ pub enum LspEvent {
     /// handler must loop, not assume one.
     #[serde(rename_all = "camelCase")]
     Messages { id: String, messages: Vec<RawJson> },
-    /// The server talking about itself: its stderr, plus anything it wrote to stdout that
-    /// was not a well-formed message. This is where clangd says it cannot find
-    /// `compile_commands.json` and rust-analyzer says the toolchain is wrong, so it is
-    /// worth showing rather than dropping.
+    /// The server talking about itself: stderr, plus any stdout that was not a well-formed
+    /// message. Where clangd reports a missing `compile_commands.json`, so worth showing.
     #[serde(rename_all = "camelCase")]
     Stderr { id: String, lines: Vec<String> },
-    /// The process is gone, and so is the session: sending to the id now fails. Every
-    /// request still outstanding will never be answered and should be failed here.
-    ///
-    /// Arrives on a deliberate stop and on a replacement too, so the frontend needs only
-    /// this one path to give up on outstanding work.
+    /// The process is gone and so is the session: sending to the id now fails, and every
+    /// outstanding request should be failed here. Arrives on a replacement as well as a stop.
     #[serde(rename_all = "camelCase")]
     Exited {
         id: String,

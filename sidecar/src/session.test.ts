@@ -1,13 +1,5 @@
-/**
- * The rule that decides whether a turn keeps the running CLI or spawns a new one.
- *
- * A field on the wrong side of the line either costs ~2.5s of spawn on every turn, or
- * runs the turn with an option the person already changed. Each test below is one field
- * and which of those two it would be.
- *
- * The sequencing around this rule -- what happens when a query dies, is interrupted, or is
- * taken over by a newer conversation -- is in `session-lifecycle.test.ts`.
- */
+/** Whether a turn keeps the running CLI or spawns a new one: one test per field, since the
+ * wrong side of the line costs ~2.5s a turn or runs with a stale option. */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -86,9 +78,8 @@ test("an edited tuned prompt rebuilds, since the preset append is fixed at start
 });
 
 test("an append of only whitespace is the same as no append", () => {
-  // `#options` omits an empty append entirely, so the CLI is given the same thing either
-  // way -- and spawning one to hand it the same thing would be the whole cost for none of
-  // the benefit.
+  // `#options` omits an empty append entirely, so the CLI gets the same thing either way
+  // and a respawn would buy nothing.
   assert.equal(
     queryFingerprint(shape({}, { systemPromptAppend: undefined })),
     queryFingerprint(shape({}, { systemPromptAppend: "   \n " })),
@@ -183,9 +174,8 @@ test("a different model on the same backend is still a setter", () => {
 });
 
 test("resumeConversation is not read directly; the conversation field carries it", () => {
-  // The session adopts the id into `conversation` once and then follows the SDK's own
-  // session id. Reading the option here as well would rebuild on every turn of a resumed
-  // session, because the composer keeps sending the id it was given.
+  // The session adopts the id once, then follows the SDK's. Reading the option here too
+  // would rebuild every turn, since the composer keeps resending the id it was given.
   assert.equal(
     queryFingerprint(shape()),
     queryFingerprint(shape({}, { resumeConversation: "some-old-conversation" })),

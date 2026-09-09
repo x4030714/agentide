@@ -1,42 +1,5 @@
-//! Past conversations: the agent SDK's own transcripts, and the CLI's, which are the same
-//! files.
-//!
-//! Existing transcripts are never modified. The SDK owns them -- it appends to them as a
-//! turn runs and resumes from them when asked -- and editing one in place would be editing
-//! a file the SDK is holding open. The one thing here that writes, [`conversation_import`],
-//! only ever writes a *new* file: it copies a transcript from another project into this
-//! workspace under a fresh session id, so the original stays exactly as its owner left it.
-//!
-//! ## Where they live
-//!
-//! `~/.claude/projects/<mangled cwd>/<session id>.jsonl`, one JSON record per line. The
-//! directory name is the workspace path with every separator and colon replaced by `-`,
-//! which is a lossy transformation and therefore not one to trust blindly: two different
-//! paths can mangle to the same name. So the mangled name is a *guess* that is confirmed
-//! by reading a record's own `cwd`, and a directory whose records disagree is skipped.
-//!
-//! ## What a summary costs
-//!
-//! Summarising means scanning each file, because the title, the first prompt and the turn
-//! count are at different ends of it. That is affordable for one workspace and expensive
-//! across all of them. Measured on this machine: 16 project directories, 151 transcripts,
-//! the five largest files 44.7, 33.5, 29.6, 28.6 and 23.7 MB, and the biggest single
-//! directory 182 MB over 79 files.
-//!
-//! So the listings are split by what they cost. [`claude_projects_list`] reads the head of
-//! one transcript per directory -- 152ms for the whole store -- and the per-conversation
-//! summaries wait until a directory is expanded, which is 39ms for this project's own 24
-//! and 2.1s for that 182 MB one. Debug-build numbers, which is what `cargo test` will
-//! reproduce; the shipped build is faster.
-//!
-//! Two things keep those numbers down, and both look like something to simplify away:
-//!
-//! - Nothing reads a file into a `String` first. `read_to_string` on the 44.7 MB
-//!   transcript is 44.7 MB resident to look at four fields, and [`cwd_of`] did exactly
-//!   that for up to 40 files per directory.
-//! - Nothing parses a line into a `serde_json::Value` unless it needs the message in it.
-//!   A transcript's weight is tool output and file snapshots that no listing looks at.
-//!   Reading [`Head`] instead took this project's own listing from 365ms to 39ms.
+//! Past conversations: the agent SDK's own transcripts under `~/.claude/projects`. Existing
+//! files are never modified, and never slurped -- the big ones on this machine reach 45 MB.
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
@@ -82,9 +45,8 @@ pub struct ClaudeProject {
     pub cwd: String,
     /// How many `.jsonl` transcripts the directory holds.
     pub conversations: u32,
-    /// Modified time of the newest transcript, epoch milliseconds. From the filesystem,
-    /// not from the records: reading a timestamp out of every file is what this listing
-    /// exists to avoid.
+    /// Modified time of the newest transcript, epoch milliseconds. From the filesystem, not
+    /// the records: reading a timestamp out of every file is what this listing exists to avoid.
     pub updated_ms: Option<i64>,
     /// Total size of those transcripts, so the cost of expanding is visible first.
     pub bytes: u64,
@@ -104,10 +66,8 @@ pub struct ConversationEntry {
 
 // --- Locating the directory ------------------------------------------------------
 
-/// `C:\Users\tung\Desktop\agentide` -> `C--Users-tung-Desktop-agentide`.
-///
-/// Every separator, colon and dot becomes `-`. Lossy on purpose -- it is the SDK's
-/// scheme, not ours -- which is why callers confirm the guess against a record's `cwd`.
+/// `C:\Users\tung\Desktop\agentide` -> `C--Users-tung-Desktop-agentide`: every separator,
+/// colon and dot becomes `-`. The SDK's lossy scheme, so callers confirm it against a `cwd`.
 fn mangle(path: &Path) -> String {
     path.to_string_lossy()
         .chars()
@@ -126,12 +86,8 @@ fn projects_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-/// Hand `visit` one line at a time until it breaks or the file ends.
-///
-/// The reason nothing here calls `read_to_string`: a transcript is a whole session's tool
-/// output and the big ones on this machine are 20-45 MB. Slurping one to look at its first
-/// few records costs its whole size in resident memory, and `confirms` does that up to 40
-/// times for a single directory. Streaming keeps the peak at one line.
+/// Hand `visit` one line at a time until it breaks or the file ends. Why nothing here calls
+/// `read_to_string`: transcripts reach 45 MB, and `confirms` opens up to 40 per directory.
 fn each_line(file: &Path, mut visit: impl FnMut(&str) -> ControlFlow<()>) -> std::io::Result<()> {
     let mut reader = BufReader::new(File::open(file)?);
     // Reused across lines so a 55,000-record file is one allocation, not 55,000.
@@ -147,9 +103,8 @@ fn each_line(file: &Path, mut visit: impl FnMut(&str) -> ControlFlow<()>) -> std
     }
 }
 
-/// Two caps on the head-of-file scan, because either one alone has a hole: 200 records is
-/// nothing when the records are prompts, and everything when one of them is a 5 MB tool
-/// result. In practice the `cwd` is on the third line.
+/// Two caps on the head-of-file scan: 200 records is nothing when they are prompts and
+/// everything when one is a 5 MB tool result. In practice the `cwd` is on the third line.
 const HEAD_RECORDS: usize = 200;
 const HEAD_BYTES: usize = 1 << 20;
 
@@ -232,9 +187,8 @@ fn millis(value: Option<&str>) -> Option<i64> {
     let minute: i64 = time_parts.next()?.parse().ok()?;
     let second: f64 = time_parts.next()?.parse().ok()?;
 
-    // Days since the Unix epoch, by the civil-from-days algorithm. Correct for every
-    // Gregorian date, which matters less than it being total: a transcript with an odd
-    // timestamp should sort oddly, not fail to list.
+    // Days since the Unix epoch, by civil-from-days. Being total matters more than being
+    // exact: a transcript with an odd timestamp should sort oddly, not fail to list.
     let year = if month <= 2 { year - 1 } else { year };
     let era = if year >= 0 { year } else { year - 399 } / 400;
     let year_of_era = year - era * 400;
@@ -244,14 +198,8 @@ fn millis(value: Option<&str>) -> Option<i64> {
     Some(((days * 86_400 + hour * 3_600 + minute * 60) * 1_000) + (second * 1000.0) as i64)
 }
 
-/// The fields a listing reads, without building the record it read them from.
-///
-/// Parsing a line into a `serde_json::Value` allocates a map, a `String` per key and a
-/// node per value -- for records whose bulk is tool output and file snapshots that nothing
-/// here looks at. Deserializing into this skips those fields instead: serde walks past
-/// them without allocating, and a `Cow` borrows out of the line unless the JSON escaped
-/// it. Measured over the whole store, the summaries it produces are identical and this
-/// project's own listing went from 365ms to 39ms.
+/// The fields a listing reads, without building the record it read them from. serde walks
+/// past the tool output a `Value` would allocate: this listing went from 365ms to 39ms.
 #[derive(serde::Deserialize)]
 struct Head<'a> {
     #[serde(rename = "type", default, borrow)]
@@ -265,12 +213,8 @@ struct Head<'a> {
 }
 
 impl<'a> Head<'a> {
-    /// The record's head, or nothing when the line is not a record this understands.
-    ///
-    /// A field of an unexpected type fails the whole deserialize, where a `Value` would
-    /// have parsed and simply not matched -- so a failure falls back to `Value` rather
-    /// than dropping the record. That path costs nothing until the day a record changes
-    /// shape, which is the day a silently shorter list would be hardest to explain.
+    /// The record's head, or nothing when the line is not a record this understands. A field
+    /// of an unexpected type fails the whole deserialize, so a failure falls back to `Value`.
     fn read(line: &'a str) -> Option<Self> {
         if let Ok(head) = serde_json::from_str::<Head<'a>>(line) {
             return Some(head);
@@ -415,11 +359,8 @@ pub async fn conversations_list(
     summarise_dir(&dir)
 }
 
-/// One conversation's messages, for reading.
-///
-/// `from_dir` names a directory under `~/.claude/projects` to read out of instead of this
-/// workspace's own -- that is how the settings panel previews another project's history
-/// before importing it. Absent means this workspace.
+/// One conversation's messages, for reading. `from_dir` names another directory under
+/// `~/.claude/projects`: that is how settings previews another project before importing.
 #[tauri::command]
 pub async fn conversation_read(
     workspace: State<'_, WorkspaceState>,
@@ -441,9 +382,8 @@ pub async fn conversation_read(
 
     let mut out = Vec::new();
     each_line(&file, |line| {
-        // Most of a transcript by weight is records with no message in them -- system
-        // notes, environment attachments, file-history snapshots that carry whole file
-        // bodies. Reading the type first means only the messages get parsed properly.
+        // Most of a transcript by weight is records with no message -- system notes,
+        // environment attachments, file snapshots. Read the type first, parse only messages.
         let says_something = Head::read(line)
             .and_then(|head| head.kind.map(|kind| kind == "user" || kind == "assistant"))
             .unwrap_or(false);
@@ -480,12 +420,8 @@ fn entry_of(record: &serde_json::Value) -> Option<ConversationEntry> {
 
 // --- Browsing every project ------------------------------------------------------
 
-/// Every project directory that holds at least one readable transcript, newest first.
-///
-/// Deliberately shallow. Each directory costs one `read_dir`, a `metadata` per file and the
-/// head of a single transcript -- so the whole listing is a few dozen kilobytes read even
-/// though the store is hundreds of megabytes. The per-conversation detail waits until a
-/// directory is expanded.
+/// Every project directory holding a readable transcript, newest first. Deliberately shallow
+/// -- one `read_dir` plus one transcript head each -- so per-conversation detail can wait.
 #[tauri::command]
 pub async fn claude_projects_list() -> Result<Vec<ClaudeProject>, IpcError> {
     let Some(projects) = projects_dir() else {
@@ -561,9 +497,8 @@ fn modified_ms(meta: &std::fs::Metadata) -> Option<i64> {
     Some(since.as_millis() as i64)
 }
 
-/// A directory name from the frontend, resolved under `~/.claude/projects`.
-///
-/// The name is joined onto a path, so it must not be able to leave it.
+/// A directory name from the frontend, resolved under `~/.claude/projects`. It is joined
+/// onto a path, so it must not be able to leave it.
 fn project_dir_named(name: &str) -> Result<PathBuf, IpcError> {
     if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
         return Err(IpcError::new(
@@ -593,23 +528,8 @@ fn transcript_name(id: &str) -> Result<String, IpcError> {
 
 // --- Importing -------------------------------------------------------------------
 
-/// Rewrite one record so it belongs to `session` in `cwd`.
-///
-/// Only the two top-level fields that name the file's own identity are touched. Everything
-/// else is left exactly as written, including three fields it is tempting to touch:
-///
-/// - `session_id` (underscored) is *not* this transcript's id. In the real store it holds
-///   a different uuid, the same one across several transcripts -- some other identity
-///   entirely -- and rewriting it would be inventing a fact.
-/// - `uuid`/`parentUuid` chain the records to each other. They only have to be consistent
-///   within the file, and they already are.
-/// - message content is history. The environment snapshot the model was shown names the
-///   old workspace; changing it would be editing what was said, not where it now lives.
-///
-/// Every top-level `cwd` is rewritten, not just those matching the source workspace: the
-/// listing decides which workspace a directory belongs to by reading the first `cwd` it
-/// finds in it, so one record left behind claiming another project can make this
-/// workspace's own conversations stop listing.
+/// Rewrite a record's identity: `session`, and every top-level `cwd` since the listing trusts
+/// the first it finds. `session_id`, the uuid chain and message content are history, untouched.
 fn rebrand(record: &mut serde_json::Value, session: &str, cwd: &str) {
     let Some(fields) = record.as_object_mut() else {
         return;
@@ -622,12 +542,8 @@ fn rebrand(record: &mut serde_json::Value, session: &str, cwd: &str) {
     }
 }
 
-/// Copy a conversation from another project into this workspace, under a new id.
-///
-/// A copy rather than a move, and a new id rather than the old one, for the same reason:
-/// the original is somebody's history in another project and has to keep working there.
-/// What comes back is a separate conversation that happens to start with the same
-/// messages -- continuing it here does not continue it over there.
+/// Copy a conversation from another project into this workspace, under a new id. A copy and
+/// a new id because the original is somebody's history over there and has to keep working.
 #[tauri::command]
 pub async fn conversation_import(
     workspace: State<'_, WorkspaceState>,
@@ -675,9 +591,7 @@ pub async fn conversation_import(
 }
 
 /// Stream `source` into `destination`, rebranding each record. Returns the record count.
-///
-/// Read line by line and written the same way, so importing the 44.7 MB transcript costs
-/// one line of memory rather than two copies of the file.
+/// Line by line both ways, so importing the 44.7 MB transcript costs one line of memory.
 fn copy_transcript(
     source: &Path,
     destination: &Path,
@@ -798,9 +712,8 @@ mod tests {
         }
     }
 
-    /// Three records in the shape a real transcript uses, taken from one on this machine:
-    /// a `queue-operation` header with only a `sessionId`, then a user turn and an
-    /// assistant turn carrying `cwd`, `version`, `gitBranch` and the uuid chain.
+    /// Three records in the shape a real transcript uses, taken from one on this machine: a
+    /// `queue-operation` header, then a user and an assistant turn with `cwd` and the uuids.
     const OLD_ID: &str = "4fe71ece-56a4-432f-9674-b6503d4287d2";
     fn sample_transcript() -> String {
         [

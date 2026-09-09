@@ -1,85 +1,5 @@
-//! Language servers: spawn one, frame its stdio, stream what it says to the webview.
-//!
-//! One [`Session`] is one language server process, keyed by an id the frontend picks --
-//! in practice one per language per workspace -- so several can exist at once. The shape
-//! is `pty.rs`'s: a child process, reader threads, a coalescing forwarder onto a
-//! [`Channel`], and an exit that is reported rather than inferred.
-//!
-//! ## This module is a pipe, not a client
-//!
-//! It does not model LSP. There is no request table, no id correlation, no capability
-//! handling, no `initialize`, no notion of which server serves which language. All of
-//! that lives in TypeScript beside the Monaco providers, which is the point: the protocol
-//! is understood in exactly one place, and that place is the one that also has to turn it
-//! into completions and diagnostics. What this module owns is the parts TypeScript cannot
-//! do -- a child process, its two pipes, its framing, and its death.
-//!
-//! Concretely, that means a request this module forwards is a request it has no opinion
-//! about. It never times one out, never retries one, and never synthesizes a reply.
-//!
-//! ## Framing
-//!
-//! LSP on stdio is `Content-Length: N\r\n\r\n` followed by exactly N *bytes* of UTF-8
-//! JSON, in both directions. [`FrameDecoder`] reassembles that from arbitrary chunks: a
-//! pipe read boundary falls wherever the OS puts it, so a header split mid-`Content-`, a
-//! payload split across four reads and six whole messages in one read are all the normal
-//! case rather than the edge case. Getting this wrong does not look like a crash -- it
-//! looks like a language server that starts and then does nothing -- so the decoder is
-//! tested on its own, byte by byte.
-//!
-//! N counts bytes, never characters. The decoder works in bytes throughout and only
-//! decodes UTF-8 once a whole payload is in hand, which is what makes a multibyte
-//! character straddling a chunk boundary a non-event.
-//!
-//! ## Messages cross without being read
-//!
-//! A message goes up as [`RawJson`]: `serde_json` writes the server's own bytes straight
-//! into the channel payload. No `Value` tree is built here, so key order, number spelling
-//! and precision survive untouched, and the webview's single `JSON.parse` of the payload
-//! is the only parse anyone performs -- the messages arrive already-objects, nested in
-//! the event. The one thing checked on the way through is that the payload really is
-//! well-formed UTF-8 JSON; a scan, not a parse tree. A payload that fails that check is
-//! not dropped, it is reported on [`LspEvent::Stderr`], because a message the frontend
-//! never sees is indistinguishable from a server doing nothing.
-//!
-//! ## Batching
-//!
-//! rust-analyzer is *loud*. Indexing a large crate emits `$/progress` notifications by
-//! the hundred per second, and one channel message each would melt the webview the same
-//! way unbatched pty output would. So messages are coalesced into
-//! [`LspEvent::Messages`] -- an array, not a concatenation, which is why batching is safe
-//! here at all: boundaries and order are preserved exactly, so the frontend's correlation
-//! by id is untouched. It loops over the array instead of handling one message.
-//!
-//! The limiter is a rate cap rather than the pty's debounce, because the workloads
-//! differ. Terminal output is always a stream and 12ms of latency on it is invisible; an
-//! LSP response is a reply to something the user just did, and a flat 12ms added to every
-//! hover is not free. So the first message after a quiet period goes out immediately, and
-//! only then does a [`SEND_INTERVAL`] window open during which further messages
-//! accumulate. Idle server: zero added latency. Indexing server: at most ~80 channel
-//! messages a second whatever it does. [`FLUSH_BYTES`] cuts the window short when a batch
-//! grows large enough that holding it costs more than sending it.
-//!
-//! ## Slow is not dead
-//!
-//! rust-analyzer can take minutes to become useful on a large workspace, and for most of
-//! that time the correct behaviour is to wait. Nothing here interprets silence: there is
-//! no timeout, so nothing can decide a busy server is a broken one. Death is instead
-//! reported positively -- the forwarder watches the process, and the moment it goes the
-//! session is taken out of the state and [`LspEvent::Exited`] is sent carrying the code
-//! and the tail of stderr. The frontend's rule follows from that: keep waiting until
-//! `exited` arrives, then fail everything outstanding at once. Sending to an id that has
-//! exited fails immediately rather than being swallowed, so a request cannot hang on a
-//! server that is already gone.
-//!
-//! ## Lifetime
-//!
-//! Same discipline as the pty. A server dies when its session is stopped, when a new
-//! session takes its id, and when the app exits (see [`shutdown`], wired to
-//! `RunEvent::Exit` in `lib.rs` beside the pty's and the agent's). Stopping closes stdin
-//! first and only kills after a grace period: stdin EOF is how a language server is told
-//! to go, and rust-analyzer has `cargo` children of its own that a bare kill would orphan
-//! on Windows, where there is no process group to signal.
+//! Language servers: spawn one, frame its stdio, stream it to the webview. A pipe, not
+//! an LSP client -- no request table, no capabilities, no timeouts; TypeScript owns those.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -98,11 +18,8 @@ use crate::ipc::{ErrorCode, IpcError, LspEvent, LspInfo, LspStartOptions, RawJso
 /// One pipe read. Larger buys nothing: the forwarder coalesces anyway.
 const READ_BUFFER: usize = 32 * 1024;
 
-/// The largest `Content-Length` that is treated as a message rather than as evidence the
-/// stream has desynchronized. Generous on purpose -- a `textDocument/semanticTokens/full`
-/// response for a large file runs to megabytes -- but not unbounded, because length
-/// framing has no resynchronization point: past this the only honest move is to stop
-/// reading and report it.
+/// Largest `Content-Length` treated as a message rather than as a desynchronized stream.
+/// Generous -- semantic tokens run to megabytes -- but length framing has no resync point.
 const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 
 /// The largest header block accepted before the stream is called desynchronized. A real
@@ -128,15 +45,10 @@ const SHUTDOWN_POLL: Duration = Duration::from_millis(20);
 /// message. The startup complaint is what matters, but it is the tail that is affordable.
 const STDERR_TAIL: usize = 40;
 
-// ---------------------------------------------------------------------------
-// Framing
-// ---------------------------------------------------------------------------
+// --- Framing ---------------------------------------------------------------
 
-/// Reassembles `Content-Length`-framed messages from arbitrary byte chunks.
-///
-/// Header state is kept rather than rediscovered: with `expect` set, a payload arriving
-/// over hundreds of reads costs one append each, where re-scanning the buffer for the
-/// header terminator every time would be quadratic in the size of the message.
+/// Reassembles `Content-Length`-framed messages from arbitrary byte chunks. Header state
+/// is kept, not rediscovered: re-scanning for the terminator every read would be quadratic.
 struct FrameDecoder {
     /// Bytes not yet turned into a message: a partial header, or a partial payload.
     carry: Vec<u8>,
@@ -154,11 +66,8 @@ impl FrameDecoder {
         }
     }
 
-    /// Append `chunk` and push every complete payload it finishes onto `out`.
-    ///
-    /// The error case is terminal for the stream: a bad header or an impossible length
-    /// means the byte positions are no longer trustworthy, and unlike newline framing
-    /// there is no next delimiter to resynchronize on.
+    /// Append `chunk` and push every complete payload it finishes onto `out`. An error is
+    /// terminal: byte positions stop being trustworthy and there is nothing to resync on.
     fn push(&mut self, chunk: &[u8], out: &mut Vec<Vec<u8>>) -> Result<(), IpcError> {
         self.carry.extend_from_slice(chunk);
         loop {
@@ -254,9 +163,7 @@ fn desynchronized(detail: String) -> IpcError {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Sessions
-// ---------------------------------------------------------------------------
+// --- Sessions --------------------------------------------------------------
 
 /// Distinguishes a session from its replacement under the same id, so the thread watching
 /// the old one cannot evict the new one when it notices its process has died.
@@ -273,11 +180,8 @@ struct Session {
 }
 
 impl Session {
-    /// End the server: ask first, insist after [`SHUTDOWN_GRACE`].
-    ///
-    /// Closing stdin rather than killing outright is not politeness. rust-analyzer runs
-    /// `cargo` as a child of its own, and on Windows there is no process group to signal,
-    /// so a server that is killed where it stands leaves that build running.
+    /// End the server: close stdin, then insist after [`SHUTDOWN_GRACE`]. Killing outright
+    /// orphans rust-analyzer's `cargo` children -- Windows has no process group to signal.
     fn stop(mut self) {
         drop(self.stdin.take());
         if await_exit(&self.process, Instant::now() + SHUTDOWN_GRACE).is_none() {
@@ -288,10 +192,8 @@ impl Session {
     }
 }
 
-/// Poll until the child exits or `deadline` passes. `None` means it is still running.
-///
-/// The lock is released around each sleep so the forwarder and a stop can wait on the
-/// same child at once without either blocking the other.
+/// Poll until the child exits or `deadline` passes. `None` means it is still running. The
+/// lock is released around each sleep, so the forwarder and a stop can both wait on it.
 fn await_exit(process: &Mutex<Child>, deadline: Instant) -> Option<Option<i32>> {
     loop {
         {
@@ -315,20 +217,13 @@ fn await_exit(process: &Mutex<Child>, deadline: Instant) -> Option<Option<i32>> 
 #[derive(Default)]
 pub struct LspState(Sessions);
 
-// ---------------------------------------------------------------------------
-// Commands
-//
-// Each one is a thin wrapper over a function taking the sessions directly: `State` has no
-// constructor outside a running app, and these are worth testing.
-// ---------------------------------------------------------------------------
+// --- Commands --------------------------------------------------------------
 
-/// Start a language server and stream it to `on_event`.
-///
-/// Starting onto an id that is already running replaces it, stopping the old one first.
-/// This resolves `options.command[0]` against `PATH` and nothing more -- there is no
-/// table of known servers here, because which server serves which language is the
-/// frontend's decision. A server that is not installed fails here with `notFound`, at
-/// once, rather than becoming a session that never answers.
+// Each is a thin wrapper over a function taking the sessions directly: `State` has no
+// constructor outside a running app, and these are worth testing.
+
+/// Start a language server and stream it to `on_event`; a live id is replaced, not refused.
+/// No table of known servers -- an uninstalled one fails here with `notFound`, immediately.
 #[tauri::command]
 pub async fn lsp_start(
     state: State<'_, LspState>,
@@ -339,35 +234,23 @@ pub async fn lsp_start(
     start(&state.0, workspace.root(), options, on_event)
 }
 
-/// Send one JSON-RPC message. Framing is added here; the message itself is the
-/// frontend's, unread.
-///
-/// Fails once the session is gone, which is the point: a request written into a server
-/// that has exited would otherwise wait for a reply that cannot come.
-// Boxed because `RawValue` is unsized. Borrowing it is not an option either: Tauri
-// deserializes a command argument out of an owned `serde_json::Value`, so there is nothing
-// with the right lifetime to borrow from.
+/// Send one JSON-RPC message, unread; framing is added here. Fails once the session is
+/// gone, so a request cannot wait on a reply that cannot come. Boxed: `RawValue` is unsized.
 #[allow(clippy::boxed_local)]
 #[tauri::command]
 pub fn lsp_send(state: State<'_, LspState>, id: String, message: RawJson) -> Result<(), IpcError> {
     send(&state.0, &id, message.get())
 }
 
-/// Stop a server. Safe to call twice, and safe to call on one that already exited.
-///
-/// Returns as soon as the process is gone, which is usually immediate: closing stdin is
-/// what a language server waits for. The session reports `exited` on its channel either
-/// way, so the frontend needs only that one path to fail outstanding requests.
+/// Stop a server. Safe to call twice, and safe to call on one that already exited. Reports
+/// `exited` on the channel either way, so outstanding requests fail through one path.
 #[tauri::command]
 pub fn lsp_stop(state: State<'_, LspState>, id: String) {
     stop(&state.0, &id);
 }
 
-/// Stop every server on the way out of the app.
-///
-/// Tauri does not guarantee that managed state is dropped on exit, and rust-analyzer left
-/// running is a process holding a whole crate graph in memory with no window attached.
-/// Wired to `RunEvent::Exit` beside the pty's and the agent's.
+/// Stop every server on the way out. Tauri does not guarantee managed state is dropped on
+/// exit, and rust-analyzer left running holds a whole crate graph with no window attached.
 pub fn shutdown(app: &AppHandle) {
     let state = app.state::<LspState>();
     let open: Vec<Session> = state
@@ -382,9 +265,7 @@ pub fn shutdown(app: &AppHandle) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The work
-// ---------------------------------------------------------------------------
+// --- The work --------------------------------------------------------------
 
 fn start(
     sessions: &Sessions,
@@ -448,11 +329,8 @@ fn start(
     };
     let process = Arc::new(Mutex::new(child));
 
-    // Registered before the threads exist rather than after, unlike `pty.rs`: a server
-    // that exits the instant it starts -- a wrong argument, a toolchain that is not
-    // there -- can otherwise have its forwarder clean up before there is anything to
-    // clean up, leaving a dead session in the map. `close` is guarded by `serial`, so
-    // taking it back out below if a thread will not start removes only ours.
+    // Registered before the threads exist, unlike `pty.rs`: a server that dies the instant
+    // it starts would otherwise have its forwarder clean up first, leaving a dead session.
     let replaced = sessions.lock().expect("lsp sessions poisoned").insert(
         options.id,
         Session {
@@ -564,9 +442,7 @@ fn spawn_thread(name: &str, body: impl FnOnce() + Send + 'static) -> Result<(), 
         })
 }
 
-// ---------------------------------------------------------------------------
-// The pipes
-// ---------------------------------------------------------------------------
+// --- The pipes -------------------------------------------------------------
 
 /// One thing a reader thread found, on its way to the forwarder.
 enum Line {
@@ -576,10 +452,8 @@ enum Line {
     Stderr(String),
 }
 
-/// Read stdout until it ends, framing it into messages.
-///
-/// Deliberately does no batching of its own: it has to be back in `read` as soon as it
-/// can, because the pipe it is draining is what the server blocks on when it fills.
+/// Read stdout until it ends, framing it into messages. No batching of its own: it has to
+/// be back in `read` at once, because the pipe it drains is what the server blocks on.
 fn read_stdout(mut stdout: ChildStdout, tx: &Sender<Line>) {
     let mut decoder = FrameDecoder::new(MAX_MESSAGE_BYTES);
     let mut buffer = vec![0u8; READ_BUFFER];
@@ -624,11 +498,8 @@ fn read_stdout(mut stdout: ChildStdout, tx: &Sender<Line>) {
     }
 }
 
-/// Read stderr until it ends, keeping the tail for the exit message.
-///
-/// This pipe has to be drained whether or not anyone is reading the events: a server
-/// whose stderr fills blocks writing to it, and rust-analyzer logs enough during indexing
-/// to fill one.
+/// Read stderr until it ends, keeping the tail for the exit message. Drained whether or not
+/// anyone reads the events: a full stderr pipe blocks the server, and rust-analyzer fills one.
 fn read_stderr(
     stderr: ChildStderr,
     id: &str,
@@ -650,15 +521,8 @@ fn read_stderr(
     }
 }
 
-/// Coalesce onto the frontend channel, watch for the server to end, and report how it
-/// did.
-///
-/// Both reader threads hold a sender, so `Disconnected` means both pipes have reached EOF
-/// -- normally the whole exit signal, and it needs no separate bookkeeping. The process
-/// itself is polled as well because EOF is not guaranteed: a pipe handle inherited by a
-/// grandchild outlives the process that was given it, and a server that died behind a
-/// pipe nobody closes would otherwise never be reported, which is the one shape of "the
-/// request never came back" this must not have.
+/// Coalesce onto the frontend channel, watch for the server to end, and report how it did.
+/// Both readers hold a sender, so `Disconnected` means both pipes hit EOF -- usually enough.
 fn forward(
     rx: &Receiver<Line>,
     channel: &Channel<LspEvent>,
@@ -686,16 +550,8 @@ fn forward(
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                /*
-                 * What `EXIT_POLL` is actually for.
-                 *
-                 * A clean exit closes stdout, the reader ends, and the arm below sees
-                 * the disconnect -- that is the normal path. But stdout is only closed
-                 * once every handle to it is gone, so a server that leaves a helper
-                 * process holding the pipe never disconnects. Without this check the
-                 * forwarder would idle here forever, the session would stay in the map,
-                 * and every request against it would hang with no error.
-                 */
+                // What `EXIT_POLL` is for: stdout closes only once every handle to it
+                // is gone, so a server that leaves a helper holding it never disconnects.
                 let gone = {
                     let mut child = process.lock().expect("lsp process poisoned");
                     // `Err` means another waiter already reaped it, which is still gone.
@@ -760,12 +616,8 @@ fn close(sessions: &Sessions, id: &str, serial: u64) {
     }
 }
 
-/// What has piled up since the last send.
-///
-/// Two lists rather than one interleaved one: messages and stderr come from separate
-/// pipes with separate OS buffers, so their relative order was never something this could
-/// preserve, and pretending otherwise would be a promise it cannot keep. Order *within*
-/// each is exact.
+/// What has piled up since the last send. Two lists rather than one: messages and stderr
+/// come from separate OS buffers, so their relative order was never ours to preserve.
 #[derive(Default)]
 struct Batch {
     messages: Vec<RawJson>,
@@ -815,10 +667,8 @@ impl Batch {
     }
 }
 
-/// Take ownership of a payload as JSON without building a tree from it.
-///
-/// The two checks are the two things `RawJson` promises the frontend: valid UTF-8, and
-/// well-formed JSON. Both are scans. Failing either is reported rather than hidden.
+/// Take ownership of a payload as JSON without building a tree from it. The two scans are
+/// what `RawJson` promises: valid UTF-8, well-formed JSON. Failing either is reported.
 fn parse(payload: Vec<u8>) -> Result<RawJson, String> {
     let text = String::from_utf8(payload).map_err(|err| {
         format!(
@@ -836,17 +686,14 @@ fn parse(payload: Vec<u8>) -> Result<RawJson, String> {
 mod tests {
     use super::*;
 
-    /// Long enough for rust-analyzer to start and answer `initialize` on a loaded
-    /// machine, short enough that a hang fails the test rather than outliving the suite's
-    /// patience. Generous because a cold start also pays for loading the sysroot.
+    /// Long enough for a cold rust-analyzer to answer `initialize` on a loaded machine,
+    /// short enough that a hang fails the test rather than outliving the suite's patience.
     const DEADLINE: Duration = Duration::from_secs(90);
 
-    // -----------------------------------------------------------------------
-    // Framing
-    //
-    // The part most worth testing: a framing bug does not crash, it looks like a
-    // language server that started and then did nothing.
-    // -----------------------------------------------------------------------
+    // --- Framing -----------------------------------------------------------
+
+    // A framing bug does not crash, it looks like a language server that started and then
+    // did nothing -- so the decoder is tested byte by byte.
 
     fn frame(body: &str) -> Vec<u8> {
         encode(body)
@@ -1029,9 +876,7 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // Carrying JSON
-    // -----------------------------------------------------------------------
+    // --- Carrying JSON -----------------------------------------------------
 
     /// The promise `RawJson` makes: the server's bytes, not a re-rendering of them.
     #[test]
@@ -1052,10 +897,8 @@ mod tests {
         );
     }
 
-    /// The send side of the same promise, and the path `lsp_send` actually takes: Tauri
-    /// hands a command its arguments out of an owned `serde_json::Value`, so `RawJson`
-    /// has to survive being deserialized from one -- and come out spelled the way the
-    /// frontend wrote it, not the way a `Value` would render it.
+    /// The send side of the same promise: Tauri hands a command its arguments out of an
+    /// owned `Value`, so `RawJson` must survive that spelled the way the frontend wrote it.
     #[test]
     fn a_message_deserializes_out_of_a_value_the_way_tauri_hands_it_over() {
         let sent = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"});
@@ -1084,9 +927,7 @@ mod tests {
         assert!(batch.stderr[0].contains("not valid UTF-8"), "{:?}", batch.stderr);
     }
 
-    // -----------------------------------------------------------------------
-    // Sessions
-    // -----------------------------------------------------------------------
+    // --- Sessions ----------------------------------------------------------
 
     #[derive(Default)]
     struct Seen {
@@ -1319,15 +1160,10 @@ mod tests {
         assert!(sessions.lock().expect("poisoned").is_empty());
     }
 
-    // -----------------------------------------------------------------------
-    // End to end
-    // -----------------------------------------------------------------------
+    // --- End to end --------------------------------------------------------
 
-    /// A scratch crate for rust-analyzer to open, or `None` if it is not installed.
-    ///
-    /// Left on disk rather than cleaned up: the test's own process is still holding the
-    /// server when it ends, and removing a directory out from under it on Windows fails
-    /// noisily for no benefit. The scratch directory is the OS's to sweep.
+    /// A scratch crate for rust-analyzer to open, or `None` if it is not installed. Left on
+    /// disk: the test still holds the server, and deleting under it fails noisily on Windows.
     fn rust_analyzer_crate(tag: &str) -> Option<WirePath> {
         if !on_path("rust-analyzer") {
             return None;
@@ -1360,11 +1196,8 @@ mod tests {
         std::env::split_paths(&path).any(|dir| names.iter().any(|name| dir.join(name).is_file()))
     }
 
-    /// The one test that proves the pipe: a real server, a real `initialize`, a real
-    /// response framed the way the spec says.
-    ///
-    /// Skipped with a message rather than failed when rust-analyzer is absent, the way
-    /// `pty.rs` handles its own optional cases.
+    /// The one test that proves the pipe: a real server, a real `initialize`, a real framed
+    /// response. Skipped with a message rather than failed when rust-analyzer is absent.
     #[test]
     fn rust_analyzer_answers_initialize() {
         let Some(root) = rust_analyzer_crate("init") else {
@@ -1421,9 +1254,8 @@ mod tests {
         assert!(sessions.lock().expect("poisoned").is_empty());
     }
 
-    /// The other primary language, and the one whose stderr matters most: clangd is the
-    /// server that starts fine and then does nothing because it cannot find a
-    /// `compile_commands.json`, and it says so only there.
+    /// The other primary language, and the one whose stderr matters most: clangd starts fine
+    /// and then does nothing without a `compile_commands.json`, and says so only there.
     #[test]
     fn clangd_answers_initialize_and_says_what_it_is_doing() {
         if !on_path("clangd") {

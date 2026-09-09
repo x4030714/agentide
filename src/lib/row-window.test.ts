@@ -2,11 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { offsetToReveal, rowWindow } from "./row-window";
 
-/**
- * The file tree draws only the rows in view. These pin the two questions that decide
- * whether that is invisible or infuriating: what gets rendered, and where the list has to
- * move to show a row the user just selected from somewhere else.
- */
+/** The file tree draws only the rows in view. Pins what gets rendered, and where the list must
+ * move to show a row selected from somewhere else. */
 describe("windowing a fixed-height list", () => {
   // 24px rows in a 240px pane -- ten rows visible, the tree's real geometry.
   const visible = (offset: number, total: number, overscan = 0) =>

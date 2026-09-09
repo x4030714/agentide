@@ -1,17 +1,8 @@
-/**
- * Mirror of `src-tauri/src/ipc.rs`. Change one and change the other.
- *
- * Nothing here talks to Tauri; that is `bridge.ts`. This file is types plus the few
- * pure helpers that operate on a `WirePath`.
- */
+/** Mirror of `src-tauri/src/ipc.rs`. Change one and change the other. Nothing here talks to Tauri
+ * — that is `bridge.ts`; this is types plus the few pure helpers over a `WirePath`. */
 
-/**
- * A path as the Rust core hands it out: absolute, `/`-separated, no `\\?\` prefix,
- * upper-case drive letter, no trailing slash (except a bare root like `C:/`).
- *
- * Never build one by concatenating user input -- pass the raw string to a command and
- * let `ipc.rs` normalize it.
- */
+/** A path as the Rust core hands it out: absolute, `/`-separated, no `\\?\` prefix, upper-case
+ * drive, no trailing slash. Never build one — pass the raw string and let `ipc.rs` normalize it. */
 export type WirePath = string;
 
 export type ErrorCode =
@@ -29,22 +20,16 @@ export type ErrorCode =
   | "window"
   /** A checkpoint operation the shadow repository refused. */
   | "checkpoint"
-  /**
-   * A hunk no longer matches the file it was computed from. Always a refusal to act,
-   * never a partial apply: a stale hunk applied blind corrupts the file.
-   */
+  /** A hunk no longer matches the file it was computed from. Always a refusal, never a partial
+   * apply: a stale hunk applied blind corrupts the file. */
   | "stale"
   /** A terminal session that cannot be started, or is no longer running. */
   | "pty"
-  /**
-   * A language server that cannot be started, or is no longer running. A server that is
-   * not installed comes back as `"notFound"` instead, so the two are distinguishable.
-   */
+  /** A language server that cannot be started, or is no longer running. Not installed comes back
+   * as `"notFound"` instead, so the two are distinguishable. */
   | "lsp"
-  /**
-   * The user's own repository refused an operation. The message is git's own -- a hook
-   * that rejects a commit has already explained itself better than this app could.
-   */
+  /** The user's own repository refused an operation. The message is git's own — a hook that
+   * rejects a commit has already explained itself better than this app could. */
   | "git";
 
 export interface IpcError {
@@ -133,19 +118,9 @@ export function baseName(path: WirePath): string {
   return name === "" ? path : name;
 }
 
-/**
- * The `file://` URI form Monaco wants for a model. Kept next to the path helpers
- * because it is the third shape of the same path, and Phase 4's LSP client needs it too.
- *
- * Only the characters that would break URI parsing are escaped. The drive colon is left
- * alone deliberately, and it costs nothing: Monaco normalises `file:///C:/a/b.rs` and
- * `file:///c%3A/a/b.rs` to the same URI, so both find the same model. Verified against
- * Monaco's own `URI` in `lsp-session.test.ts`, which is also where the inverse
- * (`uriToPath`) is pinned to this.
- *
- * This is the app's only path-to-URI function, and adding a second one is the mistake
- * this comment exists to prevent -- see the note on `uriToPath`.
- */
+/** The `file://` URI form Monaco wants for a model, and the app's only path-to-URI function —
+ * a second one is the mistake this comment exists to prevent; see `uriToPath`. The drive colon is
+ * left unescaped deliberately: Monaco normalises both spellings to the same URI. */
 export function toFileUri(path: WirePath): string {
   const encoded = path.replace(
     /[#?%]/g,
@@ -155,14 +130,9 @@ export function toFileUri(path: WirePath): string {
   return encoded.startsWith("//") ? `file:${encoded}` : `file:///${encoded}`;
 }
 
-// ---------------------------------------------------------------------------
-// Agent
-//
-// The stdio wire between the Rust core and the agent sidecar is defined once, in
-// `sidecar/src/protocol.ts`. These are the parts of it the frontend also sees, mirrored
-// from `src-tauri/src/ipc.rs`. Both mirrors are checked against
+// --- Agent -------------------------------------------------------------------
+// The stdio wire is defined once in `sidecar/src/protocol.ts`; both mirrors are checked against
 // `sidecar/protocol-fixtures.json` by tests on each side.
-// ---------------------------------------------------------------------------
 
 /** A JSON object carried through uninterpreted: tool arguments, tool inputs. */
 export type JsonObject = Record<string, unknown>;
@@ -176,19 +146,12 @@ export type PermissionMode =
   | "dontAsk"
   | "auto";
 
-/**
- * How much reasoning the model spends on a turn.
- *
- * Not every model accepts every level: offer the ones in the selected model's
- * `ModelInfo.supportedEffortLevels`, and no picker at all when `supportsEffort` is not
- * true. A level a model does not take is quietly downgraded rather than refused.
- */
+/** How much reasoning the model spends on a turn. Offer only the selected model's
+ * `supportedEffortLevels`; a level a model does not take is quietly downgraded, not refused. */
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
-/**
- * Per-turn agent configuration. Sent with each prompt rather than at startup, so a mode
- * change takes effect on the next turn without restarting the sidecar.
- */
+/** Per-turn agent configuration. Sent with each prompt rather than at startup, so a mode change
+ * takes effect on the next turn without restarting the sidecar. */
 export interface PromptOptions {
   /** Defaults to `claude-opus-5` in the sidecar. */
   model?: string;
@@ -200,42 +163,24 @@ export interface PromptOptions {
   /** Tools denied outright. A bare name removes the tool from the model's context. */
   disallowedTools?: string[];
   maxTurns?: number;
-  /**
-   * Appended to Claude Code's preset system prompt, never replacing it. Omitted means
-   * the bare preset — which is exactly what the "Default" prompt mode sends.
-   */
+  /** Appended to Claude Code's preset system prompt, never replacing it. Omitted means the bare
+   * preset, which is what the "Default" prompt mode sends. */
   systemPromptAppend?: string;
-  /**
-   * Emit `stream_event` messages so the transcript can render text as it arrives. Off by
-   * default: it multiplies event volume, and a transcript that renders only complete
-   * assistant messages should not pay for it.
-   */
+  /** Emit `stream_event` messages so text renders as it arrives. Off by default: it multiplies
+   * event volume, which a transcript rendering only complete messages should not pay for. */
   includePartialMessages?: boolean;
-  /**
-   * Continue a past conversation by its transcript id, rather than this session's own.
-   * Sent per prompt, because picking one is something the user does mid-session.
-   */
+  /** Continue a past conversation by its transcript id. Sent per prompt, because picking one is
+   * something the user does mid-session. */
   resumeConversation?: string;
-  /**
-   * Which backend runs this turn: a key from `~/.agentide/providers.json`, or omitted for
-   * Anthropic's own. Chosen in the same menu as `model`, and set with it.
-   */
+  /** Which backend runs this turn: a key from `~/.agentide/providers.json`, or omitted for
+   * Anthropic's own. Chosen in the same menu as `model`, and set with it. */
   provider?: string;
 }
 
 export type PermissionDecision = "allow" | "deny";
 
-/**
- * One model this installation can run, as the agent SDK reports it. Arrives in a
- * `models` event; the list is not hardcoded anywhere.
- */
-/**
- * One slash command this installation accepts.
- *
- * Reported by the SDK rather than listed here: commands come from the CLI build, the
- * user's own `.claude/commands`, and any plugin they have enabled, so a hardcoded list
- * would be wrong on every machine.
- */
+/** One slash command this installation accepts. Reported by the SDK, not listed here: they come
+ * from the CLI build, `.claude/commands` and any plugin, so a fixed list is wrong everywhere. */
 export interface SlashCommand {
   /** Without the leading slash. */
   name: string;
@@ -246,13 +191,8 @@ export interface SlashCommand {
   aliases?: string[];
 }
 
-/**
- * One external MCP server the sidecar held back, because the application it drives is
- * not open. Arrives in an `mcp_gated` event.
- *
- * `host` and `port` come with the name because the chip has to say what to open — a
- * name alone reads as a broken server rather than as a closed program.
- */
+/** One external MCP server the sidecar held back because the application it drives is not open.
+ * `host` and `port` come with the name so the chip can say what to open. */
 export interface GatedServer {
   name: string;
   host: string;
@@ -267,13 +207,8 @@ export interface ProviderModel {
   supportsEffort: boolean;
 }
 
-/**
- * A backend from `~/.agentide/providers.json`, as the host is allowed to see it.
- *
- * No base URL and no token: those stay in the sidecar, which is the only process that
- * reads the file's secrets. What is here is what the picker and the launcher need — the
- * models, the command that starts it, and where it listens.
- */
+/** A backend from `~/.agentide/providers.json`, as the host may see it. No base URL and no token:
+ * those stay in the sidecar, the only process that reads the file's secrets. */
 export interface ProviderInfo {
   /** Sent back as `PromptOptions.provider`. */
   key: string;
@@ -285,6 +220,7 @@ export interface ProviderInfo {
   note?: string;
 }
 
+/** One model this installation can run, as the SDK reports it. Never hardcoded. */
 export interface ModelInfo {
   /** The id to send back as `PromptOptions.model`. */
   value: string;
@@ -300,10 +236,8 @@ export interface ModelInfo {
 /** Why a turn ended. `interrupted` means the host asked, not that the model stopped. */
 export type DoneReason = "success" | "interrupted" | "max_turns" | "error";
 
-/**
- * The answer to an `ide_*` tool call. `ok` decides which of the other two fields is
- * present; build one with `toolOk` or `toolError` rather than by hand.
- */
+/** The answer to an `ide_*` tool call. `ok` decides which of the other two fields is present;
+ * build one with `toolOk` or `toolError` rather than by hand. */
 export interface ToolResult {
   ok: boolean;
   text?: string;
@@ -318,50 +252,27 @@ export function toolError(error: string): ToolResult {
   return { ok: false, error };
 }
 
-/**
- * Who answered a permission request or a tool call. `host` means the Rust core answered
- * on our behalf, which is what happens for every tool whose backend is not built yet --
- * worth rendering differently from a decision the user actually made.
- */
+/** Who answered a permission request or a tool call. `host` means the Rust core answered on our
+ * behalf — what happens for every tool whose backend is not built yet, and worth drawing apart. */
 export type ReplySource = "ui" | "host";
 
-/**
- * What arrives on the agent channel.
- *
- * Ordering: one Rust thread writes this channel in the order the sidecar produced the
- * messages, so a `tool_call` always precedes its `tool_result`, and a session's `done`
- * always follows every `event` of that turn. Nothing is reordered and nothing is dropped.
- * `ready` is always first; `exited` is always last.
- */
+/** What arrives on the agent channel. One Rust thread writes it in the sidecar's own order, so a
+ * `tool_call` precedes its `tool_result` and `done` follows every `event`; nothing is dropped. */
 export type AgentEvent =
   /** The sidecar is listening. Always the first event after `agentStart`. */
   | { t: "ready"; pid: number; sdkVersion: string }
-  /**
-   * One `SDKMessage` from the agent SDK, verbatim and unvalidated -- the union is large
-   * and moves, so the transcript is the only thing that destructures it. Switch on
-   * `msg.type`: `assistant`, `user`, `result`, `system`, `stream_event`.
-   */
+  /** One `SDKMessage`, verbatim and unvalidated — the union is large and moves, so only the
+   * transcript destructures it. Switch on `msg.type`. */
   | { t: "event"; sessionId: string; msg: JsonObject }
-  /**
-   * The models this installation can run. Arrives once per sidecar, during the first
-   * turn -- the SDK will only report the list through a live query, so there is nothing
-   * to show before the first prompt has been sent. Not tied to a session.
-   */
+  /** The models this installation can run. Arrives once per sidecar during the first turn: the SDK
+   * only reports the list through a live query. Not tied to a session. */
   | { t: "models"; models: ModelInfo[] }
-  /**
-   * The backends `~/.agentide/providers.json` names. Unlike the models these need no
-   * live query -- they are a file -- so they arrive at startup and the picker can offer a
-   * local model on the first prompt. Re-sent each turn, because the file is re-read each
-   * turn. Carries no credential; see `ProviderInfo`.
-   */
+  /** The backends `~/.agentide/providers.json` names. A file, not a live query, so they arrive at
+   * startup and are re-sent each turn. Carries no credential; see `ProviderInfo`. */
   | { t: "providers"; providers: ProviderInfo[] }
   | { t: "commands"; commands: SlashCommand[] }
-  /**
-   * The external MCP servers this turn was built without: their gate was closed, so
-   * they were never started and the SDK's init message does not mention them. Arrives
-   * at the start of every turn, empty list included — the empty list is what clears the
-   * chips the previous turn left in the strip.
-   */
+  /** The external MCP servers this turn was built without, their gate being closed. Sent at the
+   * start of every turn, empty list included — the empty list is what clears last turn's chips. */
   | { t: "mcp_gated"; sessionId: string; servers: GatedServer[] }
   /** A tool call awaiting approval. Answer with `agentPermissionReply`. */
   | {
@@ -391,49 +302,30 @@ export type AgentEvent =
     }
   /** The turn ended. `error` carries detail when `reason` is `error`. */
   | { t: "done"; sessionId: string; reason: DoneReason; error?: string }
-  /**
-   * The sidecar is gone -- cleanly, or because it died. `pending` names the requests
-   * that will never be answered, so the transcript can fail exactly those rows instead
-   * of leaving them spinning. No further events arrive until `agentStart` runs again.
-   */
+  /** The sidecar is gone, cleanly or not. `pending` names the requests that will never be answered,
+   * so the transcript can fail exactly those rows instead of leaving them spinning. */
   | { t: "exited"; code: number | null; message: string; pending: string[] };
 
 /** What the frontend tells the Rust core it can answer for itself. */
 export interface AgentStartOptions {
-  /**
-   * Names of `ide_*` tools this frontend will answer with `agentToolReply`. Anything not
-   * named here the Rust core answers immediately with "not available in this build", so
-   * an unbuilt tool costs the model one tool error rather than a stalled turn.
-   */
+  /** Names of `ide_*` tools this frontend will answer. Anything unnamed the Rust core answers with
+   * "not available in this build", so an unbuilt tool costs one tool error, not a stalled turn. */
   hostTools?: string[];
-  /**
-   * This frontend will answer `permission_request` with `agentPermissionReply`. Leave it
-   * false until there is an approval UI: the Rust core then denies every prompt at once
-   * with an explanation, rather than leaving the agent waiting on nobody.
-   */
+  /** This frontend will answer `permission_request`. Leave it false until there is an approval UI:
+   * the core then denies every prompt with an explanation rather than leaving the agent waiting. */
   hostPermissions?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Window chrome
-//
-// The window is frameless and transparent, so the title bar is the frontend's to draw.
-// Mirrored from `src-tauri/src/window.rs`.
-// ---------------------------------------------------------------------------
+// --- Window chrome -----------------------------------------------------------
+// Frameless and transparent, so the title bar is the frontend's. Mirrors `src-tauri/src/window.rs`.
 
-/**
- * Tauri event carrying the new value whenever the main window is maximized or restored
- * -- by our own button, a double click on the drag region, a Win+Arrow snap or a drag to
- * the top of the screen. Subscribe through `onMaximizedChange` rather than by name.
- */
+/** Tauri event carrying the new value whenever the main window is maximized or restored, by any
+ * route. Subscribe through `onMaximizedChange` rather than by name. */
 export const MAXIMIZED_EVENT = "window://maximized";
 
-// ---------------------------------------------------------------------------
-// Checkpoints
-//
-// Mirrors the shapes in `src-tauri/src/ipc.rs`. The shadow git repository at
-// `.agentide/checkpoints.git` is what makes every agent edit reversible; the user's own
-// `.git`, index and history are never read or written.
+// --- Checkpoints -------------------------------------------------------------
+// The shadow repository at `.agentide/checkpoints.git` makes every agent edit reversible; the
+// user's own `.git`, index and history are never read or written.
 
 /** One commit in the shadow repository. */
 export interface Checkpoint {
@@ -451,10 +343,8 @@ export interface Checkpoint {
 
 export type FileChange = "added" | "modified" | "deleted";
 
-/**
- * Why a file's text is absent from a diff. The row still renders — only the content is
- * withheld, so the queue never silently drops a change it cannot display.
- */
+/** Why a file's text is absent from a diff. The row still renders — only the content is withheld,
+ * so the queue never silently drops a change it cannot display. */
 export type Omitted = "binary" | "tooLarge" | "budget" | "notUtf8";
 
 /** One changed file, with both sides where they can be shown. */
@@ -480,13 +370,8 @@ export interface CheckpointDiff {
   files: DiffFile[];
 }
 
-/**
- * One hunk of a file's patch.
- *
- * `id` is content-derived, not positional, and is recomputed from the file as it stands
- * each time hunks are requested. An id that no longer matches anything is stale, and
- * reverting it fails with `ErrorCode` `"stale"` rather than applying somewhere else.
- */
+/** One hunk of a file's patch. `id` is content-derived and recomputed each request, so an id that
+ * matches nothing is stale and reverting it fails with `"stale"` rather than landing elsewhere. */
 export interface Hunk {
   id: string;
   /** The `@@ … @@` line, for display. */
@@ -516,12 +401,8 @@ export interface RevertOutcome {
   hunks: number;
 }
 
-/**
- * The result of rewinding the work tree to a checkpoint.
- *
- * `safety` is taken *before* the rewind, so the rewind is itself undoable — this is the
- * one operation that can remove work.
- */
+/** The result of rewinding the work tree to a checkpoint. `safety` is taken *before* the rewind,
+ * because this is the one operation that can remove work. */
 export interface RewindResult {
   safety: Checkpoint;
   /** Taken after, so the timeline records the rewind rather than hiding it. */
@@ -533,44 +414,22 @@ export interface RewindResult {
   kept: WirePath[];
 }
 
-// ---------------------------------------------------------------------------
-// Terminal
-//
-// Mirrors `src-tauri/src/ipc.rs`; the mechanism is in `src-tauri/src/pty.rs`.
-//
-// A pty session's channel carries two shapes. Output is *bytes* — an `ArrayBuffer`,
-// never a string, because a read boundary lands mid-UTF-8-character often enough that
-// decoding a chunk on its own visibly corrupts it. Hand it to xterm.js as a `Uint8Array`
-// and its decoder carries the split character into the next chunk. Everything else is a
-// `PtyEvent` object. `ptySpawn` in `bridge.ts` splits the two, so nothing above it has
-// to know they share a channel.
-//
-// Scrollback is the terminal's: the Rust side keeps no history and cannot replay a
-// session, so a terminal that is unmounted and remounted starts blank unless the
-// frontend kept the buffer.
-// ---------------------------------------------------------------------------
+// --- Terminal ----------------------------------------------------------------
+// A pty channel carries two shapes: output as *bytes* (an `ArrayBuffer`, never a string — a read
+// boundary lands mid-UTF-8 often enough to corrupt it visibly) and `PtyEvent` objects. `ptySpawn`
+// splits them. Scrollback is the terminal's: Rust keeps no history and cannot replay a session.
 
 export interface PtySpawnOptions {
-  /**
-   * This frontend's handle for the session — a tab id. Spawning onto an id that is
-   * already running replaces it, killing the process that was there.
-   */
+  /** This frontend's handle for the session — a tab id. Spawning onto a running id replaces it,
+   * killing the process that was there. */
   id: string;
   /** Defaults to the open workspace, then to the home directory. */
   cwd?: WirePath;
-  /**
-   * argv, where `command[0]` is the program. Omitted means an interactive shell:
-   * PowerShell 7 if it is installed, else Windows PowerShell, else `cmd.exe`, and
-   * `$SHELL` elsewhere. `AGENTIDE_SHELL` in the environment overrides all of it.
-   */
+  /** argv, where `command[0]` is the program. Omitted means an interactive shell: PowerShell 7, else
+   * Windows PowerShell, else `cmd.exe`, and `$SHELL` elsewhere. `AGENTIDE_SHELL` overrides all. */
   command?: string[];
-  /**
-   * One command line for the user's own shell to run and then exit, instead of an
-   * interactive session. Takes precedence over `command`.
-   *
-   * Which shell that is stays decided in Rust, next to the interactive one, so the
-   * frontend never has to guess between PowerShell, cmd and a POSIX shell.
-   */
+  /** One command line for the user's own shell to run and then exit. Takes precedence over
+   * `command`; which shell it is stays decided in Rust, so the frontend never guesses. */
   shellCommand?: string;
   /** Defaults to 24x80. Send the real size with `ptyResize` once the pane is measured. */
   rows?: number;
@@ -588,13 +447,8 @@ export interface PtyInfo {
   cols: number;
 }
 
-/**
- * The object half of a pty channel; the other half is raw output.
- *
- * `exited` is the last thing a session sends, and it arrives after the last of its
- * output. The session is gone with it: `ptyWrite` and `ptyResize` on that id then reject
- * with a `"pty"` error rather than swallowing what is typed.
- */
+/** The object half of a pty channel; the other half is raw output. `exited` is the last thing a
+ * session sends, and `ptyWrite`/`ptyResize` then reject rather than swallowing what is typed. */
 export type PtyEvent = {
   t: "exited";
   id: string;
@@ -605,45 +459,24 @@ export type PtyEvent = {
   message: string;
 };
 
-// ---------------------------------------------------------------------------
-// Language servers
-//
-// Mirrors `src-tauri/src/ipc.rs`; the mechanism is in `src-tauri/src/lsp.rs`.
-//
-// The Rust side is a pipe with a process attached. It spawns the server, does the
-// `Content-Length` framing on stdio in both directions, and reports the process dying.
-// It does not model LSP: no request table, no id correlation, no capability handling, no
-// `initialize`. **This side is the LSP client** — every bit of protocol semantics lives
-// here, next to the Monaco providers that consume it.
-//
-// A message crosses as the server's own bytes, spliced verbatim into the channel payload
-// rather than re-serialized, so what arrives is already a parsed object: read `id` and
-// `method` off it directly, do not `JSON.parse` it again. What goes down is likewise the
-// object, not a string of it.
-// ---------------------------------------------------------------------------
+// --- Language servers --------------------------------------------------------
+// Rust is a pipe with a process attached: spawn, `Content-Length` framing, and death. It does not
+// model LSP — **this side is the client**. Messages cross as the server's own bytes spliced into
+// the payload, so what arrives is already parsed: read `id` and `method`, do not `JSON.parse` again.
 
-/**
- * One JSON-RPC message, as the wire carries it. Deliberately untyped: this file mirrors
- * the Rust boundary, and LSP's own shapes belong to the client that speaks them.
- */
+/** One JSON-RPC message, as the wire carries it. Untyped on purpose: this file mirrors the Rust
+ * boundary, and LSP's own shapes belong to the client that speaks them. */
 export type LspMessage = JsonObject;
 
 export interface LspStartOptions {
-  /**
-   * This frontend's handle for the server — in practice one per language per workspace.
-   * Starting onto an id that is already running replaces it, killing the process that was
-   * there; the old one reports `exited` on its own channel.
-   */
+  /** This frontend's handle for the server — one per language per workspace. Starting onto a
+   * running id replaces it; the old one reports `exited` on its own channel. */
   id: string;
-  /**
-   * argv, where `command[0]` is the program, resolved against `PATH`. There is no table
-   * of known servers in Rust: which server serves which language is decided here.
-   */
+  /** argv, where `command[0]` is resolved against `PATH`. There is no table of known servers in
+   * Rust: which server serves which language is decided here. */
   command: string[];
-  /**
-   * Where the server is started, and what you should name as the workspace folder in
-   * `initialize`. Defaults to the open workspace.
-   */
+  /** Where the server is started, and what to name as the workspace folder in `initialize`.
+   * Defaults to the open workspace. */
   root?: WirePath;
 }
 
@@ -655,49 +488,22 @@ export interface LspInfo {
   pid: number | null;
 }
 
-/**
- * What arrives on a language server's channel.
- *
- * Ordering holds within a variant, not across them: `messages` arrive in the order the
- * server wrote them and `stderr` likewise, but they come from separate pipes with
- * separate OS buffers, so nothing can claim an order between the two. `exited` is the
- * last thing a server sends.
- */
+/** What arrives on a language server's channel. Ordering holds within a variant, not across:
+ * `messages` and `stderr` come from separate pipes. `exited` is the last thing a server sends. */
 export type LspEvent =
-  /**
-   * Protocol messages, oldest first. **Batched** — rust-analyzer emits `$/progress` by
-   * the hundred per second while it indexes, and one channel message each would melt the
-   * webview. An array preserves boundaries and order exactly, so correlating replies by
-   * id is unaffected; just loop rather than assuming one message.
-   */
+  /** Protocol messages, oldest first, and **batched** — rust-analyzer emits `$/progress` by the
+   * hundred per second while indexing. Order and boundaries are exact; just loop. */
   | { t: "messages"; id: string; messages: LspMessage[] }
-  /**
-   * The server talking about itself: its stderr, plus anything it wrote to stdout that
-   * was not a well-formed message. This is where clangd says it cannot find a
-   * `compile_commands.json` and rust-analyzer says the toolchain is wrong — a server that
-   * starts and then silently does nothing is explaining itself here.
-   */
+  /** The server talking about itself: stderr, plus any stdout that was not a well-formed message.
+   * A server that starts and then silently does nothing is explaining itself here. */
   | { t: "stderr"; id: string; lines: string[] }
-  /**
-   * The process is gone and the session with it: `lspSend` on this id now rejects.
-   *
-   * This is the *only* signal that a server has died, and the only one worth acting on.
-   * Nothing in Rust times a request out, because a request that is slow and a server that
-   * is dead look identical from there — rust-analyzer can take minutes to become useful
-   * on a large workspace and is perfectly healthy the whole time. So: keep waiting while
-   * nothing arrives, and fail every outstanding request the moment this does.
-   *
-   * Sent on a deliberate `lspStop` and on a replacement too, so one handler covers all
-   * three. `message` carries the tail of stderr when there was any.
-   */
+  /** The process is gone and the session with it; `lspSend` now rejects. The *only* death signal —
+   * nothing times a request out, because slow and dead look identical and rust-analyzer can take
+   * minutes while healthy. Sent on a deliberate `lspStop` and on a replacement too. */
   | { t: "exited"; id: string; code: number | null; message: string };
 
-// ---------------------------------------------------------------------------
-// The user's own git repository -- mirrors `src-tauri/src/git.rs`
-//
-// Distinct from the checkpoint types above, which describe the private shadow
-// repository. These describe the real one, the one with the user's history in it.
-// ---------------------------------------------------------------------------
+// --- The user's own git repository -- mirrors `src-tauri/src/git.rs` ----------
+// The real repository, with the user's history in it — not the shadow one described above.
 
 /** What a file's presence in the status list means. */
 export type GitState =
@@ -711,13 +517,8 @@ export type GitState =
   /** A merge conflict. Not stageable from the panel -- resolving it is an edit. */
   | "conflicted";
 
-/**
- * One row in the panel.
- *
- * A file appears twice when it is staged and then edited again, because git tracks the
- * index and the working tree separately and that is a real state. `staged` is what
- * distinguishes the two rows, and what decides which way the stage button points.
- */
+/** One row in the panel. A file appears twice when it is staged and then edited again: git tracks
+ * index and working tree separately. `staged` distinguishes the rows and points the button. */
 export interface GitFile {
   path: WirePath;
   /** Repository-relative: what the user reads, and what git commands take. */
@@ -766,9 +567,7 @@ export interface GitCommitResult {
   subject: string;
 }
 
-// ---------------------------------------------------------------------------
-// Past conversations -- mirrors `src-tauri/src/conversations.rs`
-// ---------------------------------------------------------------------------
+// --- Past conversations -- mirrors `src-tauri/src/conversations.rs` -----------
 
 /** One past conversation, as much as is known without opening it. */
 export interface ConversationSummary {
@@ -808,12 +607,8 @@ export interface ConversationEntry {
   tools: string[];
 }
 
-// ---------------------------------------------------------------------------
-// The memory vault -- mirrors `src-tauri/src/memory.rs`
-//
-// The notes themselves are the SDK's; the sidecar points it at this folder. Nothing here
-// reads a note. See the module docs in `memory.rs` for why the path is resolved twice.
-// ---------------------------------------------------------------------------
+// --- The memory vault -- mirrors `src-tauri/src/memory.rs` -------------------
+// The notes are the SDK's; nothing here reads one. `memory.rs` says why the path is resolved twice.
 
 /** Where memory lives on this machine, and whether the SDK is being told to use it. */
 export interface MemoryVault {

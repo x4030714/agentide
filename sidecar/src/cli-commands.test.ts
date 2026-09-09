@@ -1,11 +1,5 @@
-/**
- * That `/` is a menu and a search at once, and that a name typed in full runs.
- *
- * The ambiguity is deliberate — one key opens the list and the same keystrokes narrow it —
- * so the rules that keep it unambiguous are the ones worth pinning: an exact name wins
- * outright, an alias finds its command, and a prefix beats a substring. Get any of them
- * wrong and `/exit` opens a menu instead of leaving.
- */
+/** `/` is a menu and a search at once. Pins the tie-breaks that keep it unambiguous:
+ * exact name wins, alias resolves, prefix beats substring. */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -124,9 +118,8 @@ test("no line runs off the terminal", () => {
 });
 
 test("one wordy command does not indent every other description off the screen", () => {
-  // Letting the widest entry set the column is the obvious implementation and the reason
-  // the real listing was unreadable: an eighty-character argument hint pushed ninety other
-  // descriptions past the right edge.
+  // Letting the widest entry set the column is why the real listing was unreadable: one
+  // eighty-character hint pushed ninety descriptions past the right edge.
   const wide: SlashCommand = {
     name: "impeccable",
     description: "shape a frontend",

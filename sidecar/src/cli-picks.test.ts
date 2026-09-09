@@ -1,11 +1,5 @@
-/**
- * That a name which is not a model is caught when it is typed, not when a turn runs on it.
- *
- * `/model opus-5` used to be accepted in silence and fail on the next prompt from inside
- * the SDK -- `Model "opus-5" is not a recognized model id` -- which spends a turn and reads
- * as the agent breaking rather than as a typo two prompts ago. That exact case is the
- * first test here.
- */
+/** A bad model name is caught when typed, not a turn later from inside the SDK.
+ * `/model opus-5` used to be accepted in silence. */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";

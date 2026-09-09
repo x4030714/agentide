@@ -1,17 +1,5 @@
-/**
- * The session's sequencing, driven end to end against a fake query.
- *
- * Every case here is a bug this file has actually had, and all of them live in the order
- * of operations rather than in a value: a watchdog armed after the await it guards, a Stop
- * that arrives while the query is still being retuned, a query that dies inside that same
- * await, a retired query still delivering what it had buffered. None of it is reachable on
- * demand through a real CLI -- you would have to arrange for one to stop answering -- which
- * is why `Session` takes its `query()` as a parameter. See `StartQuery`.
- *
- * The fake is deliberately faithful about one thing: its stream hands out a buffered
- * message before it looks at the closed flag, because that is what the SDK's does and it
- * is the whole reason `#consume` checks whose query a message came from.
- */
+/** Sequencing against a fake query -- every case is a real bug, none reachable through a live
+ * CLI. The fake drains buffered messages before checking closed, exactly as the SDK's does. */
 
 import type {
   Options,
@@ -31,12 +19,8 @@ import { ModelCatalogue } from "./models.ts";
 import type { PromptOptions } from "./protocol.ts";
 import { Session, type StartQuery } from "./session.ts";
 
-/**
- * No real configuration. `loadMcpServers` and `loadMemoryConfig` read `~/.agentide`, so
- * without this the tests would run against whatever this machine has configured -- and
- * gate ports for it. Both `HOME` and `USERPROFILE` because `homedir()` reads one on
- * Windows and the other everywhere else.
- */
+/** An empty home, or the config loaders read this machine's `~/.agentide` and gate its ports.
+ * Both vars, because `homedir()` reads `USERPROFILE` on Windows and `HOME` elsewhere. */
 const EMPTY_HOME = mkdtempSync(join(tmpdir(), "agentide-home-"));
 process.env.HOME = EMPTY_HOME;
 process.env.USERPROFILE = EMPTY_HOME;
@@ -90,10 +74,8 @@ class FakeQuery {
     this.#wake?.();
   }
 
-  /**
-   * Queue a message without waking the reader, so it is delivered on the next drain --
-   * which is how a message written before a takeover arrives after it.
-   */
+  /** Queue without waking the reader, so it lands on the next drain -- how a message written
+   * before a takeover arrives after it. */
   buffer(message: Record<string, unknown>): void {
     this.#outbox.push(message as unknown as SDKMessage);
   }
@@ -187,10 +169,8 @@ interface Harness {
   sent: Array<Record<string, unknown>>;
 }
 
-/**
- * A session wired to fakes. The cwd is a fresh empty directory, so no workspace config is
- * read either.
- */
+/** A session wired to fakes. The cwd is a fresh empty directory, so no workspace config is
+ * read either. */
 function harness(t: { after: (fn: () => void) => void }): Harness {
   const queries: FakeQuery[] = [];
   const sent: Array<Record<string, unknown>> = [];
@@ -215,10 +195,8 @@ function harness(t: { after: (fn: () => void) => void }): Harness {
   return { session, cwd: mkdtempSync(join(tmpdir(), "agentide-cwd-")), queries, sent };
 }
 
-/**
- * Wait for something the session does across real I/O -- it reads two config files before
- * it reaches the query, so draining microtasks is not enough.
- */
+/** Wait across real I/O: the session reads two config files before it reaches the query, so
+ * draining microtasks is not enough. */
 async function until(what: string, ready: () => boolean): Promise<void> {
   for (let tick = 0; tick < 2000; tick += 1) {
     if (ready()) return;
@@ -269,10 +247,8 @@ test("a Stop while the query is being retuned does not let the prompt through", 
   const h = harness(t);
   const query = await runTurn(h, "the first prompt", { model: "claude-opus-5" });
 
-  // A model change is a setter, so this turn keeps the query -- and waits on the CLI to
-  // answer. Everything from here to the push takes real time, and a turn not yet recorded
-  // as pending is a Stop that gets swallowed: the prompt would go in afterwards, the model
-  // would run the whole turn and land its edits, and only then would it report interrupted.
+  // A model change keeps the query and waits on the CLI. A turn not yet recorded as pending
+  // swallows the Stop: the model runs the whole turn, lands its edits, then says interrupted.
   const stall = query.stallRetune();
   const turn = h.session.prompt(h.cwd, "the prompt the user cancelled", {
     model: "claude-sonnet-5",
@@ -300,11 +276,8 @@ test("an interrupt the query never answers still ends the turn", async (t) => {
   const turn = h.session.prompt(h.cwd, "a turn that will not stop");
   const query = await queryHolding(h, "a turn that will not stop");
 
-  // `Query.request()` sets no timer of its own and settles only on a matching control
-  // response, a failed write or `cleanup()`. A CLI that is alive and simply never answers
-  // leaves the interrupt hanging, and the watchdog has to be armed before that await --
-  // armed after it, it is never armed at all, and the turn never ends: the pane keeps
-  // Stop, New and the composer disabled until the app is restarted.
+  // `Query.request()` sets no timer, so a live CLI that never answers hangs the interrupt.
+  // The watchdog must be armed before that await -- after it, it is never armed at all.
   query.hangOnInterrupt = true;
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
@@ -326,9 +299,8 @@ test("a new conversation takes the CLI over rather than leaving one resident", a
   const first = harness(t);
   await runTurn(first, "in the first conversation");
 
-  // What "New Conversation" does: a fresh session id, prompted. Nothing in the protocol
-  // says the old one is over, so the new one has to say it -- otherwise every press leaves
-  // a resident CLI behind, plus every external MCP server that CLI spawned.
+  // Nothing in the protocol says the old conversation is over, so the new one has to say
+  // it -- otherwise every "New Conversation" leaks a CLI and its MCP servers.
   const second = harness(t);
   await runTurn(second, "in the second conversation");
 
@@ -340,9 +312,8 @@ test("what a retired query had buffered is not drawn into the conversation after
   const first = harness(t);
   const query = await runTurn(first, "in the first conversation");
 
-  // Written before the takeover and delivered after it. Forwarded, it draws a row in
-  // whatever turn is running now; a buffered `result` would close that turn early and
-  // suppress the real boundary when it arrives.
+  // Written before the takeover, delivered after: forwarded it draws a row in the wrong
+  // turn, and a buffered `result` would close that turn early.
   query.buffer({
     type: "assistant",
     session_id: SDK_ID,
@@ -372,9 +343,8 @@ test("a query that dies while it is being retuned is not the one the turn runs o
   const stall = first.stallRetune();
   const turn = h.session.prompt(h.cwd, "the second prompt", { model: "claude-sonnet-5" });
   await stall.entered;
-  // The CLI exits inside the await. The consumer loop retires the query, so handing that
-  // one back would push the prompt into a closed queue whose stream has already returned:
-  // the turn would wait for a result nobody is going to produce.
+  // The CLI exits inside the await and the consumer retires the query; handing it back
+  // pushes the prompt into a closed queue and the turn waits on a result nobody sends.
   first.end();
   await until("the dead query to be retired", () => first.drained);
   stall.release();

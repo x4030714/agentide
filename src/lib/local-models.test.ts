@@ -1,11 +1,5 @@
-/**
- * Which model fits, and what gets written when one is chosen.
- *
- * The fitting rules are the part with judgement in them, and getting them wrong is
- * expensive in a way tests are cheap: a model called a fit and then failing to load wastes
- * a 17GB download, and one called too big that would have run fine is a capability quietly
- * withheld.
- */
+/** Which model fits, and what gets written when one is chosen. A wrong fit wastes a 17GB
+ * download, or withholds a model that would have run fine. */
 
 import { describe, expect, test } from "vitest";
 
@@ -53,9 +47,8 @@ describe("the catalogue", () => {
   });
 
   test("no entry is a sharded repository", () => {
-    // `startDownload` fetches one file. A repo that splits its weights across
-    // `-00001-of-00005` parts would download one fifth of a model and report it complete,
-    // which is the worst kind of failure: it looks finished.
+    // `startDownload` fetches one file, so a repo split into `-00001-of-00005` parts would grab
+    // one fifth and report it complete — a failure that looks finished.
     for (const model of LOCAL_MODELS) {
       expect(model.file).not.toMatch(/-\d{5}-of-\d{5}/);
     }
@@ -119,9 +112,8 @@ describe("fitting", () => {
 
 describe("context size", () => {
   test("never below what agentide's own prompt needs", () => {
-    // Measured: a turn whose message was "hi" sent 41,476 tokens of prefix. A 32k window
-    // does not degrade against that, it refuses every request -- so the floor holds even
-    // when the card has no room for it, because slow beats not working.
+    // Measured: a turn whose message was "hi" sent 41,476 tokens of prefix. A 32k window does
+    // not degrade against that, it refuses every request.
     expect(contextFor(dense(7.5), 8)).toBe(65_536);
     expect(contextFor(dense(4.4), null)).toBe(65_536);
     expect(contextFor(dense(20), 8)).toBe(65_536);
@@ -132,10 +124,8 @@ describe("context size", () => {
   });
 
   test("every model that can run agentide gets a window its prompt fits in", () => {
-    // 41,476 tokens was one measurement on one machine; the floor has to clear it with
-    // room for an actual conversation on top. The exception is a model whose own trained
-    // context is below that -- it cannot be given a bigger window by anyone, which is why
-    // `runsAgentide` exists and why the list says so before the download rather than after.
+    // The floor has to clear that 41,476-token prefix with room for a conversation. Exception: a
+    // model whose trained context is below it, which nobody can widen — hence `runsAgentide`.
     for (const model of LOCAL_MODELS.filter(runsAgentide)) {
       expect(contextFor(model, 8)).toBeGreaterThan(41_476);
     }
@@ -180,9 +170,8 @@ describe("the port a model listens on", () => {
   });
 
   test("follows the id, not the position in the list", () => {
-    // A position-derived port moves when the catalogue is reordered: a model installed
-    // last month keeps the port it was written with while a newly installed one is handed
-    // the same number, and then two entries gate on one port.
+    // A position-derived port moves when the catalogue is reordered, handing a new model the
+    // port an installed one is already gating on.
     const moved = { ...LOCAL_MODELS[0]!, id: LOCAL_MODELS[0]!.id };
     expect(portFor(moved)).toBe(portFor(LOCAL_MODELS[0]!));
     expect(portFor({ ...moved, id: "something-else" })).not.toBe(portFor(moved));
@@ -207,9 +196,8 @@ describe("the command that runs a model", () => {
   const model = LOCAL_MODELS.find((entry) => entry.id === "qwen25-coder-7b")!;
 
   test("begins with PowerShell's call operator", () => {
-    // A quoted path in the first position is a string expression, not a command. Without
-    // `&` this does not fail to find the program, it fails to parse -- and the only symptom
-    // is the gate reporting that the backend never came up.
+    // A quoted path in first position is a string expression, not a command. Without `&` it fails
+    // to parse, and the only symptom is the gate saying the backend never came up.
     expect(startCommandFor(home, model, 8080, 65_536)).toMatch(/^& "/);
   });
 
@@ -228,10 +216,8 @@ describe("the command that runs a model", () => {
   });
 
   test("matches the shape the sidecar builds from the same fields", () => {
-    // This string exists in two places -- here and `sidecar/src/provider-config.ts` -- so
-    // that a model installed mid-session can be launched before the sidecar has read the
-    // file. They have to agree, and this is the reminder that a change here needs a change
-    // there.
+    // Duplicated in `sidecar/src/provider-config.ts` so a mid-session install can launch before
+    // the sidecar has read the file. A change here needs a change there.
     expect(startCommandFor(home, model, 8080, 65_536)).toBe(
       `& "${home}/.agentide/engine/llama-server.exe" -m "${home}/.agentide/models/${model.file}" -c 65536 --port 8080 --host 127.0.0.1`,
     );

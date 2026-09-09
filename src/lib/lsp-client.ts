@@ -1,17 +1,5 @@
-/**
- * A minimal LSP client, hand-written.
- *
- * `monaco-languageclient` was the obvious choice and is the wrong one here: at 10.7 it
- * depends on `@codingame/monaco-vscode-editor-api`, a *replacement* for `monaco-editor`,
- * plus the whole `@codingame/monaco-vscode-api` stack. Taking it would mean swapping out
- * our Monaco 0.56 and losing the custom themes, the verified worker wiring and
- * `@monaco-editor/react` with it — for four features. So this file exists instead, and
- * it is deliberately small: correlate requests, dispatch notifications, answer the
- * handful of server-to-client requests that matter, and nothing else.
- *
- * The transport is the same Tauri `Channel` the agent and pty use. Rust does framing and
- * process lifetime; every piece of protocol semantics lives here.
- */
+/** A minimal LSP client, hand-written: `monaco-languageclient` 10.7 pulls in a *replacement* for
+ * `monaco-editor`, which would cost our Monaco 0.56 themes and worker wiring for four features. */
 
 export type Json = Record<string, unknown>;
 
@@ -107,13 +95,8 @@ export class LspClient {
     }
   }
 
-  /**
-   * The server-to-client requests worth answering without bothering the caller.
-   *
-   * rust-analyzer will not report progress at all unless `window/workDoneProgress/create`
-   * is answered, and it waits on `client/registerCapability` during startup — leaving
-   * either unanswered is a server that appears to hang while indexing.
-   */
+  /** Server-to-client requests answered without bothering the caller. rust-analyzer reports no
+   * progress unless `window/workDoneProgress/create` is answered, and waits on `client/registerCapability`. */
   async #serverRequest(method: string, params: Json): Promise<unknown> {
     switch (method) {
       case "window/workDoneProgress/create":
@@ -154,10 +137,8 @@ export class LspClient {
     this.#handlers.onLog?.(line);
   }
 
-  /**
-   * The server is gone. Every in-flight request is failed rather than left pending —
-   * a promise that never settles is how a dead server turns into a frozen editor.
-   */
+  /** The server is gone. In-flight requests are failed, not left pending — a promise that never
+   * settles is how a dead server becomes a frozen editor. */
   close(reason: string): void {
     if (this.#closed) return;
     this.#closed = true;
@@ -191,13 +172,8 @@ export function clientCapabilities(): Json {
       hover: { dynamicRegistration: false, contentFormat: ["markdown", "plaintext"] },
       definition: { dynamicRegistration: false, linkSupport: true },
       implementation: { dynamicRegistration: false, linkSupport: true },
-      /**
-       * Without `codeActionLiteralSupport` a server must answer with the 1.0 `Command[]`
-       * form, which carries no edit -- ide_code_actions would list actions it could never
-       * apply. `dataSupport` plus `resolveSupport` is the other half: rust-analyzer sends
-       * the actions without their edits and computes each one only when asked, which is
-       * why it can offer them at all on a large crate.
-       */
+      /** Without `codeActionLiteralSupport` a server answers with the 1.0 `Command[]` form, which
+       * carries no edit. `dataSupport`/`resolveSupport` lets rust-analyzer defer computing them. */
       codeAction: {
         dynamicRegistration: false,
         codeActionLiteralSupport: {

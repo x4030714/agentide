@@ -1,49 +1,5 @@
-/**
- * Where a turn's model actually comes from.
- *
- * Claude Code speaks exactly one wire protocol -- Anthropic's Messages API -- and is
- * pointed at `api.anthropic.com` unless told otherwise. `ANTHROPIC_BASE_URL` and
- * `ANTHROPIC_AUTH_TOKEN` are the "otherwise", and anything that answers on that URL in
- * that shape can serve a turn: llama.cpp and LM Studio speak it natively now, and LiteLLM
- * translates in front of everything else, which is the route to a hosted Qwen or Nemotron.
- *
- * So running an open model is configuration, not machinery. This file is the configuration.
- *
- * ## Two ways to write an entry
- *
- * The common one is a model file and a port:
- *
- * ```json
- * { "qwen": { "model": "D:/models/qwen3-coder-30b.gguf", "port": 8080 } }
- * ```
- *
- * A `.gguf` is only weights; something has to run them. That entry means "start
- * llama.cpp on this file", and the command is built from it -- the engine, the context
- * size and the port are all things with a right answer that nobody should have to retype.
- *
- * The other is for anything that is not a local llama.cpp -- LM Studio, a LiteLLM gateway,
- * a hosted endpoint -- where agentide is not launching anything and only needs to know
- * where to talk and what to call the models:
- *
- * ```json
- * { "hosted": { "baseUrl": "https://gateway.example", "host": "gateway.example",
- *               "port": 443, "token": "${NVIDIA_KEY}", "models": [{ "id": "nemotron" }] } }
- * ```
- *
- * ## The one thing that makes this dangerous
- *
- * With `ANTHROPIC_BASE_URL` set and nothing listening, Claude Code does **not** fall back
- * to the cloud -- it fails the turn with an API error naming neither the provider nor the
- * port. A backend the person forgot to start would look like agentide being broken. That
- * is why `port` is required rather than optional: there has to be something to check.
- *
- * ## Read per turn, user level only
- *
- * Re-read every prompt, so an edit lands on the next turn rather than the next restart --
- * the rule `mcp.json` and `system.md` already follow. There is no workspace file on
- * purpose: which machine runs the model is a fact about the machine, the same argument
- * that put `system.md` and the memory vault a level up.
- */
+/** Open models via `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`; re-read per prompt, user level only.
+ * `port` is required: on a dead base URL Claude Code fails the turn instead of falling back. */
 
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -59,23 +15,12 @@ const CONFIG_PATH = join(".agentide", "providers.json");
 /** Localhost unless said otherwise: a model server is on this machine or behind a proxy on it. */
 const DEFAULT_HOST = "127.0.0.1";
 
-/**
- * llama.cpp's server, expected on PATH.
- *
- * Named rather than discovered: a wrong guess at an install location produces a command
- * that fails in a terminal tab, which is at least visible. Set `engine` to a full path
- * when it is not on PATH, which on Windows it usually is not.
- */
+/** llama.cpp's server, expected on PATH. Named rather than discovered, so a wrong guess fails
+ * visibly in a terminal tab. Set `engine` to a full path otherwise -- usually needed on Windows. */
 const DEFAULT_ENGINE = "llama-server";
 
-/**
- * 64K by default.
- *
- * 32K is the floor for this kind of work -- below it the system prompt and thirteen tool
- * descriptions consume the window before any code arrives -- and 64K is the first size
- * that leaves room to actually read a file. It is a default rather than a fixed value
- * because it is also the setting most likely to exceed the VRAM on hand.
- */
+/** 32K is the floor -- prompt and tool descriptions eat it before any code arrives -- so 64K is
+ * the first size with room to read a file. A default, not a constant: it is what blows VRAM. */
 const DEFAULT_CONTEXT = 65_536;
 
 const ModelSchema = z.strictObject({
@@ -83,46 +28,34 @@ const ModelSchema = z.strictObject({
   id: z.string().min(1),
   /** What the picker shows. Defaults to `id`, which is usually already readable. */
   name: z.string().min(1).optional(),
-  /**
-   * Whether this model takes an effort level. Off by default and rarely true: effort is
-   * an Anthropic concept, and a control that silently does nothing is worse than none.
-   */
+  /** Whether this model takes an effort level. Off by default: effort is an Anthropic concept,
+   * and a control that silently does nothing is worse than no control. */
   supportsEffort: z.boolean().optional(),
 });
 
 const ProviderSchema = z.strictObject({
-  /**
-   * A `.gguf` to run locally. Implies the engine, the command and the base URL, and names
-   * the model after the file unless `models` says otherwise.
-   */
+  /** A `.gguf` to run locally. Implies the engine, command and base URL, and names the model
+   * after the file unless `models` says otherwise. */
   model: z.string().min(1).optional(),
   /** Where llama.cpp's server lives, when it is not on PATH. */
   engine: z.string().min(1).optional(),
   /** Tokens of context to load the model with. See `DEFAULT_CONTEXT`. */
   contextLength: z.number().int().min(1024).optional(),
-  /**
-   * The command that brings the backend up, for anything `model` cannot express. Given
-   * both, this wins -- it is the escape hatch, so it has to be able to escape.
-   */
+  /** The command that brings the backend up, for anything `model` cannot express. Wins over
+   * `model` -- an escape hatch has to be able to escape. */
   start: z.string().min(1).optional(),
   /** Defaults to `http://<host>:<port>`. No trailing `/v1`: both backends want the origin. */
   baseUrl: z.string().min(1).optional(),
   /** Required: an unreachable backend fails every turn rather than falling back. */
   port: z.number().int().min(1).max(65_535),
   host: z.string().min(1).optional(),
-  /**
-   * Any non-empty string satisfies a local backend; a hosted one needs the real key.
-   * `${VAR}` is expanded from this process's environment and never printed.
-   */
+  /** Any non-empty string satisfies a local backend; a hosted one needs the real key. `${VAR}`
+   * is expanded from this process's environment and never printed. */
   token: z.string().min(1).optional(),
   /** Required unless `model` gives one to derive. */
   models: z.array(ModelSchema).min(1).optional(),
-  /**
-   * Keep it running when agentide closes. Off by default, because the reaper takes every
-   * child down with the app and a model server is a child -- see `src-tauri/src/reaper.rs`.
-   * Turning it on means agentide can no longer clean it up, which is the trade this field
-   * exists to let someone make deliberately.
-   */
+  /** Keep it running when agentide closes. Off by default: the reaper takes every child down
+   * with the app (`src-tauri/src/reaper.rs`), and on means nothing cleans it up. */
   detached: z.boolean().optional(),
   disabled: z.boolean().optional(),
   /** The comment JSON cannot hold. No runtime effect, on purpose. */
@@ -150,40 +83,20 @@ export interface Provider {
   note?: string;
 }
 
-/**
- * The name a model file goes by in the picker: `qwen3-coder-30b-q4_k_m.gguf` becomes
- * `qwen3-coder-30b-q4_k_m`. The quantisation stays, because it is the difference between
- * two files that are otherwise the same model and the person chose between them.
- */
+/** `qwen3-coder-30b-q4_k_m.gguf` becomes `qwen3-coder-30b-q4_k_m`. The quantisation stays: it
+ * is the only difference between two files of the same model. */
 function modelNameFrom(path: string): string {
   return basename(path.replace(/\\/g, "/")).replace(/\.gguf$/i, "");
 }
 
-/**
- * The command that runs a `.gguf`.
- *
- * `--host 127.0.0.1` is deliberate: llama.cpp binds every interface by default, and a
- * model server reachable from the network is not what "run a model locally" asked for.
- * Quoted because a model lives under a path with spaces more often than not.
- *
- * The leading `&` is the reason this is a function and not a template at the call site.
- * The terminal is PowerShell, where a quoted path in the first position is a *string
- * expression*, not a command -- so without the call operator this does not fail to find
- * the program, it fails to parse, with `Unexpected token '-m'`. The model then never
- * starts, and the only symptom upstream is the port gate reporting that the backend did
- * not come up, which points at everything except the quoting.
- */
+/** `--host 127.0.0.1` because llama.cpp otherwise binds every interface. The leading `&` is
+ * required: in PowerShell a quoted path in first position parses as a string, not a command. */
 function engineCommand(model: string, engine: string, context: number, port: number): string {
   return `& "${engine}" -m "${model}" -c ${context} --port ${port} --host 127.0.0.1`;
 }
 
-/**
- * Every provider in the file, gates unchecked.
- *
- * The gate is deliberately not applied here. The host needs the entry *before* the backend
- * is up -- that is what `start` is for -- so "which providers exist" and "which are
- * reachable right now" are two questions with two answers.
- */
+/** Every provider in the file, gates unchecked: the host needs the entry before the backend is
+ * up (that is what `start` is for), so existence and reachability stay separate questions. */
 export function loadProviders(home: string = homedir()): Provider[] {
   const parsed = readJson(join(home, CONFIG_PATH), "providers");
   if (parsed === null) return [];
@@ -243,9 +156,8 @@ export function loadProviders(home: string = homedir()): Provider[] {
     providers.push({
       key,
       baseUrl: (data.baseUrl ?? `http://${host}:${data.port}`).replace(/\/+$/, ""),
-      // Any non-empty value satisfies a local backend, and sending none at all makes the
-      // CLI look for an Anthropic key instead -- which is the confusing failure, not a
-      // secure one.
+      // Any non-empty value satisfies a local backend; sending none makes the CLI go looking
+      // for an Anthropic key instead.
       token: data.token ?? "agentide",
       ...(start ? { start } : {}),
       host,
@@ -262,15 +174,8 @@ export function loadProviders(home: string = homedir()): Provider[] {
   return providers;
 }
 
-/**
- * The providers as the host may see them: no `baseUrl`, no `token`.
- *
- * The boundary is the point. The host draws the models and knows what command starts a
- * backend, neither of which needs the credential, and a key that never crosses into the
- * webview cannot be read out of it. Built by naming the fields that go rather than the
- * ones that stay, so a field added to `Provider` later is excluded until someone decides
- * otherwise.
- */
+/** The providers as the host may see them: no `baseUrl`, no `token`. Allow-listed, not
+ * denied, so a field added to `Provider` stays out of the webview until someone says so. */
 export function publicProviders(providers: Provider[]): ProviderInfo[] {
   return providers.map((provider) => ({
     key: provider.key,
@@ -288,13 +193,8 @@ export function findProvider(providers: Provider[], key: string | undefined): Pr
   return providers.find((provider) => provider.key === key) ?? null;
 }
 
-/**
- * The environment that points the CLI at a provider.
- *
- * Spread over `process.env` by the caller, never in place of it: `Options.env` replaces
- * the subprocess environment entirely, and dropping `PATH` or an existing Claude login is
- * not a trade worth making for two variables.
- */
+/** Spread over `process.env` by the caller, never in place of it -- `Options.env` replaces the
+ * subprocess environment whole, taking `PATH` and any existing Claude login with it. */
 export function providerEnv(provider: Provider): Record<string, string> {
   return {
     ANTHROPIC_BASE_URL: provider.baseUrl,
@@ -307,14 +207,8 @@ export function providerReady(provider: Provider): Promise<boolean> {
   return listening(provider.port, provider.host);
 }
 
-/**
- * Wait for a backend that is starting up.
- *
- * Loading a 30B model off disk takes tens of seconds, and the turn that asked for it is
- * already waiting -- failing at the first refused connection would mean the first prompt
- * after launch never works. Polls rather than sleeping the whole time, so a backend that
- * was already warm costs one connect.
- */
+/** Loading a 30B off disk takes tens of seconds, so the first refused connection cannot be
+ * fatal. Polls rather than sleeps, so an already-warm backend costs one connect. */
 export async function waitForProvider(provider: Provider, deadlineMs: number): Promise<boolean> {
   const until = Date.now() + deadlineMs;
   for (;;) {

@@ -1,14 +1,5 @@
-/**
- * Where the vault lands, and what a bad config file costs.
- *
- * Real files in a temporary tree rather than a stubbed `fs`, for the same reason
- * `mcp-config.test.ts` uses one: the module is a file read plus a fallback, so a fake
- * filesystem would only prove the fake behaves.
- *
- * The other half of these cases is the settings object. It is what the SDK is handed and
- * the only thing standing between a memory write and an unprompted edit in Review mode,
- * and nothing downstream would notice if the ask rules stopped naming the vault.
- */
+/** Where the vault lands, and what a bad config costs. The settings object is the only thing
+ * between a memory write and an unprompted edit in Review mode, so the ask rules are pinned. */
 
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -24,12 +15,8 @@ after(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
 
-/**
- * A home directory, with `.agentide/memory.json` in it when text is given.
- *
- * `null` means the file is absent, which is the normal case: the default is meant to
- * work for someone who never writes one.
- */
+/** A home directory, with `.agentide/memory.json` in it when text is given. `null` means
+ * absent, which is the normal case -- the default must work without one. */
 function home(text: string | null): string {
   const root = mkdtempSync(join(tmpdir(), "agentide-memory-"));
   roots.push(root);
@@ -43,14 +30,8 @@ function slashed(path: string): string {
   return path.split("\\").join("/");
 }
 
-/**
- * Run with stderr collected instead of printed.
- *
- * Two cases turn on the warning -- a config that was silently ignored is the failure this
- * module is written to avoid -- and letting the rest through would bury the runner's own
- * output. Synchronous, because the loader is: there is no window in which a warning could
- * escape a restored `write`.
- */
+/** Run with stderr collected instead of printed. Synchronous because the loader is, so no
+ * warning can escape a restored `write`. */
 function capture<T>(body: () => T): { value: T; stderr: string } {
   const original = process.stderr.write.bind(process.stderr);
   let stderr = "";
@@ -81,9 +62,8 @@ test("a vault the file names is used instead of the default", () => {
 });
 
 test("a ~/ in the configured path resolves against the home the loader was given", () => {
-  // `~` is what someone writes by hand, and it is the SDK's own spelling -- but the app
-  // reads this path too, to seed the folder and to keep the editor off it, and neither of
-  // those can pass a tilde to the filesystem.
+  // `~` is the SDK's own spelling, but the app reads this path too -- to seed the folder
+  // and keep the editor off it -- and neither can hand a tilde to the filesystem.
   const dir = home(JSON.stringify({ vault: "~/Documents/vault" }));
 
   assert.equal(loadMemoryConfig(dir).vault, `${slashed(dir)}/Documents/vault`);

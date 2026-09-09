@@ -1,23 +1,5 @@
-/**
- * Fetching a model, with a progress bar that is telling the truth.
- *
- * The download itself is `curl.exe`, which ships with Windows, run through the same
- * background-process machinery the agent uses. That buys four things for no new dependency
- * and no new Rust: it resumes a partial file (`-C -`), it survives being cancelled and
- * restarted, it is visible in a terminal tab like everything else agentide runs, and the
- * reaper takes it down with the app.
- *
- * Progress is measured rather than parsed. The size of every file is known from the
- * catalogue, so watching the destination grow is both simpler and more honest than reading
- * curl's own output -- there is no format to break, and a resumed download reports where it
- * actually is rather than starting its bar at zero.
- *
- * ## What this is not
- *
- * There is no search over Hugging Face. The catalogue is a fixed list, for the reason given
- * in `local-models.ts`: on a model that cannot call tools agentide does not degrade, it
- * appears broken, and a search box over a million repositories mostly offers those.
- */
+/** Fetching a model with `curl.exe` under the agent's background-process machinery: resumable
+ * (`-C -`), visible in a tab, reaped with the app. Progress is the file's size, not curl's output. */
 
 import { listBackground, startBackground, stopBackground } from "./agent-shell";
 import { listDir } from "./bridge";
@@ -44,13 +26,8 @@ export interface EngineAsset {
   runtimeUrl?: string;
 }
 
-/**
- * Find a llama.cpp build for this machine.
- *
- * Releases are tagged per build and the newest is sometimes a nightly tag carrying nothing
- * but a text file, so this walks back until it finds one with a matching asset. Pinning a
- * URL would rot into a 404 at the start of a long operation.
- */
+/** Find a llama.cpp build for this machine. Walks back through releases: the newest tag is
+ * sometimes a nightly carrying no assets, and a pinned URL rots into a 404. */
 export async function findEngine(cuda: boolean): Promise<EngineAsset> {
   const pattern = cuda ? "bin-win-cuda-13" : "bin-win-cpu-x64";
   const response = await fetch(
@@ -84,13 +61,8 @@ function jobFor(model: LocalModel): string {
   return `download ${model.id}`;
 }
 
-/**
- * Every file in a directory, by name, or empty when it is not there yet.
- *
- * One listing rather than one per file. The models directory holds every download at once,
- * so asking about each model separately meant a dozen IPC round-trips a second for as long
- * as the panel was open, to answer a question one call already answers.
- */
+/** Every file in a directory, by name, or empty when it is not there yet. One listing, not one
+ * per file — per-model calls meant a dozen IPC round-trips a second while the panel was open. */
 async function sizesIn(directory: WirePath): Promise<Map<string, number>> {
   try {
     const listing = await listDir(directory);
@@ -107,12 +79,8 @@ export function downloading(model: LocalModel): boolean {
   return listBackground().some((process) => process.command.includes(job) && process.running);
 }
 
-/**
- * Where every model has got to, by id. Safe to call on a repeating timer.
- *
- * All of them at once because they share a directory: one listing is the whole answer, and
- * this runs once a second for as long as the panel is open.
- */
+/** Where every model has got to, by id. Safe on a repeating timer: they share a directory, so
+ * one listing is the whole answer. */
 export async function progressAll(
   home: string,
   models: readonly LocalModel[],
@@ -137,23 +105,14 @@ export async function progressAll(
   return progress;
 }
 
-/**
- * Whether the weights are already fully here.
- *
- * Within a percent of the catalogue size, because that figure is rounded to a tenth of a
- * gigabyte. Exact equality would call a finished 17.3GB download unfinished forever.
- */
+/** Whether the weights are fully here. Within a percent, because the catalogue size is rounded
+ * to a tenth of a gigabyte — exact equality calls a finished 17.3GB download unfinished forever. */
 export function isComplete(progress: Progress): boolean {
   return progress.total > 0 && progress.bytes >= progress.total * 0.99;
 }
 
-/**
- * Start, or resume, everything `model` needs.
- *
- * One script rather than several jobs: the engine has to be there before the model is worth
- * having, and a single tab is one thing to watch rather than three. Every step is skipped
- * when its output exists, so this is also the retry.
- */
+/** Start, or resume, everything `model` needs. One script, one tab to watch; every step is
+ * skipped when its output exists, so this doubles as the retry. */
 export async function startDownload(
   home: string,
   model: LocalModel,
@@ -209,26 +168,16 @@ export async function startDownload(
   return process.id;
 }
 
-/**
- * Whether llama.cpp is already installed.
- *
- * The presence of the executable, not its size. Recent Windows builds ship a 9KB
- * `llama-server.exe` that is a launcher over `llama.dll`, so any threshold larger than
- * nothing would report a working install as missing and download it again on every tick.
- */
+/** Whether llama.cpp is installed. Presence of the executable, not its size: recent Windows
+ * builds ship a 9KB `llama-server.exe` launcher over `llama.dll`. */
 export async function hasEngine(home: string): Promise<boolean> {
   const name = enginePath(home).split("/").pop() ?? "llama-server.exe";
   const files = await sizesIn(`${installRoot(home)}/engine` as WirePath);
   return files.has(name);
 }
 
-/**
- * Stop a download, keeping what has arrived.
- *
- * Killing curl leaves the partial file, and `-C -` continues from it, so this is a pause
- * rather than a cancel -- which is what it should be for something that takes twenty
- * minutes on a good connection.
- */
+/** Stop a download, keeping what arrived. Killing curl leaves the partial file and `-C -`
+ * continues from it, so this is a pause, not a cancel. */
 export async function pauseDownload(model: LocalModel): Promise<void> {
   const job = jobFor(model);
   const process = listBackground().find((entry) => entry.command.includes(job) && entry.running);

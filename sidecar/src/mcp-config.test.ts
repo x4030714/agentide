@@ -1,10 +1,5 @@
-/**
- * The external MCP config: what reaches the SDK, and what a bad file costs.
- *
- * Real files in a temporary tree rather than a stubbed `fs`. The whole module is about
- * reading two files off disk and surviving what is in them, so a fake filesystem would
- * only prove the fake behaves.
- */
+/** The external MCP config: what reaches the SDK, and what a bad file costs. Real files in a
+ * temp tree -- the module is about surviving what is on disk, so a fake `fs` proves nothing. */
 
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -22,12 +17,8 @@ after(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
 
-/**
- * A home and a workspace, each with an `.agentide/mcp.json` when text is given.
- *
- * `null` means the file is absent, which is the normal case for at least one of the two
- * on any real machine.
- */
+/** A home and a workspace, each with an `.agentide/mcp.json` when text is given. `null` means
+ * the file is absent, which is the normal case for at least one of the two. */
 function tree(user: string | null, project: string | null): { home: string; cwd: string } {
   const root = mkdtempSync(join(tmpdir(), "agentide-mcp-"));
   roots.push(root);
@@ -48,13 +39,8 @@ function config(servers: Record<string, unknown>): string {
   return JSON.stringify({ mcpServers: servers });
 }
 
-/**
- * Run with stderr collected instead of printed.
- *
- * The warnings are the point of several of these cases -- a skipped entry that says
- * nothing is the failure mode this module exists to avoid -- and letting them through
- * would also bury the test runner's own output.
- */
+/** Run with stderr collected instead of printed: the warnings are what several cases assert
+ * on, and letting them through buries the runner's own output. */
 async function capture<T>(body: () => Promise<T>): Promise<{ value: T; stderr: string }> {
   const original = process.stderr.write.bind(process.stderr);
   let stderr = "";
@@ -114,11 +100,8 @@ test("a disabled entry is dropped rather than passed with a flag", async () => {
 });
 
 test("a disabled entry in the workspace overrides an enabled one from the user file", async () => {
-  // Written the way a person would write it: the transport lives in the user's file, and
-  // this one says only that this workspace does not want it. An earlier version of this
-  // test repeated `command` here, which is what let the bug through -- validating the
-  // entry before reading `disabled` rejected the natural spelling as a config missing its
-  // command, warned about a typo nobody made, and left the server running.
+  // No `command` here, the way a person would write it. Validating before reading
+  // `disabled` rejected that as a config missing its command and left the server running.
   const { home, cwd } = tree(
     config({ blender: { command: "uvx", args: ["blender-mcp"] } }),
     config({ blender: { disabled: true } }),
@@ -211,10 +194,8 @@ test("a malformed entry is skipped by name and the rest of the file still loads"
 });
 
 test("sse and http entries keep their url and headers", async () => {
-  // A literal header, not a `${VAR}` one: this case is about the transport fields
-  // surviving the trip, and the three cases below own the substitution. It used to assert
-  // that `${GITHUB_TOKEN}` came through unchanged, which stopped being true the moment
-  // this module started expanding it.
+  // A literal header, not a `${VAR}` one -- the three cases below own substitution, and
+  // this one would break the day expansion was added.
   const { home, cwd } = tree(
     config({
       github: {
@@ -340,9 +321,8 @@ test("a server that requires a port is not started when nothing is listening", a
 });
 
 test("a server held back is reported by name and address, not only to stderr", async () => {
-  // Stderr is where the warning goes and nobody is reading it. This list is what the
-  // strip above the composer draws, and without it a configured server is simply absent
-  // from the UI -- indistinguishable from a tool that was never set up.
+  // Nobody reads stderr. This list is what the strip above the composer draws; without it
+  // a held-back server is indistinguishable from one never set up.
   const port = await deadPort();
   const { home, cwd } = tree(
     config({ blender: { command: "uvx", requires: { port } }, chrome: { command: "npx" } }),

@@ -18,25 +18,8 @@ import type { ToolResult, WirePath } from "./protocol";
 
 export { HOST_TOOL_NAMES };
 
-/**
- * The host half of the `ide_*` tools.
- *
- * The sidecar declares these tools and proxies every call here, because the answers only
- * exist on this side: what the user has selected, which buffers are open, and what the
- * language servers currently believe. This file is where an agent stops guessing about
- * the editor and starts reading it.
- *
- * Three rules shape every answer below:
- *
- * 1. **Report the buffer, not the disk.** If the user has unsaved changes, an answer
- *    about the file on disk is an answer about a file that exists for nobody.
- * 2. **Say when the answer is thin.** A server that is still indexing returns real but
- *    incomplete results, and a model that is not told will read "no references" as proof
- *    rather than as "not yet". Every result that could be incomplete says so.
- * 3. **Positions are 1-based going out.** LSP counts from zero; the user's editor, the
- *    transcript's `path:line` links and every error message a compiler prints count from
- *    one. The conversion happens here, once.
- */
+/** The host half of the `ide_*` tools. Report the buffer not the disk, say when a result may be
+ * incomplete (a server mid-index answers partially), and convert LSP's 0-based positions here. */
 
 export interface IdeHostDeps {
   root: WirePath | null;
@@ -51,11 +34,8 @@ export interface IdeHostDeps {
   ) => void;
 }
 
-/**
- * What only the editor pane knows: which file it is showing and which buffers have
- * unsaved edits. Published rather than passed, because the alternative is threading two
- * values through every component between the pane and the transcript.
- */
+/** What only the editor pane knows: the file it shows and which buffers are dirty. Published, not
+ * passed, to avoid threading two values through every component down to the transcript. */
 export interface EditorFacts {
   activePath: WirePath | null;
   dirty: ReadonlySet<WirePath>;
@@ -413,13 +393,8 @@ async function ideWorkspaceSymbols(args: Json, deps: IdeHostDeps): Promise<ToolR
 
 // --- Shared ---------------------------------------------------------------------
 
-/**
- * Accept both an absolute path and one relative to the workspace root.
- *
- * The schemas ask for absolute, but results are printed workspace-relative because that
- * is what a person reads -- so a model copying a path out of one result into the next
- * call sends a relative one. Rejecting that would be pedantry with a retry attached.
- */
+/** Accept both an absolute path and one relative to the workspace root: results print relative,
+ * so a model copying a path from one result into the next call sends a relative one. */
 function resolve(value: unknown, root: WirePath | null): WirePath | null {
   if (typeof value !== "string" || value.trim() === "") return null;
   const path = value.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -509,14 +484,8 @@ function byPath(a: [WirePath, unknown], b: [WirePath, unknown]): number {
 
 // --- Running commands ------------------------------------------------------------
 
-/**
- * Run a command in the terminal the user can see.
- *
- * This replaces the SDK's own `Bash`, which runs somewhere nobody can watch. PRODUCT.md's
- * third principle is that every command the agent runs has a visible home in the UI, and
- * a tool that reports its output only after the fact does not satisfy it: the difference
- * between a build compiling and a build hung is exactly the part you can only see live.
- */
+/** Run a command in the terminal the user can see. Replaces the SDK's `Bash`, which runs where
+ * nobody can watch — and the difference between compiling and hung is only visible live. */
 async function ideRun(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   const command = typeof args.command === "string" ? args.command.trim() : "";
   if (!command) return toolError("`command` is required.");
@@ -561,24 +530,13 @@ async function ideRun(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   const head = `exit ${result.exitCode ?? "?"} in ${took}`;
   const body = result.output || "(no output)";
   if (result.exitCode !== 0) return toolError(`${head}\n${body}`);
-  // Appended to the output rather than sent as its own message: the model is already
-  // reading this result, and the moment it learns the command passes is the moment it
-  // still knows why. See `lessons.ts`.
+  // Appended to the output rather than sent as its own message: the moment the model learns the
+  // command passes is the moment it still knows why. See `lessons.ts`.
   return toolOk(lesson ? `${head}\n${body}\n\n${lessonPrompt(lesson)}` : `${head}\n${body}`);
 }
 
-/**
- * What a background process has printed since the last read, and whether it is still up.
- *
- * With no `id`, the running processes instead. That overload is deliberate: a model that
- * has lost track of a handle -- after a compaction, or several turns later -- would
- * otherwise have no way back to a dev server it started, and would start a second one on
- * the same port.
- *
- * Each read returns only what is new. Re-reading a watcher that has been up for an hour
- * would otherwise be the most expensive call in the tool set, and "what happened since I
- * looked" is the question worth asking anyway.
- */
+/** What a background process printed since the last read, and whether it is up; with no `id`, the
+ * running ones — a model that lost a handle would start a second server on the same port. */
 function ideTerminalRead(args: Json): ToolResult {
   const id = typeof args.id === "string" ? args.id.trim() : "";
   if (!id) {
@@ -627,14 +585,8 @@ async function ideTerminalStop(args: Json): Promise<ToolResult> {
 
 // --- Reading what the server knows -------------------------------------------------
 
-/**
- * The resolved type and documentation at a position.
- *
- * The question a model cannot answer from the text in front of it: what this expression's
- * type is once inference has run, what a generic resolves to here, what the doc comment
- * on this function says. rust-analyzer answers all three, and reading the file harder is
- * not a substitute for asking.
- */
+/** The resolved type and documentation at a position — what inference produced, what a generic
+ * resolves to here. Reading the file harder is not a substitute for asking. */
 async function ideHover(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   const at = position(args, deps.root);
   if ("error" in at) return toolError(at.error);
@@ -656,10 +608,8 @@ async function ideHover(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   return toolOk([where, "", text, lsp.statusNote()].filter(Boolean).join("\n"));
 }
 
-/**
- * `Hover.contents` has four shapes across LSP versions, and rust-analyzer and clangd do
- * not pick the same one. All four collapse to text.
- */
+/** `Hover.contents` has four shapes across LSP versions and rust-analyzer and clangd disagree on
+ * which. All four collapse to text. */
 function hoverText(contents: unknown): string {
   const fence = "```";
   const one = (entry: unknown): string => {
@@ -675,13 +625,8 @@ function hoverText(contents: unknown): string {
   return entries.map(one).filter(Boolean).join("\n\n").trim();
 }
 
-/**
- * Who implements this.
- *
- * Distinct from references, and the distinction matters in Rust: the references to a
- * trait are mostly bounds and imports, while its implementations are the code that
- * actually runs. Asking for one when you wanted the other is a long detour.
- */
+/** Who implements this. Distinct from references, and in Rust the distinction matters: a trait's
+ * references are mostly bounds and imports, its impls are the code that runs. */
 async function ideImplementations(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   const at = position(args, deps.root);
   if ("error" in at) return toolError(at.error);
@@ -723,19 +668,8 @@ async function ideImplementations(args: Json, deps: IdeHostDeps): Promise<ToolRe
   );
 }
 
-/**
- * The fixes the language server itself offers, and applying one.
- *
- * This is what turns "the compiler is unhappy" into correct code without guesswork.
- * rust-analyzer's actions are the ones a person reaches for constantly -- import this
- * path, fill in the missing match arms, add the fields this struct literal lacks -- and
- * each is computed from the real semantic model, so applying one is a different kind of
- * act from typing the same text and hoping.
- *
- * Listing and applying are one tool with an `apply` argument rather than two, because a
- * list whose entries cannot be acted on forces the model to name an action back to a
- * second tool by title, and titles are not stable identifiers.
- */
+/** The fixes the language server offers, and applying one. One tool with an `apply` argument, not
+ * two: naming an action back to a second tool means matching titles, which are not identifiers. */
 async function ideCodeActions(args: Json, deps: IdeHostDeps): Promise<ToolResult> {
   const at = position(args, deps.root);
   if ("error" in at) return toolError(at.error);
@@ -749,9 +683,8 @@ async function ideCodeActions(args: Json, deps: IdeHostDeps): Promise<ToolResult
     end: { line: endLine - 1, character: endColumn - 1 },
   };
 
-  // The server needs the diagnostics in range to offer the fixes that belong to them: a
-  // quick fix is computed *from* a diagnostic, so omitting them silently drops the most
-  // useful half of the list.
+  // The server needs the diagnostics in range: a quick fix is computed *from* a diagnostic, so
+  // omitting them silently drops the most useful half of the list.
   const diagnostics = (lsp.diagnostics().get(at.path) ?? []).filter((diagnostic) => {
     const start = startOf(diagnostic);
     return start.line >= at.line && start.line <= endLine;
@@ -802,11 +735,8 @@ async function ideCodeActions(args: Json, deps: IdeHostDeps): Promise<ToolResult
   }
   let action = actions[which - 1];
 
-  /**
-   * An action can arrive without its edit and be resolved on demand, which is how
-   * rust-analyzer avoids computing every fix for every keystroke. A model handed the
-   * unresolved form would apply nothing and be told it had succeeded.
-   */
+  /** An action can arrive without its edit, resolved on demand — that is how rust-analyzer avoids
+   * computing every fix per keystroke. Handed the unresolved form, a model applies nothing. */
   if (!action.edit && action.data !== undefined) {
     const resolved = await lsp.ask<Json>(at.path, "codeAction/resolve", action);
     if (resolved && !("error" in resolved)) action = resolved;
@@ -844,14 +774,8 @@ interface TextEdit {
   newText: string;
 }
 
-/**
- * Apply a file's edits to its text.
- *
- * Back to front. Every edit's range is expressed against the *original* text, so applying
- * one from the start shifts every position after it and each subsequent edit lands in the
- * wrong place -- silently, producing plausible-looking wrong code. Sorting descending
- * means no applied edit can move a range that has not been applied yet.
- */
+/** Apply a file's edits to its text, back to front. Every range is against the *original* text, so
+ * applying forwards shifts each later edit into the wrong place — silently, and plausibly. */
 function applyEdits(text: string, edits: TextEdit[]): string {
   const lineStarts = [0];
   for (let index = 0; index < text.length; index += 1) {
@@ -888,22 +812,8 @@ interface AppliedEdit {
   edits: number;
 }
 
-/**
- * Apply a `WorkspaceEdit` to the project.
- *
- * Shared by rename and code actions, because both get one back and both have to put it on
- * disk the same way. Two copies of this would be two behaviours within a release.
- *
- * Files are read and rewritten through the editor's own buffer when one is open: the
- * server's positions came from the text it was told about, not from the text on disk, so
- * basing the edit on disk would apply correct offsets to the wrong content.
- *
- * A file operation -- create, rename or delete -- refuses the whole edit rather than
- * applying the text half. rust-analyzer asks for one when a module's name maps to a file,
- * and there is no filesystem-rename command in this build; applying only the text would
- * leave code referring to a file that does not exist, which fails while looking like
- * success.
- */
+/** Apply a `WorkspaceEdit`. Edits go through the editor's buffer when one is open — the server's
+ * positions came from that text, not disk. A file operation refuses the whole edit. */
 async function applyWorkspaceEdit(
   edit: Json,
   deps: IdeHostDeps,

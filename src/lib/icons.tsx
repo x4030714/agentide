@@ -1,10 +1,5 @@
-/**
- * Drawn icons. One family, one stroke weight (1.5 at a 12px box), `currentColor`
- * everywhere so an icon inherits whichever ink role its row is using.
- *
- * Deliberately sparse: the listing carries meaning in colour and column, not in a
- * file-type glyph beside every row.
- */
+/** Drawn icons. One family, 1.5 stroke at a 12px box, `currentColor` everywhere so an
+ * icon inherits its row's ink role. Sparse on purpose: meaning lives in colour and column. */
 
 interface IconProps {
   /** Box size in px. Stroke stays visually constant because the viewBox scales with it. */
@@ -77,11 +72,8 @@ export function IconFolder({ size = 12, className }: IconProps) {
   );
 }
 
-/**
- * Window controls. Drawn at a 10px box with a 1px stroke rather than the 1.5 the rest
- * of the family uses: these are hairline glyphs by convention on every platform, and a
- * heavier stroke reads as a toolbar button instead of window chrome.
- */
+/** Window controls: 10px box, 1px stroke rather than the family's 1.5. Hairline is the
+ * platform convention; heavier reads as a toolbar button, not window chrome. */
 function WinGlyph({ children }: { children: React.ReactNode }) {
   return (
     <svg
@@ -150,10 +142,7 @@ export function IconTheme({ dark, size = 13 }: { dark: boolean; size?: number })
   );
 }
 
-/**
- * Settings. Sliders rather than a gear: a six-toothed gear turns to mush at 13px, and it
- * would be the only icon here that needs its detail to be readable.
- */
+/** Settings. Sliders, not a gear — a six-toothed gear turns to mush at 13px. */
 export function IconSettings({ size = 13 }: { size?: number }) {
   return (
     <svg
@@ -175,13 +164,8 @@ export function IconSettings({ size = 13 }: { size?: number }) {
   );
 }
 
-/**
- * The activity bar's marks.
- *
- * A 20px box with the family's 1.5 stroke, so the rail reads at the same weight as the
- * 12px icons rather than as a bolder set drawn larger — scaling a 12px glyph to 20 would
- * scale its stroke with it.
- */
+/** The activity bar's marks. 20px box at the family's 1.5 stroke, so the rail reads at the
+ * same weight as the 12px icons instead of like a scaled-up set. */
 function RailGlyph({ children }: { children: React.ReactNode }) {
   return (
     <svg
@@ -235,10 +219,7 @@ export const IconChat = () => (
   </RailGlyph>
 );
 
-/**
- * Local models. A chip: the weights run on hardware in this machine, which is the whole
- * distinction the view exists to draw.
- */
+/** Local models. A chip: the weights run on this machine, which is the whole distinction. */
 export const IconChip = () => (
   <RailGlyph>
     <rect x="6" y="6" width="8" height="8" rx="1" />
@@ -247,13 +228,8 @@ export const IconChip = () => (
   </RailGlyph>
 );
 
-/**
- * A mark per palette, drawn in the same family as everything else here.
- *
- * Each one names the palette's character rather than its colours: the colour is supplied
- * by `currentColor`, which the picker sets to that palette's own accent, so the row shows
- * both what the palette is called and what it looks like.
- */
+/** A mark per palette, naming its character rather than its colours — `currentColor` is set
+ * to the palette's own accent, so a row shows both the name and the look. */
 export function IconPalette({ id, size = 14 }: { id: string; size?: number }) {
   const common = {
     width: size,
