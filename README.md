@@ -84,4 +84,4 @@ bug in this project has lived in a seam the unit tests do not cross.
 
 MIT — see [LICENSE](LICENSE).
 
-Fully vibecoded with Opus 5.
+Fully vibe-coded with Opus 5.
