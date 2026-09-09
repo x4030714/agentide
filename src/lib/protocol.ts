@@ -118,9 +118,8 @@ export function baseName(path: WirePath): string {
   return name === "" ? path : name;
 }
 
-/** The `file://` URI form Monaco wants for a model, and the app's only path-to-URI function —
- * a second one is the mistake this comment exists to prevent; see `uriToPath`. The drive colon is
- * left unescaped deliberately: Monaco normalises both spellings to the same URI. */
+/** The app's only path-to-URI function — a second one is the mistake this prevents; see
+ * `uriToPath`. The drive colon stays unescaped: Monaco normalises both spellings alike. */
 export function toFileUri(path: WirePath): string {
   const encoded = path.replace(
     /[#?%]/g,
@@ -131,8 +130,8 @@ export function toFileUri(path: WirePath): string {
 }
 
 // --- Agent -------------------------------------------------------------------
-// The stdio wire is defined once in `sidecar/src/protocol.ts`; both mirrors are checked against
-// `sidecar/protocol-fixtures.json` by tests on each side.
+// Defined once in `sidecar/src/protocol.ts`; both mirrors are checked against
+// `sidecar/protocol-fixtures.json`.
 
 /** A JSON object carried through uninterpreted: tool arguments, tool inputs. */
 export type JsonObject = Record<string, unknown>;
@@ -324,8 +323,8 @@ export interface AgentStartOptions {
 export const MAXIMIZED_EVENT = "window://maximized";
 
 // --- Checkpoints -------------------------------------------------------------
-// The shadow repository at `.agentide/checkpoints.git` makes every agent edit reversible; the
-// user's own `.git`, index and history are never read or written.
+// A shadow repo at `.agentide/checkpoints.git` makes agent edits reversible. The user's own
+// `.git` is never read or written.
 
 /** One commit in the shadow repository. */
 export interface Checkpoint {
@@ -415,9 +414,8 @@ export interface RewindResult {
 }
 
 // --- Terminal ----------------------------------------------------------------
-// A pty channel carries two shapes: output as *bytes* (an `ArrayBuffer`, never a string — a read
-// boundary lands mid-UTF-8 often enough to corrupt it visibly) and `PtyEvent` objects. `ptySpawn`
-// splits them. Scrollback is the terminal's: Rust keeps no history and cannot replay a session.
+// Output crosses as *bytes*, never a string: a read boundary lands mid-UTF-8 often enough to
+// corrupt it visibly. Scrollback is the terminal's; Rust keeps none and cannot replay.
 
 export interface PtySpawnOptions {
   /** This frontend's handle for the session — a tab id. Spawning onto a running id replaces it,
@@ -460,9 +458,8 @@ export type PtyEvent = {
 };
 
 // --- Language servers --------------------------------------------------------
-// Rust is a pipe with a process attached: spawn, `Content-Length` framing, and death. It does not
-// model LSP — **this side is the client**. Messages cross as the server's own bytes spliced into
-// the payload, so what arrives is already parsed: read `id` and `method`, do not `JSON.parse` again.
+// Rust is a pipe with a process attached; **this side is the client**. What arrives is already
+// parsed — read `id` and `method`, do not `JSON.parse` again.
 
 /** One JSON-RPC message, as the wire carries it. Untyped on purpose: this file mirrors the Rust
  * boundary, and LSP's own shapes belong to the client that speaks them. */
@@ -497,9 +494,8 @@ export type LspEvent =
   /** The server talking about itself: stderr, plus any stdout that was not a well-formed message.
    * A server that starts and then silently does nothing is explaining itself here. */
   | { t: "stderr"; id: string; lines: string[] }
-  /** The process is gone and the session with it; `lspSend` now rejects. The *only* death signal —
-   * nothing times a request out, because slow and dead look identical and rust-analyzer can take
-   * minutes while healthy. Sent on a deliberate `lspStop` and on a replacement too. */
+  /** The process is gone and `lspSend` now rejects. The *only* death signal: nothing times a
+   * request out, because rust-analyzer can take minutes while perfectly healthy. */
   | { t: "exited"; id: string; code: number | null; message: string };
 
 // --- The user's own git repository -- mirrors `src-tauri/src/git.rs` ----------

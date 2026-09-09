@@ -1,23 +1,5 @@
-/**
- * Folds the agent channel into rows the transcript can draw.
- *
- * This file exists so exactly one place has to understand the SDK's message union.
- * That union is large (37 variants), it moves between releases, and two of its shapes
- * are actively misleading:
- *
- *   - `type: "system"` is not one variant. It discriminates again on `subtype` --
- *     `init`, `api_retry`, `compact_boundary`, `status` -- so switching on `type` alone
- *     silently collapses a rate-limit retry and a context compaction into one bucket.
- *   - a tool's *result* arrives as a `type: "user"` message with `isSynthetic`. Render
- *     `type: "user"` naively and the model's own tool output appears as something the
- *     person said.
- *
- * The reducer is pure and takes `TranscriptAction`, so it can be tested against
- * recorded event sequences without a browser, a sidecar, or a model call.
- *
- * Rows are addressed. The address is the durable anchor the world is built on: it never
- * renumbers, so a row can be referred to after the fact.
- */
+/** Folds the agent channel into rows. Two SDK shapes mislead: `system` re-discriminates on
+ * `subtype`, and a tool *result* arrives as a `user` message with `isSynthetic`. */
 
 import type {
   AgentEvent,
@@ -64,24 +46,13 @@ export type Row =
       measure?: string;
       /** Full result text, for expansion. */
       detail?: string;
-      /**
-       * What the tool was called with, kept only when `cls` is `mutate`.
-       *
-       * Conditional because this is the one class whose input is drawn: `toolDiff` builds
-       * the edit's diff out of it, and the result text -- "File created successfully" --
-       * cannot. Every other tool's arguments would sit in state for the rest of the
-       * session having never been read, and inputs are not small: a `Task` carries a whole
-       * subagent prompt. The mutating ones are already the expensive half, since a `Write`
-       * holds the entire file.
-       */
+      /** The call's arguments, kept only for `mutate` — the one class whose input is drawn.
+       * Every other tool's would sit unread all session, and a `Task` carries a whole prompt. */
       input?: JsonObject;
       /** Seconds elapsed, while still running. */
       elapsed?: number;
-      /**
-       * The approval this call is waiting on, when it needed one. It lives on the row
-       * rather than beside it: a `tool_use` block and its `permission_request` are one
-       * action, and drawing both gives it two addresses.
-       */
+      /** The approval this call waits on. On the row, not beside it: the call and its
+       * permission request are one action, and two rows would be two addresses. */
       permission?: { id: string; status: "pending" | "allow" | "deny"; source?: "ui" | "host" };
     })
   | (BaseRow & {
@@ -104,24 +75,12 @@ export type Row =
       error?: string;
     });
 
-/**
- * The status of a server the loader never started, because the application it drives is
- * not open.
- *
- * Not one of the SDK's words -- the SDK never saw this server. `closed` describes the
- * program rather than the server: nothing failed, the thing it talks to is shut. It is
- * a constant because `RunControls` tones and titles chips by it, and a second spelling
- * would dim nothing and say nothing.
- */
+/** A server the loader never started because its application is shut. Not one of the SDK's
+ * words — it never saw this server — and a constant because `RunControls` tones chips by it. */
 export const MCP_CLOSED = "closed";
 
-/**
- * What the agent is doing right now, for the line above the composer.
- *
- * Derived from the rows rather than tracked alongside them. A second piece of state
- * saying "currently editing" would be a second thing that can be wrong, and it would go
- * stale exactly when a turn ends unexpectedly -- which is the moment the line matters.
- */
+/** What the agent is doing, for the line above the composer. Derived from the rows: a
+ * second piece of state would go stale exactly when a turn ends unexpectedly. */
 export interface Activity {
   /** What is happening, in a word: `thinking`, `editing`, `running`. */
   verb: string;
@@ -144,14 +103,8 @@ const VERBS: Record<ToolClass, string> = {
   other: "working",
 };
 
-/**
- * The one thing worth saying about a turn in flight, or `null` when nothing is.
- *
- * Ordered by what the person can act on. An approval outranks everything, because
- * nothing is happening until it is answered and the wait is theirs to end. A running
- * tool outranks thinking, because the tool is the more specific answer -- "editing
- * ide-host.ts" beats "thinking" when both are true.
- */
+/** The one thing worth saying about a turn in flight. Ordered by what the person can act
+ * on: an approval outranks all, and a running tool outranks thinking. */
 export function liveActivity(state: TranscriptState): Activity | null {
   if (state.status !== "running") return null;
 
@@ -200,11 +153,8 @@ export interface TranscriptMeta {
   cwd?: string;
   toolCount?: number;
   permissionMode?: string;
-  /**
-   * Every external MCP server this turn has, started or held back -- the rendered list,
-   * rebuilt from both halves by `mergeMcp`. Undefined until one of them arrives; empty
-   * means the turn had none.
-   */
+  /** Every external MCP server this turn has, started or held back. Undefined until one
+   * arrives; empty means the turn had none. */
   mcpServers?: McpServerRow[];
 }
 
@@ -217,103 +167,49 @@ export interface TranscriptState {
   commands: SlashCommand[];
   sessionId: string | null;
   meta: TranscriptMeta;
-  /**
-   * Row index by SDK `tool_use` id, so a result can find its call.
-   *
-   * A `Map`, mutated in place, and deliberately not part of the immutable state: these
-   * are derived lookup tables that nothing renders, so copying them per event bought no
-   * safety and cost a second quadratic on top of the `rows` copy. `rows` itself stays
-   * immutable, because React's identity check is what makes a memoised row cheap.
-   */
+  /** Row index by `tool_use` id. Mutated in place and outside the immutable state: nothing
+   * renders it, so copying per event bought no safety and cost a second quadratic. */
   toolIndex: Map<string, number>;
   /** Row index by host permission-request id. Same reasoning as `toolIndex`. */
   permIndex: Map<string, number>;
   nextAddr: number;
   turn: number;
-  /**
-   * Whether an SDK `result` already closed this turn. Both `result` and the protocol's
-   * own `done` mark the end, and drawing both prints the turn close twice -- `result`
-   * wins because it is the one carrying duration, cost and turn count.
-   */
+  /** Whether a `result` already closed this turn. Both it and `done` mark the end, and
+   * `result` wins: it is the one carrying duration, cost and turn count. */
   turnClosed: boolean;
-  /**
-   * Live reasoning estimate while the model thinks, or null when it is not.
-   *
-   * This is a real measurement, not a spinner: the SDK streams
-   * `system/thinking_tokens` with a running estimate. It is deliberately not a row --
-   * addresses never renumber, so a transient state must not consume one.
-   */
+  /** Live reasoning estimate while the model thinks. A real measurement, not a spinner —
+   * and not a row, because a transient state must not consume an address. */
   thinking: number | null;
-  /**
-   * The answer as it arrives, before the message carrying it does.
-   *
-   * A preview and nothing more. The final `assistant` message is still what becomes a
-   * row, and it clears this -- so a dropped, malformed or missing delta costs a few
-   * seconds of blank screen and never a wrong transcript. That property is the whole
-   * reason streaming is safe to add to a surface that already renders correctly.
-   */
+  /** The answer as it arrives. A preview only — the real message still makes the row, so a
+   * dropped or malformed delta costs a blank pane and never a wrong transcript. */
   streaming: string | null;
-  /**
-   * When the running turn began, for the elapsed clock beside the activity line.
-   *
-   * Wall clock rather than a tick count: the number has to survive the pane
-   * re-rendering, and a counter incremented in the reducer would reset every time a
-   * row arrived -- which on a busy turn is constantly.
-   */
+  /** When the running turn began, for the elapsed clock. Wall clock, not a tick count: a
+   * counter in the reducer would reset on every row, which on a busy turn is constantly. */
   turnStartedAt: number;
-  /**
-   * The SDK's own model catalogue, empty until the first turn publishes it. Empty means
-   * "not known yet", never "none available" -- the UI must say so rather than showing an
-   * empty picker, and must not gate sending on it.
-   */
+  /** The SDK's model catalogue, empty until a turn publishes it. Empty means "not known
+   * yet", never "none available" — and must not gate sending. */
   models: ModelInfo[];
   /**
    * The backends `providers.json` names. Unlike `models` these arrive at startup, so an
    * empty list here really does mean "none configured" rather than "not known yet".
    */
   providers: ProviderInfo[];
-  /**
-   * The two halves the MCP strip is built from, kept unmerged. See `mergeMcp`.
-   *
-   * `started` is undefined until an init message arrives, which is what keeps
-   * `meta.mcpServers` undefined when nothing has reported yet.
-   */
+  /** The two halves the MCP strip is built from, unmerged. `started` stays undefined until
+   * an init arrives, which is what keeps `meta.mcpServers` undefined. */
   mcp: { started?: McpServerRow[]; gated: McpServerRow[] };
 }
 
 /** A prompt the person submitted. Not on the wire — the UI raises it locally. */
 export type TranscriptAction =
   | { t: "prompt_submitted"; text: string }
-  /**
-   * Start a new conversation in the same sidecar.
-   *
-   * Everything the conversation accumulated goes -- rows, addresses, turn count, the
-   * derived indices -- while everything that describes the *installation* stays: the
-   * model list and the command list were read once per sidecar and are still true. The
-   * status stays too, because the sidecar did not restart and is still ready.
-   */
-  /**
-   * A line the UI needs to say for itself, with no event behind it.
-   *
-   * Raised locally like `prompt_submitted`, and for the same reason: the checkpoint
-   * that could not be taken is something this app knows and the SDK never hears about,
-   * so there is no event to fold. It is a row rather than a toast because it belongs to
-   * the turn it qualifies -- scrolling back to a turn should show that it had no
-   * checkpoint, not leave that fact in a notification that has since gone.
-   */
+  /** Start a new conversation in the same sidecar. What the conversation accumulated goes;
+   * what describes the installation stays, because the sidecar did not restart. */
+  /** A line the UI says for itself, with no event behind it. A row rather than a toast:
+   * scrolling back to a turn should still show that it had no checkpoint. */
   | { t: "local_notice"; tone: NoticeTone; text: string }
   | { t: "conversation_reset" }
-  /**
-   * Replay a conversation this session is about to continue.
-   *
-   * Resuming used to be invisible: the SDK was handed the id at prompt time and the
-   * transcript stayed empty, so the model knew the history and the person did not. What
-   * you were continuing was a word in a status line rather than something you could read.
-   *
-   * The rows are the real exchange, drawn as prompts and replies like any other, because
-   * that is what they are. A notice marks where the replay ends and this session begins --
-   * the one thing the rows cannot say for themselves.
-   */
+  /** Replay a conversation this session will continue. Resuming used to be invisible — the
+   * model knew the history and the person did not. A notice marks where the replay ends. */
   | { t: "conversation_loaded"; id: string; entries: ConversationEntry[] }
   | AgentEvent;
 
@@ -368,27 +264,10 @@ export function shortToolName(name: string): string {
   return name.includes("__") ? name.slice(name.lastIndexOf("__") + 2) : name;
 }
 
-/**
- * The one argument worth putting in the operand column. Falls back to the first string
- * in the input rather than printing nothing, because an unknown tool with no operand is
- * a row you cannot act on.
- */
-/**
- * The file an assistant message is about to change, or `null` when it is not changing one.
- *
- * Read straight off the message rather than out of the rows, because the point is to open
- * the file *as the edit is announced* -- a row exists by then too, but it carries the
- * display operand, which is relative and has already lost the drive letter.
- *
- * Only `mutate` tools count. Opening the editor on every `Read` would yank the view around
- * for the whole of a turn spent looking, and the person is usually reading something else
- * while that happens.
- *
- * `vault` is the memory vault, when there is one. A note is written with `Write` like any
- * other file, so without this the editor jumps to a memory note the moment the agent
- * records something -- taking the view off the code the turn is actually about. What is in
- * the vault is the agent's own bookkeeping; it is worth a row, not the editor.
- */
+/** The one argument worth the operand column. Falls back to the first string in the input:
+ * an unknown tool with no operand is a row you cannot act on. */
+/** The file an assistant message is about to change. Read off the message, not the rows;
+ * only `mutate` tools, and never inside the vault, where a note is an ordinary `Write`. */
 export function editedFile(msg: JsonObject, vault?: string): string | null {
   if (msg.type !== "assistant") return null;
   for (const block of blocksOf(msg)) {
@@ -405,28 +284,16 @@ export function editedFile(msg: JsonObject, vault?: string): string | null {
   return null;
 }
 
-/**
- * Is `path` under `dir`?
- *
- * Case-insensitive, because this is Windows and the model types whatever spelling it
- * inferred -- `c:\users\...` against a vault the core normalized to `C:/Users/...` would
- * compare as a different tree and let the note through. Both sides are already
- * forward-slashed by the time they get here.
- */
+/** Is `path` under `dir`? Case-insensitive: the model types whatever spelling it inferred,
+ * and `c:\users\...` against a normalized `C:/Users/...` would compare as a different tree. */
 function inside(path: string, dir: string | undefined): boolean {
   if (!dir) return false;
   const base = dir.replace(/\/$/, "").toLowerCase();
   return path.toLowerCase().startsWith(`${base}/`);
 }
 
-/**
- * A path as the rest of this app spells one: forward slashes, upper-case drive.
- *
- * The SDK hands back what the model typed, which on Windows is `C:\a\b`. Everything here
- * matches paths by string -- the editor's open file, the watcher's events -- so one
- * spelling reaching the editor and another reaching the watcher means the file opens and
- * then never refreshes. See the `WirePath` note in CLAUDE.md.
- */
+/** A path spelled the way the rest of this app spells one. Everything matches by string, so
+ * two spellings mean the file opens in the editor and then never refreshes. */
 function wirePath(raw: string): string {
   return raw
     .split("\\")
@@ -589,9 +456,8 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
     }
 
     case "conversation_loaded": {
-      // Reset first, for the same reasons `conversation_reset` gives: a replay is the
-      // start of a different conversation, and leaving the previous one above it would
-      // put two histories in one column with nothing marking the seam.
+      // Reset first: a replay starts a different conversation, and leaving the previous one
+      // above it puts two histories in one column with nothing marking the seam.
       const fresh = initialState();
       let next: TranscriptState = {
         ...fresh,
@@ -815,11 +681,8 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
       }));
     }
     case "memory_recall": {
-      // The recall supervisor pulled notes into this turn before the model saw the
-      // prompt. Unsaid, that is indistinguishable from the model guessing correctly --
-      // and when it recalls the wrong note, from the model being wrong for no reason.
-      // Naming the notes is what makes both cases readable, and it is the only place the
-      // vault appears in the transcript at all.
+      // Notes pulled in before the model saw the prompt. Unsaid, that looks like the model
+      // guessing — or, on a wrong note, like it being wrong for no reason.
       const names = recalled(msg.memories);
       if (names.length === 0) return state;
       return push(state, (addr, turn) => ({
@@ -859,27 +722,16 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
   }
 }
 
-/**
- * What a `memory_recall` surfaced, as short names.
- *
- * A memory's `path` is one of three things and only the first is a file: an absolute path
- * to a note, a `<synthesis:DIR>` sentinel standing for a paragraph distilled from many
- * small notes, or an https URL for an organization memory. Each gets the shortest thing
- * that still identifies it -- the whole path would push the row past the pane and the
- * vault prefix is the same on every entry, so it distinguishes nothing.
- *
- * Duplicates are dropped: two entries can name the same file when the same note is
- * surfaced under more than one scope, and the row should not say it twice.
- */
+/** What a `memory_recall` surfaced, as short names. A `path` is a file, a `<synthesis:DIR>`
+ * sentinel, or an https URL; each gets the shortest thing that still identifies it. */
 function recalled(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const names: string[] = [];
   for (const memory of value) {
     const path = (memory as { path?: unknown } | null)?.path;
     if (typeof path !== "string" || path === "") continue;
-    // `filter(Boolean)` so a URL with a trailing slash names its last segment rather
-    // than nothing -- an entry that contributes no name would make the row understate
-    // what was recalled, which is the whole failure this is here to prevent.
+    // `filter(Boolean)` so a URL with a trailing slash names its last segment rather than
+    // nothing — an entry contributing no name makes the row understate what was recalled.
     const name = path.startsWith("<synthesis:")
       ? "a synthesis"
       : (path.split(/[\\/]/).filter(Boolean).pop() ?? path);
@@ -888,19 +740,8 @@ function recalled(value: unknown): string[] {
   return names;
 }
 
-/**
- * Rebuild `meta.mcpServers` from both halves, replacing whichever one `mcp` carries.
- *
- * Two messages describe this strip and both arrive at the start of the same turn: the
- * SDK's `init`, listing the servers that were started, and the sidecar's `mcp_gated`,
- * listing the ones it held back. Nothing orders them against each other, so each is
- * stored as it lands and the rendered list is derived. Writing the merged list directly
- * would make whichever arrived second overwrite the first -- and `readMcpServers`
- * returns undefined for an init with no `mcp_servers` at all, which through a `...meta`
- * spread would erase the gated chips rather than leave them alone.
- *
- * Started first, held back after: the servers the turn can actually use lead.
- */
+/** Rebuild `meta.mcpServers` from both halves. Two messages describe this strip and nothing
+ * orders them, so each is stored as it lands and whichever arrives second cannot erase it. */
 function mergeMcp(state: TranscriptState, mcp: TranscriptState["mcp"]): TranscriptState {
   const merged =
     mcp.started === undefined && mcp.gated.length === 0
@@ -909,14 +750,8 @@ function mergeMcp(state: TranscriptState, mcp: TranscriptState["mcp"]): Transcri
   return { ...state, mcp, meta: { ...state.meta, mcpServers: merged } };
 }
 
-/**
- * The init message's MCP servers, each with the number of tools it contributed.
- *
- * The count is derived rather than reported: `mcp_servers` says only whether a server
- * connected, and `tools` is the flat list the turn ended up with. Read apart, a server
- * that connects and exposes nothing looks healthy -- which is exactly the failure that
- * hid the IDE's own tools for three phases. Read together, it shows as a zero.
- */
+/** The init message's MCP servers, each with the tools it contributed. The count is derived,
+ * because a server that connects and exposes nothing looks healthy until you count. */
 function readMcpServers(value: unknown, tools: string[]): McpServerRow[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const rows: McpServerRow[] = [];
@@ -934,16 +769,8 @@ function readMcpServers(value: unknown, tools: string[]): McpServerRow[] | undef
   return rows;
 }
 
-/**
- * The answer, a few characters at a time.
- *
- * Only text deltas, and only into `streaming`. Thinking already has its own live measure
- * and tool calls cannot be drawn until their arguments are whole -- a half-parsed path is
- * worse than a pause. So this previews the one thing that reads correctly half-written.
- *
- * A new text block resets rather than appends: two blocks in one message are separate
- * paragraphs, and running them together would show a sentence that never existed.
- */
+/** The answer, a few characters at a time. Text deltas only — a half-parsed tool argument is
+ * worse than a pause. A new block resets rather than appends; they are separate paragraphs. */
 function reduceStream(state: TranscriptState, msg: JsonObject): TranscriptState {
   const event = msg.event as { type?: string; delta?: { type?: string; text?: string }; content_block?: { type?: string } } | undefined;
   if (!event) return state;
@@ -1095,27 +922,13 @@ export interface Activity {
   detail?: string;
   /** A live reasoning estimate, while the model is thinking. */
   tokens?: number;
-  /**
-   * The turn is waiting on the person, not on the machine.
-   *
-   * Drawn differently, because it is the one state where staring at the indicator will
-   * never change it -- a spinner that means "answer me" reads as "still working", and
-   * the person waits for something that is waiting for them.
-   */
+  /** The turn is waiting on the person, not the machine. Drawn differently: a spinner that
+   * means "answer me" reads as "still working", and both sides then wait. */
   blocked?: boolean;
 }
 
-/**
- * The current activity, or `null` when nothing is running.
- *
- * Derived rather than tracked: every fact here is already in `rows` and `thinking`, and a
- * second copy updated alongside them would be a second thing to get wrong. Reading it back
- * out costs one scan of a list that is short by construction.
- *
- * The order is a priority, not a sequence. A pending approval outranks everything because
- * it is the only state the person can act on; a running tool outranks thinking because a
- * name and an operand say more than a token count.
- */
+/** The current activity, or `null`. Derived rather than tracked, so there is no second copy
+ * to get wrong. The order is a priority: an approval outranks a tool outranks thinking. */
 export function activity(state: TranscriptState): Activity | null {
   if (state.status !== "running") return null;
 

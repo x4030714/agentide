@@ -597,27 +597,23 @@ function attachMenu(
         erase();
         menu = null;
         replace(chosen);
-        // Tab fills the line and leaves the cursor there; Enter on a command that needs no
-        // argument runs it, because choosing it *was* the decision and asking for a second
-        // Enter would only be a chance to change your mind about something already read.
+        // Tab fills the line; Enter runs a command that needs no argument, because
+        // choosing it was already the decision.
         if (key.name !== "tab" && submit) return original.call(rl, "\r", { name: "return" } as Key);
         refresh();
         return;
       }
     }
 
-    // Erased before readline is told, not after. Both of these move the cursor off the
-    // input line first -- Enter prints a newline, Ctrl+C prints one and exits -- and by
-    // then `clearScreenDown` starts a row too low and leaves the menu's first line behind
-    // as garbage under the answer.
+    // Erased before readline is told: both move the cursor off the input line first, and
+    // `clearScreenDown` would then start a row too low and orphan the menu's top line.
     if (key.name === "return" || key.name === "enter" || (key.ctrl && key.name === "c")) {
       erase();
       menu = null;
       dismissed = false;
       original.call(rl, s, key);
-      // Readline has just printed the newline, so the cursor is on the row under the input
-      // and this closes the box around what was sent. Without it the transcript is a
-      // column of lids: every prompt keeps its top edge and loses its bottom one.
+      // Readline has just printed the newline, so this closes the box around what was
+      // sent. Without it the transcript is a column of lids with no floors.
       if (key.name !== "c") out.write(`${rule("bottom", out.columns || 100)}\n`);
       return;
     }
@@ -640,18 +636,8 @@ function attachMenu(
   };
 }
 
-/**
- * `/provider` lists the backends; `/provider 2` or `/provider qwen-local` picks one.
- *
- * A key that is not in `providers.json` is refused here for the same reason a bad model
- * name is. It used to be taken as written, and the turn then reached `session.ts`, which
- * refuses it properly -- but only after the prompt was sent, which is a turn spent finding
- * out that a name was misspelled.
- *
- * `anthropic` is a row rather than a special case, because going back to the cloud is the
- * one thing a picker without it cannot do: `/provider` on its own lists, so there would be
- * no way left to say it.
- */
+/** `/provider` lists the backends; a number or a key picks one. An unknown key is refused
+ * here rather than a turn later, and `anthropic` is a row so there is a way back. */
 function chooseProvider(
   argument: string,
   options: Options,
@@ -697,18 +683,8 @@ function switchTo(key: string, options: Options): void {
   process.stdout.write(`  next turns run on ${paint.accent(key)}\n`);
 }
 
-/**
- * `/model` with nothing after it lists; `/model 3` or `/model opus` picks one.
- *
- * A name that is not a model is refused here rather than sent. It used to be taken as
- * written and fail on the next turn, from inside the SDK -- `Model "opus-5" is not a
- * recognized model id` -- which spends a turn and reads as the agent breaking rather than
- * as a typo two prompts ago.
- *
- * Before the warm-up has answered there is no list to check against, so a name is taken on
- * trust and said out loud. Refusing everything for the two seconds before the catalogue
- * arrives would be worse than the error it prevents.
- */
+/** `/model` lists; a number or a name picks one. An unknown name is refused here, not a
+ * turn later from inside the SDK. Before the catalogue lands, names are taken on trust. */
 function chooseModel(
   argument: string,
   options: Options,
@@ -758,18 +734,8 @@ function chooseModel(
   process.stdout.write(paint.dim("  /model on its own lists them\n"));
 }
 
-/**
- * `/resume` with nothing after it lists; `/resume 3` continues the third.
- *
- * Two steps rather than one, because the id is a UUID and nobody is typing one of those.
- * The list is kept between the two so the number means what it meant when it was printed:
- * re-reading the directory would renumber the rows under a choice already made, and a
- * conversation that was written to in between would move.
- *
- * Only the next turn carries the id. `Session` adopts it once and then continues that
- * conversation on its own, so resuming twice in a row is not two branches from the same
- * point -- which is the failure the adopt-once rule in `session.ts` exists for.
- */
+/** `/resume` lists; `/resume 3` continues the third. Two steps because the id is a UUID,
+ * and the list is kept between them so the number still means the row it named. */
 async function resume(
   argument: string,
   options: Options,
@@ -814,13 +780,8 @@ async function resume(
   process.stdout.write(`  ${paint.dim("continuing")} ${entry.opening}\n`);
 }
 
-/**
- * Print the commands, saying when the list is still only half of itself.
- *
- * The caveat is not decoration. Before the first turn this list is six entries the CLI
- * wrote itself, and showing it bare would say the installation has no commands rather
- * than that it has not been asked yet.
- */
+/** Print the commands, and say when the list is still only half of itself — before the
+ * warm-up answers it is six the CLI wrote, which bare would read as all there is. */
 function list(matches: readonly SlashCommand[], beforeFirstTurn: boolean): void {
   if (matches.length === 0) {
     process.stdout.write("  nothing matches that\n");
@@ -832,14 +793,8 @@ function list(matches: readonly SlashCommand[], beforeFirstTurn: boolean): void 
   }
 }
 
-/**
- * The commands this program answers rather than sending on.
- *
- * Each mutates `options`, which the next turn reads — `/model` here changes what runs, not
- * what a transcript says ran. `/model` and `/provider` with no argument report rather than
- * clear: emptying them by typing the name alone is a way to lose a local backend without
- * being told.
- */
+/** The commands this program answers itself. Each mutates `options`, which the next turn
+ * reads; with no argument they report rather than clear. */
 async function handleLocal(
   name: string,
   input: string,

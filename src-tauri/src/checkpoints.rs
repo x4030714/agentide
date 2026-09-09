@@ -1,42 +1,5 @@
-//! Checkpoints: the shadow git repository that makes every agent edit reversible.
-//!
-//! ## The mechanism
-//!
-//! A second, private git repository lives at `<root>/.agentide/checkpoints.git` with the
-//! workspace itself as its work tree. Every command here runs as
-//! `git --git-dir=<root>/.agentide/checkpoints.git --work-tree=<root> ...`, so the user's
-//! own `.git`, index, history, stashes and hooks are never read and never written. That
-//! separation is the whole point of the design: a checkpoint must be safe to take on
-//! every prompt, in the middle of whatever the user was doing, and must never turn into
-//! a commit they did not ask for.
-//!
-//! One commit before a turn is the only pre-image this module needs. Everything else is
-//! a query against it:
-//!
-//! | Operation | How |
-//! |---|---|
-//! | revert one file | `git checkout <checkpoint> -- <path>` |
-//! | revert some hunks | a subset of `git diff <checkpoint>`, reverse-applied |
-//! | rewind the turn | `git read-tree -u --reset <checkpoint>` |
-//!
-//! ## Isolation
-//!
-//! `GIT_CONFIG_NOSYSTEM` plus a `GIT_CONFIG_GLOBAL` pointed at [`CONFIG_FILE`] mean the
-//! user's git configuration cannot change how a checkpoint is taken or restored: no
-//! `autocrlf` mangling line endings on the way back out, no `core.hooksPath` running
-//! their pre-commit hook, no signing key, no global excludes file quietly dropping files
-//! from the checkpoint. `info/attributes` does the same for in-tree `.gitattributes`,
-//! which has no environment override -- `* -text -filter` there outranks a `* text=auto`
-//! in the workspace, so a CRLF file comes back with its CRLFs.
-//!
-//! ## What is not checkpointed
-//!
-//! The workspace's own `.gitignore` is honored, and on top of it the shadow repo's
-//! `info/exclude` names [`crate::fs::ALWAYS_IGNORED`] -- `.git`, `.agentide`,
-//! `node_modules`, `target`, `dist`. Committing the user's real git directory into the
-//! shadow repo would be a disaster, and the same list is what the file tree hides, so
-//! "not in the tree" and "not in a checkpoint" cannot drift apart. A file the ignore
-//! rules skip is never captured, and therefore never restored and never deleted.
+//! A shadow git repo at `<root>/.agentide/checkpoints.git` over the workspace, so agent edits
+//! are reversible and the user's `.git` is untouched. Their config is locked out of it too.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -62,20 +25,16 @@ const CONFIG_FILE: &str = ".agentide/git-config";
 /// naming in the queue but not worth shipping through the IPC boundary.
 const MAX_DIFF_BYTES: u64 = 2 * 1024 * 1024;
 
-/// Across one [`checkpoint_diff`]. A rewind-sized diff can name thousands of files;
-/// past this the rest arrive as [`Omitted::Budget`] and the queue fetches them one at a
-/// time with [`checkpoint_file_diff`].
+/// Across one [`checkpoint_diff`]: past this the rest arrive as [`Omitted::Budget`] and
+/// are fetched one at a time, because a rewind can name thousands of files.
 const MAX_DIFF_TOTAL_BYTES: u64 = 24 * 1024 * 1024;
 
 /// Context lines in the patches used for per-hunk revert. Three is git's default and the
 /// number `git apply` is happiest re-finding a shifted hunk with.
 const CONTEXT_LINES: &str = "3";
 
-/// Serializes every checkpoint operation.
-///
-/// Tauri runs commands on a thread pool, so two invokes really do overlap; they would
-/// then meet on one `index.lock`, which git fails on rather than waits for. A checkpoint
-/// is a few hundred milliseconds, so queuing is cheaper than a lost turn.
+/// Serializes every checkpoint operation: Tauri's thread pool really does overlap invokes,
+/// and they would meet on one `index.lock`, which git fails on rather than waits for.
 static GIT: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
@@ -106,11 +65,8 @@ impl Repo {
         Self::at(&root)
     }
 
-    /// Open -- creating and repairing as needed -- the shadow repository under `root`.
-    ///
-    /// Idempotent and cheap: the config, exclude and attributes files are rewritten on
-    /// every call so a version of this app that changes them fixes existing workspaces,
-    /// and `git init` runs only when there is no repository yet.
+    /// Open the shadow repo under `root`, creating and repairing as needed. Config, exclude
+    /// and attributes are rewritten every call, so a new version fixes old workspaces.
     fn at(root: &WirePath) -> Result<Self, IpcError> {
         let dir = root.to_path();
         let repo = Self {
@@ -214,10 +170,8 @@ impl Repo {
             )
         })?;
         if let Some(bytes) = input {
-            // Written from another thread because git may be producing output at the
-            // same time: with both pipes full and one thread, neither side can move.
-            // git exiting early (a patch that does not apply) closes the pipe, and a
-            // broken pipe here is not something to report -- the exit status is.
+            // From another thread: git may be writing at the same time, and with both pipes
+            // full and one thread neither side moves. A broken pipe here is not the error.
             let mut stdin = child.stdin.take().expect("piped stdin");
             std::thread::spawn(move || {
                 let _ = stdin.write_all(&bytes);
@@ -242,11 +196,8 @@ impl Repo {
         Ok(Some(text(run.stdout)?.trim().to_string()))
     }
 
-    /// Turn a checkpoint id from the frontend into a full commit hash.
-    ///
-    /// Rejects anything that is not hexadecimal before it reaches git, so a checkpoint id
-    /// can never arrive as `--upload-pack=...` or as a revision expression that reaches
-    /// past the timeline.
+    /// A checkpoint id from the frontend into a full commit hash. Non-hex is rejected before
+    /// git sees it, so an id can never arrive as `--upload-pack=...` or a revision walk.
     fn resolve(&self, id: &str) -> Result<String, IpcError> {
         let looks_like_a_hash =
             (4..=40).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit());
@@ -267,12 +218,8 @@ impl Repo {
         Ok(text(run.stdout)?.trim().to_string())
     }
 
-    /// Stage the whole work tree.
-    ///
-    /// Every comparison against the working tree runs this first: a file the agent
-    /// created is untracked until it does, and `git diff <commit>` does not report
-    /// untracked files. It is also the expensive half of taking a checkpoint -- one stat
-    /// per tracked file, and a full hash of anything whose stat changed.
+    /// Stage the whole work tree. Every comparison runs this first — `git diff <commit>`
+    /// does not report untracked files — and it is the expensive half of a checkpoint.
     fn stage(&self) -> Result<(), IpcError> {
         self.run(&["add", "--all"])?;
         Ok(())
@@ -283,10 +230,8 @@ impl Repo {
         WirePath::parse(&under(&self.root, relative))
     }
 
-    /// Work-tree-relative, `/`-separated -- the shape git pathspecs want.
-    ///
-    /// Windows compares paths case-insensitively, and a path that reached the frontend
-    /// through the editor may not carry the case the workspace root was opened with.
+    /// Work-tree-relative and `/`-separated, the shape git pathspecs want. Windows compares
+    /// case-insensitively, and a path from the editor may not carry the root's case.
     fn relative(&self, path: &WirePath) -> Result<String, IpcError> {
         let root = self.root.to_string();
         let prefix = if root.ends_with('/') {
@@ -447,11 +392,8 @@ fn subject(label: &str) -> String {
 const RECORD: char = '\u{1e}';
 const FIELD: char = '\u{1f}';
 
-/// The newest `limit` checkpoints, each with its diff against the one before it.
-///
-/// One git process regardless of how many checkpoints are asked for: `--numstat` yields
-/// the per-commit file counts in the same pass, which is why this is not a loop of
-/// `git diff` calls.
+/// The newest `limit` checkpoints, each diffed against the one before. One git process
+/// however many are asked for: `--numstat` gives the per-commit counts in the same pass.
 fn log(repo: &Repo, limit: u32) -> Result<Vec<Checkpoint>, IpcError> {
     if repo.head()?.is_none() {
         return Ok(Vec::new());
@@ -525,11 +467,8 @@ struct RawEntry {
 
 const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
-/// The changed paths between two trees, or between a tree and the working tree.
-///
-/// `--raw` carries the blob ids, which is what lets the contents be fetched by object id
-/// rather than by path -- no quoting, no ambiguity, and one `cat-file` process for the
-/// whole diff however many files it names.
+/// The changed paths between two trees, or a tree and the working tree. `--raw` carries blob
+/// ids, so contents come by object id — no quoting, and one `cat-file` for the whole diff.
 fn raw_diff(repo: &Repo, from: &str, to: Option<&str>, path: Option<&str>) -> Result<Vec<RawEntry>, IpcError> {
     let mut args = vec![
         "diff",
@@ -687,10 +626,8 @@ fn specs(oids: &[String]) -> Vec<u8> {
     input
 }
 
-/// Assemble the diff the queue renders.
-///
-/// `to` is `None` for the working tree, which is the case the diff queue lives on: what
-/// has changed on disk since the turn began.
+/// Assemble the diff the queue renders. `to` is `None` for the working tree, which is what
+/// the queue lives on: what changed on disk since the turn began.
 fn diff(
     repo: &Repo,
     from: &str,
@@ -816,11 +753,8 @@ fn decode(bytes: Option<Vec<u8>>) -> Option<Option<String>> {
 // ---------------------------------------------------------------------------
 // Hunks
 //
-// Per-hunk revert is a round trip through `git apply -R`: the patch is generated fresh
-// from the file as it is right now, the caller's selection picks hunks out of it by id,
-// and git applies the subset in reverse. Nothing is reconstructed by hand, so a hunk
-// that no longer describes the file cannot half-apply -- `git apply` builds the whole
-// result before writing anything and fails without touching the file.
+// Per-hunk revert is `git apply -R` on a patch regenerated from the file as it is now.
+// Nothing is rebuilt by hand, so a stale hunk fails whole rather than half-applying.
 // ---------------------------------------------------------------------------
 
 /// A parsed patch for one file: the `diff --git` preamble, then the hunks.
@@ -902,10 +836,8 @@ fn parse_patch(raw: &str) -> Patch {
         }
     }
 
-    // The id is a hash of the hunk's own lines and nothing else, so a hunk that only
-    // moved -- because an earlier hunk was reverted, or because the user typed above it
-    // -- keeps the id the frontend is holding. The suffix disambiguates a file that
-    // contains the same change twice.
+    // The id hashes the hunk's own lines, so one that merely moved keeps the id the
+    // frontend holds. The suffix separates a file containing the same change twice.
     let mut seen: HashMap<u64, u32> = HashMap::new();
     for hunk in &mut hunks {
         let hash = fnv1a(hunk.body.as_bytes());
@@ -950,10 +882,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Take a checkpoint of the whole work tree. Called before a turn begins.
-///
-/// Always produces a commit, even when nothing changed since the last one, so a turn
-/// always has an id of its own to be rewound to.
+/// Take a checkpoint of the whole work tree, before a turn begins. Always commits, even with
+/// nothing changed, so every turn has an id of its own to rewind to.
 #[tauri::command]
 pub async fn checkpoint_create(
     workspace: State<'_, WorkspaceState>,
@@ -976,10 +906,7 @@ pub async fn checkpoint_list(
 }
 
 /// What changed between a checkpoint and the working tree, or between two checkpoints.
-///
-/// Contents are withheld -- with [`DiffFile::omitted`] saying why -- for binary files,
-/// for files over 2 MiB a side, and for whatever falls past the payload budget once a
-/// diff runs to tens of megabytes. Fetch those one at a time with [`checkpoint_file_diff`].
+/// Binary, over 2 MiB, or past the budget is withheld with [`DiffFile::omitted`] saying why.
 #[tauri::command]
 pub async fn checkpoint_diff(
     workspace: State<'_, WorkspaceState>,
@@ -1012,11 +939,8 @@ pub async fn checkpoint_file_diff(
     Ok(files.pop())
 }
 
-/// The hunks of one file's changes since a checkpoint, in the working tree.
-///
-/// The ids are what [`checkpoint_revert_hunks`] takes. They are a hash of the hunk's own
-/// lines, so they survive the file moving underneath them; they do not survive the hunk
-/// itself being edited, and that is the point.
+/// The hunks of one file's changes since a checkpoint. The ids hash the hunk's own lines, so
+/// they survive the file moving under them and not the hunk being edited — which is the point.
 #[tauri::command]
 pub async fn checkpoint_hunks(
     workspace: State<'_, WorkspaceState>,
@@ -1049,11 +973,8 @@ pub async fn checkpoint_hunks(
     })
 }
 
-/// Put one file back the way it was at a checkpoint.
-///
-/// A file that did not exist at the checkpoint is deleted -- unless the ignore rules
-/// mean it was never captured in the first place, in which case this refuses rather than
-/// delete something it never had a copy of.
+/// Put one file back as it was at a checkpoint. A file that did not exist then is deleted —
+/// unless it was never captured, where this refuses rather than delete an uncopied file.
 #[tauri::command]
 pub async fn checkpoint_revert_file(
     workspace: State<'_, WorkspaceState>,
@@ -1124,12 +1045,8 @@ fn checkpoint_revert_file_inner(
     })
 }
 
-/// Put selected hunks of one file back the way they were at a checkpoint.
-///
-/// The patch is regenerated from the file as it is now and the named hunks are picked
-/// out of *that*, so a hunk id that no longer matches anything fails with
-/// [`ErrorCode::Stale`] and nothing is written. `git apply` is likewise all-or-nothing:
-/// if the subset does not apply in reverse, the file is left exactly as it was.
+/// Put selected hunks back as they were. The patch is regenerated from the file as it is now,
+/// so a stale id fails with [`ErrorCode::Stale`] and `git apply` writes nothing at all.
 #[tauri::command]
 pub async fn checkpoint_revert_hunks(
     workspace: State<'_, WorkspaceState>,
@@ -1227,20 +1144,8 @@ fn checkpoint_revert_hunks_inner(
     })
 }
 
-/// Put the whole work tree back the way it was at a checkpoint.
-///
-/// Two checkpoints are taken around this: one *before* anything moves, which is what
-/// makes a rewind undoable, and one after, so the timeline records the state the tree is
-/// actually in. HEAD only ever moves forward -- rewinding does not erase the checkpoints
-/// that came after the one being rewound to.
-///
-/// What is deleted: files that exist now and did not exist at the checkpoint. Every one
-/// of them is in the safety checkpoint this returns, and they are listed in `deleted`.
-/// Pass `deleteCreated: false` to keep them instead; they are then listed in `kept`.
-///
-/// What is never deleted: anything the ignore rules exclude, and anything untracked --
-/// a rewind removes files through git's index, and a file that was never captured is not
-/// in it. Unsaved editor buffers are not on disk and so are not touched at all.
+/// Put the whole work tree back. Two checkpoints bracket it so the rewind is itself undoable,
+/// and HEAD only moves forward. Deletes files created since; never anything it did not capture.
 #[tauri::command]
 pub async fn checkpoint_rewind(
     workspace: State<'_, WorkspaceState>,

@@ -103,8 +103,8 @@ const tint = (hex, percent) => {
 };
 
 // --- Themes ---------------------------------------------------------------------
-// Between palettes it is `sym` that must differ: it also drives `--tint-accent`, so three
-// blue-ish `sym`s made three palettes look identical. The named ones are re-solved, not ported.
+// `sym` must differ between palettes: it also drives `--tint-accent`, so three blue-ish
+// ones made three themes look identical. The named themes are re-solved, not ported.
 
 const THEMES = [
   {
