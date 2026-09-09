@@ -10,7 +10,11 @@ sidecar. Windows x64.
 ## Install
 
 Run the installer from `src-tauri/target/release/bundle/` — either the `.msi` or the NSIS
-`-setup.exe`. Node and the Claude Code binary are bundled; you do not need either installed.
+`-setup.exe`. Everything it needs ships with it: Node, the Claude Code binary, rust-analyzer
+and a git. Nothing to install first.
+
+Your own copies win when you have them. agentide only reaches for a bundled tool when the
+program is not on PATH, so a newer rust-analyzer or your own git keeps being the one used.
 
 ## First run
 
@@ -22,14 +26,12 @@ hands over to Claude Code's own sign-in, which opens a browser. Or set `ANTHROPI
 in your environment. Or configure a local backend, which needs no Anthropic account at all
 (see below).
 
-**These two only cost you a feature:**
+Type `/doctor` in the CLI at any time to see what is missing. On a normal install that is
+nothing, since git and rust-analyzer ship with it.
 
-| | |
-|---|---|
-| `git` on PATH | Checkpoints. Without it no turn can be undone. |
-| `rust-analyzer` on PATH | The Rust code tools. Without it they answer nothing. |
-
-Type `/doctor` in the CLI at any time to see the same list.
+One thing the bundle cannot fix: rust-analyzer resolves `std` through `rust-src`, which
+comes from `rustup component add rust-src`. Without it you get everything except types from
+the standard library.
 
 Then open a folder. The agent works on a workspace, and there is nothing for it to do
 until there is one.
@@ -77,3 +79,9 @@ npm run smoke:quick     # end to end against a real rust-analyzer, free
 
 `npm run smoke:quick` is the one that matters before claiming a change works. Every serious
 bug in this project has lived in a seam the unit tests do not cross.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+Fully vibecoded with Opus 5.

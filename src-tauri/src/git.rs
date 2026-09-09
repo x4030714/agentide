@@ -104,7 +104,7 @@ pub struct GitFileDiff {
 /// A git invocation in the user's tree with their environment intact -- the opposite of
 /// `checkpoints.rs`. Only two things are forced: no credential prompt, and C messages.
 fn git_in(dir: &Path) -> Command {
-    let mut command = Command::new("git");
+    let mut command = Command::new(crate::tools::resolve("git"));
     command
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")

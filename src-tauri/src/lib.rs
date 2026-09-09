@@ -11,6 +11,7 @@ mod lsp;
 mod memory;
 mod pty;
 mod reaper;
+mod tools;
 mod window;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,7 +34,8 @@ pub fn run() {
             // Where the installed app keeps the agent host bundle. Absent under `cargo run`,
             // which is why `agent.rs` falls back to the repository path.
             if let Ok(dir) = app.path().resource_dir() {
-                agent::set_resource_dir(dir);
+                agent::set_resource_dir(dir.clone());
+                tools::set_resource_dir(dir);
             }
             Ok(())
         })

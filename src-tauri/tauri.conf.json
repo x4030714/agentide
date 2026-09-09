@@ -35,7 +35,8 @@
     ],
     "resources": {
       "../sidecar/dist/main.mjs": "sidecar/main.mjs",
-      "../sidecar/dist/node_modules": "sidecar/node_modules"
+      "../sidecar/dist/node_modules": "sidecar/node_modules",
+      "../src-tauri/tools": "tools"
     },
     "externalBin": [
       "binaries/node"

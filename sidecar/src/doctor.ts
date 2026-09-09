@@ -4,6 +4,7 @@
 import { createRequire } from "node:module";
 import { accessSync, constants, existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import { loadProviders } from "./provider-config.ts";
@@ -29,6 +30,29 @@ function credentialsFile(env: NodeJS.ProcessEnv, home: string): string {
 export function signedIn(env: NodeJS.ProcessEnv = process.env, home = homedir()): boolean {
   if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) return true;
   return existsSync(credentialsFile(env, home));
+}
+
+/**
+ * The copy agentide ships, when it ships one.
+ *
+ * Installed, the sidecar runs from `<resources>/sidecar/main.mjs` and the tools sit beside
+ * it; in the repository it is `src-tauri/tools`. Checked because the app prefers a bundled
+ * rust-analyzer and git over nothing, and a readiness check that ignored them would tell a
+ * working install it was broken.
+ */
+export function bundled(name: string): string | null {
+  const relative: Record<string, string> = {
+    "rust-analyzer": "rust-analyzer/rust-analyzer.exe",
+    git: "git/cmd/git.exe",
+  };
+  const leaf = relative[name];
+  if (!leaf) return null;
+  const here = fileURLToPath(new URL(".", import.meta.url));
+  for (const root of [join(here, "..", "tools"), join(here, "..", "..", "src-tauri", "tools")]) {
+    const candidate = join(root, leaf);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 /** Is `name` on PATH? One stat per entry, which is cheaper than spawning it to find out. */
@@ -76,6 +100,7 @@ export function checkup(
   env: NodeJS.ProcessEnv = process.env,
   home = homedir(),
   hasProviders = Object.keys(loadProviders()).length > 0,
+  findBundled: (name: string) => string | null = bundled,
 ): Problem[] {
   const problems: Problem[] = [];
 
@@ -93,18 +118,18 @@ export function checkup(
       fix: "Reinstall agentide; the installer ships it and something removed it",
     });
   }
-  if (!onPath("git", env)) {
+  if (!onPath("git", env) && !findBundled("git")) {
     problems.push({
       severity: "degraded",
-      title: "git is not on PATH, so no turn can be undone",
-      fix: "Install Git for Windows — checkpoints are the whole undo story",
+      title: "No git, so no turn can be undone",
+      fix: "Reinstall agentide, which ships one, or put Git for Windows on PATH",
     });
   }
-  if (!onPath("rust-analyzer", env)) {
+  if (!onPath("rust-analyzer", env) && !findBundled("rust-analyzer")) {
     problems.push({
       severity: "degraded",
-      title: "rust-analyzer is not on PATH; the Rust code tools will not answer",
-      fix: "Install it and reopen the workspace, or ignore this if you write no Rust",
+      title: "No rust-analyzer, so the Rust code tools will not answer",
+      fix: "Reinstall agentide, which ships one, or put rust-analyzer on PATH",
     });
   }
   return problems;

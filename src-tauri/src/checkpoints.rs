@@ -95,7 +95,7 @@ impl Repo {
 
     /// A git invocation against this repository, isolated from the user's git setup.
     fn git(&self) -> Command {
-        let mut command = Command::new("git");
+        let mut command = Command::new(crate::tools::resolve("git"));
         command
             .current_dir(&self.dir)
             .arg("--git-dir")

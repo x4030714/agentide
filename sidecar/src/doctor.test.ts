@@ -7,7 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { checkup, onPath, ready, signedIn } from "./doctor.ts";
+import { bundled, checkup, onPath, ready, signedIn } from "./doctor.ts";
+
+/** A machine where agentide shipped nothing, to test the warnings themselves. */
+const nothingBundled = () => null;
 
 async function home(withCredentials: boolean): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "agentide-doctor-"));
@@ -51,14 +54,14 @@ test("not signed in blocks a turn, and says what to type", async () => {
 test("a missing git is a warning, not a wall", async () => {
   // No checkpoints means no undo, which is worth saying loudly — but it must not stop
   // someone using the agent to read a codebase.
-  const problems = checkup({ PATH: "" }, await home(true), false);
-  const git = problems.find((problem) => problem.title.startsWith("git is not"));
+  const problems = checkup({ PATH: "" }, await home(true), false, nothingBundled);
+  const git = problems.find((problem) => problem.title.includes("No git"));
   assert.equal(git?.severity, "degraded");
   assert.ok(git?.fix.length);
 });
 
 test("a missing language server is a warning too", async () => {
-  const problems = checkup({ PATH: "" }, await home(true), false);
+  const problems = checkup({ PATH: "" }, await home(true), false, nothingBundled);
   assert.equal(
     problems.find((problem) => problem.title.includes("rust-analyzer"))?.severity,
     "degraded",
@@ -68,7 +71,7 @@ test("a missing language server is a warning too", async () => {
 test("degraded problems still leave the machine ready", async () => {
   // The whole point of the two levels: no git and no rust-analyzer is a worse agentide,
   // not a broken one, and refusing to run would be the wrong call.
-  const problems = checkup({ PATH: "", ANTHROPIC_API_KEY: "sk-x" }, await home(false), false);
+  const problems = checkup({ PATH: "", ANTHROPIC_API_KEY: "sk-x" }, await home(false), false, nothingBundled);
   assert.ok(problems.length > 0, "git and rust-analyzer are both missing here");
   assert.equal(ready(problems), true);
 });
@@ -85,4 +88,24 @@ test("PATH is read for real", () => {
   // The check has to be able to find something, or every machine reports missing tools.
   assert.equal(onPath("node"), true);
   assert.equal(onPath("definitely-not-a-real-program-xyz"), false);
+});
+
+test("a bundled tool counts, so a fresh install is not told to go and install one", async () => {
+  // The installer ships rust-analyzer and a git. Warning about them anyway would send
+  // someone off to fix something that is already sitting in the install directory.
+  const problems = checkup(
+    { PATH: "", ANTHROPIC_API_KEY: "sk-x" },
+    await home(false),
+    false,
+    () => "C:/agentide/tools/git/cmd/git.exe",
+  );
+  assert.deepEqual(problems, [], "nothing is missing on a complete install");
+});
+
+test("the tools we ship are the ones this can find", () => {
+  // Drift is silent: a renamed directory means every machine falls back to PATH and the
+  // bundled copy is never used. Mirrors `bundled_path` in `src-tauri/src/tools.rs`.
+  assert.ok(bundled("rust-analyzer"), "rust-analyzer should be staged; run stage-tools");
+  assert.ok(bundled("git"), "git should be staged; run stage-tools");
+  assert.equal(bundled("node"), null, "node is bundled elsewhere, not here");
 });

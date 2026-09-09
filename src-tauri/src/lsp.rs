@@ -283,7 +283,8 @@ fn start(
     })?;
     let root = root_directory(options.root, workspace)?;
 
-    let mut command = Command::new(program);
+    // Bundled rust-analyzer when the user has none of their own; see `tools.rs`.
+    let mut command = Command::new(crate::tools::resolve(program));
     command
         .args(&argv[1..])
         .current_dir(root.to_path())

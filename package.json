@@ -2,6 +2,7 @@
   "name": "agentide",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,10 +13,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:release": "npm run build && npm run build:sidecar && npm run stage",
-    "stage": "node scripts/stage-sidecar.mjs",
+    "stage": "node scripts/stage-sidecar.mjs && node scripts/stage-tools.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:quick": "node scripts/smoke.mjs --no-turn",
-    "agent": "node --experimental-strip-types sidecar/src/cli.ts"
+    "agent": "node --experimental-strip-types sidecar/src/cli.ts",
+    "stage:tools": "node scripts/stage-tools.mjs"
   },
   "dependencies": {
     "@fontsource/archivo-narrow": "^5.3.0",

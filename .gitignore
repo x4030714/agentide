@@ -36,3 +36,6 @@ src-tauri/binaries/
 
 # Scratch space for review passes, not part of the project.
 .review-tmp/
+
+# Staged at build time by scripts/stage-tools.mjs — 142 MB of rust-analyzer and MinGit.
+src-tauri/tools/

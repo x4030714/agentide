@@ -2,6 +2,7 @@
   "name": "agentide-sidecar",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "description": "Agent host: runs @anthropic-ai/claude-agent-sdk and speaks JSON lines to the Rust core.",
   "main": "dist/main.mjs",
