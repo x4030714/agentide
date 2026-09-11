@@ -180,6 +180,56 @@ pub async fn list_files(
 }
 
 /// Read a text file for the editor. Rejects directories, oversized and non-UTF-8 files.
+/// Standard base64, written here rather than pulled in.
+///
+/// One function, used in one place, against a crate and the fetch and rebuild that come with
+/// it. The alphabet is RFC 4648's and the padding is the standard `=`, which is what the
+/// Messages API wants.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        // Three bytes become four six-bit groups; a short chunk pads the missing ones.
+        let bits = (u32::from(chunk[0]) << 16)
+            | (chunk.get(1).map_or(0, |b| u32::from(*b)) << 8)
+            | chunk.get(2).map_or(0, |b| u32::from(*b));
+        for group in 0..4 {
+            if group <= chunk.len() {
+                out.push(ALPHABET[((bits >> (18 - group * 6)) & 0x3f) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// A file as base64, for attaching an image to a prompt.
+///
+/// The only case where the bytes must cross rather than the path: everything else the agent
+/// reads with its own tools, but no tool hands a model something it can look at. Capped by
+/// the caller, because an inlined image stays in the prompt for every later turn of the
+/// conversation -- so the cost is paid repeatedly, not once.
+#[tauri::command]
+pub async fn read_file_base64(path: WirePath, max_bytes: u64) -> Result<String, IpcError> {
+    let target = path.to_path();
+    let meta = fs::metadata(&target)
+        .map_err(|err| IpcError::from_io(&err, format!("cannot stat {path}")))?;
+    if meta.len() > max_bytes {
+        return Err(IpcError::new(
+            ErrorCode::TooLarge,
+            format!(
+                "{path} is {}MB; the limit for an attached image is {}MB",
+                meta.len() / 1024 / 1024,
+                max_bytes / 1024 / 1024
+            ),
+        ));
+    }
+    let bytes =
+        fs::read(&target).map_err(|err| IpcError::from_io(&err, format!("cannot read {path}")))?;
+    Ok(base64(&bytes))
+}
+
 #[tauri::command]
 pub async fn read_file(path: WirePath) -> Result<FileContents, IpcError> {
     let target = path.to_path();
@@ -412,6 +462,24 @@ fn collect(event: &Event, filter: &IgnoreFilter, pending: &mut HashMap<WirePath,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn base64_matches_the_standard_alphabet_and_padding() {
+        // The three padding cases, which are the only part of this worth getting wrong.
+        assert_eq!(super::base64(b""), "");
+        assert_eq!(super::base64(b"f"), "Zg==");
+        assert_eq!(super::base64(b"fo"), "Zm8=");
+        assert_eq!(super::base64(b"foo"), "Zm9v");
+        assert_eq!(super::base64(b"foob"), "Zm9vYg==");
+        assert_eq!(super::base64(b"fooba"), "Zm9vYmE=");
+        assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn base64_encodes_bytes_that_are_not_text() {
+        // A PNG starts with a byte no UTF-8 decoder accepts; this path never sees a string.
+        assert_eq!(super::base64(&[0x89, 0x50, 0x4e, 0x47]), "iVBORw==");
+    }
+
     use super::*;
 
     /// A scratch directory that removes itself when the test ends.

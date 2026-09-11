@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { editedFile,
+import { editedChange, editedFile, sessionCost,
   formatMeasure,
   initialState,
   MCP_CLOSED,
@@ -483,6 +483,27 @@ describe("a turn closes exactly once", () => {
   });
 });
 
+describe("a note from our own hooks", () => {
+  const note = (text: unknown) => ({
+    t: "event" as const,
+    sessionId: "s1",
+    msg: { type: "system", subtype: "agentide_note", text },
+  });
+
+  it("draws delegation, which nothing else in the stream reports", () => {
+    // Four subagents can work for a minute; without this the pane says nothing and it
+    // reads as a hang.
+    const s = run({ t: "prompt_submitted", text: "go" }, note("architect started"));
+    expect(kinds(s)).toEqual(["prompt", "notice"]);
+    expect(s.rows[s.rows.length - 1]).toMatchObject({ kind: "notice", tone: "info", text: "architect started" });
+  });
+
+  it("takes no address when there is nothing to say", () => {
+    const s = run({ t: "prompt_submitted", text: "go" }, note(""), note(42));
+    expect(kinds(s)).toEqual(["prompt"]);
+  });
+});
+
 describe("thinking is a live measurement, not a row", () => {
   const thinking = (estimated_tokens: number) => ({
     t: "event" as const,
@@ -648,6 +669,56 @@ describe("opening the file the agent is editing", () => {
 
   it("ignores a message that is not the assistant's", () => {
     expect(editedFile({ type: "user", message: { content: [] } })).toBeNull();
+  });
+
+  const ROOT = "C:/work/thing";
+
+  it("resolves the relative path the model usually writes", () => {
+    // `Write sample.txt` is at least as common as the full path, and everything downstream
+    // matches by string: the tab, the file the editor loaded, and the watcher's events were
+    // three spellings of one file, so nothing about it ever matched again.
+    expect(editedChange(assistant("Write", { file_path: "sample.txt" }), undefined, ROOT)?.path).toBe(
+      "C:/work/thing/sample.txt",
+    );
+    expect(
+      editedChange(assistant("Edit", { file_path: "src\\main.rs" }), undefined, ROOT)?.path,
+    ).toBe("C:/work/thing/src/main.rs");
+  });
+
+  it("leaves an absolute path alone", () => {
+    expect(
+      editedChange(assistant("Write", { file_path: "D:/other/a.rs" }), undefined, ROOT)?.path,
+    ).toBe("D:/other/a.rs");
+  });
+
+  it("keeps a relative path as-is when no workspace is open", () => {
+    // Nothing to resolve against. Better a path that opens nothing than one invented from
+    // whatever the process's current directory happens to be.
+    expect(editedChange(assistant("Write", { file_path: "sample.txt" }))?.path).toBe("sample.txt");
+  });
+
+  it("carries the change itself, so the editor can scroll to it and mark it", () => {
+    // The hunks come from the tool's *input*: `Edit` answers in prose, and by the time a
+    // result arrives the write has landed and there is nothing left to diff against.
+    const edit = editedChange(
+      assistant("Edit", {
+        file_path: "C:/work/a.rs",
+        old_string: "let x = 1;",
+        new_string: "let x = 2;",
+      }),
+    );
+    expect(edit?.path).toBe("C:/work/a.rs");
+    expect(edit?.hunks.length).toBeGreaterThan(0);
+    // The anchor is the new side, which is what `locateHunks` searches the file for.
+    expect(edit?.hunks[0]?.anchor).toContain("let x = 2;");
+  });
+
+  it("still names the file when the tool's input describes no diff we can draw", () => {
+    // A path with nothing to place is better than no edit at all: the file should still
+    // open, it just cannot be scrolled to a hunk.
+    const edit = editedChange(assistant("NotebookEdit", { notebook_path: "C:/w/n.ipynb" }));
+    expect(edit?.path).toBe("C:/w/n.ipynb");
+    expect(edit?.hunks).toEqual([]);
   });
 
   it("takes the notebook path when that is what the tool was given", () => {
@@ -839,5 +910,83 @@ describe("what a fresh install is missing", () => {
 
   it("starts empty, so nothing is claimed before the check has run", () => {
     expect(initialState().problems).toEqual([]);
+  });
+});
+
+describe("a prompt that carried attachments", () => {
+  it("says what went with it", () => {
+    // Without this the transcript shows the question and no sign of the file it was about,
+    // so scrolling back gives you a prompt that reads as a non-sequitur.
+    const s = run({
+      t: "prompt_submitted",
+      text: "what is in this file",
+      sent: [{ kind: "file", label: "antiaim.txt" }],
+    });
+    expect(s.rows[0]).toMatchObject({
+      kind: "prompt",
+      text: "what is in this file",
+      sent: [{ kind: "file", label: "antiaim.txt" }],
+    });
+  });
+
+  it("carries nothing when nothing was attached", () => {
+    // An empty array must not become an empty strip under every ordinary prompt.
+    const s = run({ t: "prompt_submitted", text: "go", sent: [] });
+    expect(s.rows[0]).not.toHaveProperty("sent");
+  });
+});
+
+describe("what the conversation has cost", () => {
+  const result = (total: number) => ({
+    t: "event" as const,
+    sessionId: "s1",
+    msg: { type: "result", subtype: "success", total_cost_usd: total },
+  });
+
+  it("takes the latest figure, because the SDK's is already cumulative", () => {
+    // Each result carries the running total for its query. Adding them up charges the first
+    // turn once for every turn after it — 0.10 + 0.25 + 0.40 would read as 0.75.
+    const s = run(result(0.1), result(0.25), result(0.4));
+    expect(sessionCost(s)).toBeCloseTo(0.4);
+  });
+
+  it("banks the old total when the query restarts its count", () => {
+    // Switching model, backend or account rebuilds the query, and the running figure starts
+    // again from zero — but the turns before it still cost what they cost.
+    const s = run(result(0.1), result(0.25), result(0.05), result(0.09));
+    expect(sessionCost(s)).toBeCloseTo(0.34);
+  });
+
+  it("is zero before any turn, and zero again on a new conversation", () => {
+    expect(sessionCost(run())).toBe(0);
+    expect(sessionCost(run(result(0.5), { t: "conversation_reset" }))).toBe(0);
+  });
+
+  it("survives a result that reports no cost at all", () => {
+    // A crash or startup-error result carries zeroed values; that must not bank a total
+    // that was never spent.
+    const s = run(result(0.3), { t: "event", sessionId: "s1", msg: { type: "result", subtype: "error" } });
+    expect(sessionCost(s)).toBeCloseTo(0.3);
+  });
+});
+
+describe("how full the window is", () => {
+  it("is unknown until a turn has been measured", () => {
+    // The sidecar cannot measure an empty query, and a made-up zero would read as "plenty
+    // of room" on a conversation that was resumed at 900k.
+    expect(run().context).toBeNull();
+  });
+
+  it("keeps the latest measurement", () => {
+    const s = run(
+      { t: "context", sessionId: "s1", tokens: 41476, max: 200000 },
+      { t: "context", sessionId: "s1", tokens: 88000, max: 200000 },
+    );
+    expect(s.context).toEqual({ tokens: 88000, max: 200000 });
+  });
+
+  it("forgets it on a new conversation", () => {
+    const s = run({ t: "context", sessionId: "s1", tokens: 88000, max: 200000 }, { t: "conversation_reset" });
+    expect(s.context).toBeNull();
   });
 });

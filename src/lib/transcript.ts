@@ -1,6 +1,7 @@
 /** Folds the agent channel into rows. Two SDK shapes mislead: `system` re-discriminates on
  * `subtype`, and a tool *result* arrives as a `user` message with `isSynthetic`. */
 
+import { toolDiff, type DiffHunk } from "./diff";
 import type {
   AgentEvent,
   Problem,
@@ -33,7 +34,13 @@ interface BaseRow {
 }
 
 export type Row =
-  | (BaseRow & { kind: "prompt"; text: string })
+  | (BaseRow & {
+      kind: "prompt";
+      text: string;
+      /** What went with it. Kept as labels, not the data: a row holds what to draw, and the
+       * base64 of an image has no business living in the transcript for the session. */
+      sent?: { kind: "image" | "file"; label: string }[];
+    })
   | (BaseRow & { kind: "text"; text: string })
   | (BaseRow & { kind: "thinking"; text: string })
   | (BaseRow & {
@@ -190,6 +197,24 @@ export interface TranscriptState {
   /** What this install is missing, from the sidecar's startup check. A blocked problem means
    * no turn can run, so the composer says so instead of letting one fail. */
   problems: Problem[];
+  /**
+   * What this conversation has cost, in USD.
+   *
+   * Not a sum of the turn rows. `total_cost_usd` is documented as *cumulative* for a
+   * streaming-input session -- every result carries the running total, so adding them up
+   * counts the first turn once per turn after it. It is only cumulative per `query()`
+   * though, and agentide rebuilds the query whenever a startup-only option changes: a new
+   * model, a different backend, a switched account. So the running figure restarts, and the
+   * one before it still has to be paid for.
+   *
+   * `banked` is the total of the queries that have ended; `reported` is the live one's
+   * latest figure. A figure lower than the last is how a rebuild is detected -- there is no
+   * event for it here, and the count only ever goes up within one query.
+   */
+  cost: { banked: number; reported: number };
+  /** How much of the window the conversation occupies, after the last turn. Null until a
+   * turn has finished; the sidecar cannot measure an empty query. */
+  context: { tokens: number; max: number } | null;
 
   /** The SDK's model catalogue, empty until a turn publishes it. Empty means "not known
    * yet", never "none available" — and must not gate sending. */
@@ -206,7 +231,7 @@ export interface TranscriptState {
 
 /** A prompt the person submitted. Not on the wire — the UI raises it locally. */
 export type TranscriptAction =
-  | { t: "prompt_submitted"; text: string }
+  | { t: "prompt_submitted"; text: string; sent?: { kind: "image" | "file"; label: string }[] }
   /** Start a new conversation in the same sidecar. What the conversation accumulated goes;
    * what describes the installation stays, because the sidecar did not restart. */
   /** A line the UI says for itself, with no event behind it. A row rather than a toast:
@@ -232,6 +257,8 @@ export function initialState(): TranscriptState {
     thinking: null,
     streaming: null,
     problems: [],
+    cost: { banked: 0, reported: 0 },
+    context: null,
     turnStartedAt: 0,
     models: [],
     providers: [],
@@ -274,7 +301,30 @@ export function shortToolName(name: string): string {
  * an unknown tool with no operand is a row you cannot act on. */
 /** The file an assistant message is about to change. Read off the message, not the rows;
  * only `mutate` tools, and never inside the vault, where a note is an ordinary `Write`. */
-export function editedFile(msg: JsonObject, vault?: string): string | null {
+export function editedFile(msg: JsonObject, vault?: string, root?: string | null): string | null {
+  return editedChange(msg, vault, root)?.path ?? null;
+}
+
+/** A file the agent just changed, and the change itself. */
+export interface AgentEdit {
+  path: string;
+  /** The hunks, still unplaced -- each carries the `anchor` that finds it in the new file.
+   * Empty when the tool's input did not describe a diff we can draw. */
+  hunks: DiffHunk[];
+}
+
+/**
+ * The edit in an assistant message, with its diff.
+ *
+ * Read from the tool's *input*, like every other diff here: `Edit` answers in prose, and the
+ * input is drawable before the write has even landed. A vault write returns null -- the
+ * agent's own memory is not a change to this workspace and must not steal the editor.
+ */
+export function editedChange(
+  msg: JsonObject,
+  vault?: string,
+  root?: string | null,
+): AgentEdit | null {
   if (msg.type !== "assistant") return null;
   for (const block of blocksOf(msg)) {
     if (block.type !== "tool_use" || !block.name) continue;
@@ -283,8 +333,17 @@ export function editedFile(msg: JsonObject, vault?: string): string | null {
     for (const key of ["file_path", "notebook_path", "path"]) {
       const value = input?.[key];
       if (typeof value !== "string" || value === "") continue;
-      const path = wirePath(value);
-      return inside(path, vault) ? null : path;
+      /**
+       * Resolved against the workspace, because the model writes `sample.txt` at least as
+       * often as it writes the full path -- and everything downstream matches paths by
+       * string. Left relative, the tab, the file the editor loaded, and the watcher's events
+       * were three spellings of one file: the tab opened, and then nothing about it ever
+       * matched again. The edit ribbon never drew once for exactly this reason.
+       */
+      const raw = wirePath(value);
+      const path = isAbsolutePath(raw) && root ? raw : root ? `${wirePath(root).replace(/\/$/, "")}/${raw}` : raw;
+      if (inside(path, vault)) return null;
+      return { path, hunks: toolDiff(block.name, input)?.hunks ?? [] };
     }
   }
   return null;
@@ -300,6 +359,16 @@ function inside(path: string, dir: string | undefined): boolean {
 
 /** A path spelled the way the rest of this app spells one. Everything matches by string, so
  * two spellings mean the file opens in the editor and then never refreshes. */
+/**
+ * Whether a path stands on its own, or needs a workspace to mean anything.
+ *
+ * `C:/x`, `//server/share` and `/x` are absolute; `sample.txt` and `src/main.rs` are not.
+ * The model writes whichever it feels like, and usually the short one.
+ */
+function isAbsolutePath(path: string): boolean {
+  return /^[A-Za-z]:\//.test(path) || path.startsWith("//") || path.startsWith("/");
+}
+
 function wirePath(raw: string): string {
   return raw
     .split("\\")
@@ -437,7 +506,13 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
           thinking: null,
           turnStartedAt: Date.now(),
         },
-        (addr, turn) => ({ kind: "prompt", addr, turn, text: action.text }),
+        (addr, turn) => ({
+          kind: "prompt",
+          addr,
+          turn,
+          text: action.text,
+          ...(action.sent && action.sent.length > 0 ? { sent: action.sent } : {}),
+        }),
       );
 
     case "local_notice":
@@ -536,6 +611,9 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
 
     case "event":
       return reduceSdk({ ...state, sessionId: action.sessionId }, action.msg);
+
+    case "context":
+      return { ...state, context: { tokens: action.tokens, max: action.max } };
 
     case "permission_request": {
       // The call it belongs to is the most recent unapproved one still running under
@@ -704,6 +782,14 @@ function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState 
         text: `recalled from memory — ${names.join(", ")}`,
       }));
     }
+    case "agentide_note": {
+      // Ours, not the SDK's -- the sidecar's hooks speak through this. Delegation is the
+      // only thing that uses it: four subagents can work for a minute and nothing else in
+      // the stream says so.
+      const text = typeof msg.text === "string" ? msg.text : "";
+      if (text === "") return state;
+      return push(state, (addr, turn) => ({ kind: "notice", addr, turn, tone: "info", text }));
+    }
     case "thinking_tokens": {
       // A live estimate while the model reasons. Never a row.
       const tokens = num(msg.estimated_tokens);
@@ -866,7 +952,14 @@ function reduceUser(state: TranscriptState, msg: JsonObject): TranscriptState {
 }
 
 function reduceResult(state: TranscriptState, msg: JsonObject): TranscriptState {
-  return push({ ...state, turnClosed: true, thinking: null, streaming: null }, (addr, turn) => ({
+  const reported = num(msg.total_cost_usd) ?? 0;
+  // A drop means this result came from a query that started counting again.
+  const cost =
+    reported < state.cost.reported
+      ? { banked: state.cost.banked + state.cost.reported, reported }
+      : { ...state.cost, reported };
+
+  return push({ ...state, cost, turnClosed: true, thinking: null, streaming: null }, (addr, turn) => ({
     kind: "turn",
     addr,
     turn,
@@ -975,6 +1068,12 @@ export function formatTokens(value: number): string {
 }
 
 /** Four digits, so the address column never changes width. */
+/** What the conversation has cost so far. See `TranscriptState.cost` for why it is not a sum
+ * of the turn rows. */
+export function sessionCost(state: TranscriptState): number {
+  return state.cost.banked + state.cost.reported;
+}
+
 export function formatAddr(addr: number): string {
   return addr.toString(10).padStart(4, "0");
 }

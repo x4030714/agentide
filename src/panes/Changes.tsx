@@ -24,7 +24,7 @@ interface ChangesProps {
 
 const DIFF_OPTIONS = {
   automaticLayout: true,
-  fontFamily: '"Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace',
+  fontFamily: '"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace',
   fontSize: 13,
   lineHeight: 20,
   fontLigatures: false,

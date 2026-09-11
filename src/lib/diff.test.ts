@@ -64,6 +64,20 @@ describe("locating a hunk", () => {
   it("has nowhere to look for a hunk that only deletes", () => {
     expect(lineOf("one\ntwo\n", "")).toBeNull();
   });
+
+  it("cannot be asked whether it found anything — that is what lineOf is for", () => {
+    // The numbering alone does not say. A hunk that was not found comes back numbered from
+    // line 1, which is indistinguishable from one legitimately found at the top of a file,
+    // and a caller that marks those lines marks the wrong ones. The editor's edit ribbon
+    // shipped exactly that: an edit whose reload had not landed yet lit line 1.
+    const diff = toolDiff("Edit", edit)!;
+    const missing = locateHunks(diff.hunks, "something else entirely\n");
+    const atTop = locateHunks(diff.hunks, "two\nTHREE\nextra\n");
+    expect(placed(missing[0].lines)).toEqual(placed(atTop[0].lines));
+    // Only this tells them apart.
+    expect(lineOf("something else entirely\n", diff.hunks[0].anchor)).toBeNull();
+    expect(lineOf("two\nTHREE\nextra\n", diff.hunks[0].anchor)).toBe(1);
+  });
 });
 
 describe("toolDiff", () => {

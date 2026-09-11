@@ -15,6 +15,8 @@ export interface Problem {
   severity: "blocked" | "degraded";
   title: string;
   fix: string;
+  /** A command that fixes it, when one exists. The window runs it in a terminal tab. */
+  command?: string;
 }
 
 /** Where the CLI keeps its credentials. `CLAUDE_CONFIG_DIR` moves the whole directory. */

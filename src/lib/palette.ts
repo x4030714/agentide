@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
  * modes. The default is the absence of the attribute, so `world.css` stays the base case. */
 export type Palette =
   | "quiet"
+  | "claude"
   | "ferrous"
   | "halide"
   | "vellum"
@@ -25,6 +26,11 @@ export const PALETTES: PaletteOption[] = [
   { id: "ferrous", label: "Ferrous", note: "Warm graphite and copper. The workshop end." },
   { id: "halide", label: "Halide", note: "Cold cyan on near-black. A darkroom." },
   { id: "vellum", label: "Vellum", note: "Warm paper and ink. The quietest of them." },
+  {
+    id: "claude",
+    label: "Claude Code",
+    note: "Claude's cream and coral, at this app's contrast floor.",
+  },
   {
     id: "vscode",
     label: "VS Code",

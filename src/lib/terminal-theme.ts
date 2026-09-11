@@ -81,10 +81,10 @@ export function terminalTheme(appearance: "light" | "dark"): ITheme {
   return appearance === "dark" ? theme(DARK, true) : theme(LIGHT, false);
 }
 
-/** Shared with the editor so a column of output and a column of code line up. Iosevka for
+/** Shared with the editor so a column of output and a column of code line up. Geist Mono for
  * the same reason Monaco has it: narrow, so more fits. */
 export const TERMINAL_FONT = {
-  fontFamily: '"Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace',
+  fontFamily: '"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace',
   fontSize: 13,
   lineHeight: 1.35,
 } as const;

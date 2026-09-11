@@ -1,4 +1,5 @@
 import MonacoEditor from "@monaco-editor/react";
+import { lineOf, locateHunks, type DiffHunk } from "../lib/diff";
 import { useFocusTarget } from "../lib/keys";
 import type { editor as MonacoNs } from "monaco-editor";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,6 +19,14 @@ import type { FileContents, FsEvent, WirePath } from "../lib/protocol";
  * A cursor placement asked for from outside the editor. The nonce separates two requests for
  * the same spot, which an effect would otherwise see as one.
  */
+/** An agent edit to show: the file, its hunks, and one nonce per edit so the same change
+ * is not replayed every time this pane re-renders. */
+export interface AgentEditTarget {
+  path: WirePath;
+  hunks: DiffHunk[];
+  nonce: number;
+}
+
 export interface RevealTarget {
   path: WirePath;
   line?: number;
@@ -35,6 +44,9 @@ interface EditorPaneProps {
   /** Latest batch from the workspace watcher; a new array per batch. */
   changes: FsEvent[];
   reveal: RevealTarget | null;
+  /** Recent agent changes, newest last. A queue because one instruction is several edits
+   * and each is only fully drawable across two moments. */
+  agentEdits: AgentEditTarget[];
   lsp: Lsp;
   onSelect: (path: WirePath) => void;
   onClose: (path: WirePath) => void;
@@ -42,7 +54,9 @@ interface EditorPaneProps {
 
 const EDITOR_OPTIONS: MonacoNs.IStandaloneEditorConstructionOptions = {
   automaticLayout: true,
-  fontFamily: '"Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace',
+  // Matches `--mono` in world.css. Monaco takes a string, so this is the one place the
+  // stack is written twice.
+  fontFamily: '"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace',
   fontSize: 13,
   // Matches `--row` in world.css, so editor lines and tree rows sit on one grid.
   lineHeight: 20,
@@ -71,7 +85,7 @@ const EDITOR_OPTIONS: MonacoNs.IStandaloneEditorConstructionOptions = {
  * The text editor: loading, dirty state and saving. Monaco keeps one model per path, and the
  * dirty set below mirrors that so the indicator survives a tab switch too.
  */
-export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose }: EditorPaneProps) {
+export function EditorPane({ tabs, path, changes, reveal, agentEdits, lsp, onSelect, onClose }: EditorPaneProps) {
   const [file, setFile] = useState<FileContents | null>(null);
   const [dirty, setDirty] = useState(false);
   const [staleOnDisk, setStaleOnDisk] = useState(false);
@@ -79,7 +93,24 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
   const appearance = useResolvedAppearance();
 
   const editorRef = useRef<MonacoNs.IStandaloneCodeEditor | null>(null);
+  /** The edits whose removals are already recorded, and whose additions are. Two sets, not
+   * two numbers: a turn's edits become drawable at different moments and out of order. */
+  const appliedRemovals = useRef<Set<number>>(new Set());
+  const appliedAdditions = useRef<Set<number>>(new Set());
+  /** The decorations on screen. Redrawn whole each time, from `marked`. */
+  const editRibbon = useRef<MonacoNs.IEditorDecorationsCollection | null>(null);
+  /** Every line the agent has written in the open file, across all of this turn's edits. */
+  const marked = useRef<Set<number>>(new Set());
+  /** Which file `marked` is about, so switching files starts a fresh set. */
+  const markedPath = useRef<string | null>(null);
+  /** The view zones holding removed text, so they can be taken out again. */
+  const delZones = useRef<string[]>([]);
+  /** Where lines were removed, what they said, and what they were numbered before they
+   * went. Kept because none of it is in the file any more: it can never be found again. */
+  const removals = useRef<{ lines: string[]; first: number; after: number }[]>([]);
   const fileRef = useRef<FileContents | null>(null);
+  /** The tab currently open, for a load to check it is still wanted when it lands. */
+  const pathRef = useRef<WirePath | null>(null);
   const dirtyPaths = useRef(new Set<WirePath>());
   /**
    * Scroll, cursor and folds per file: Monaco keeps the text but not where you were looking.
@@ -95,8 +126,28 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
     fileRef.current = file;
   }, [file]);
 
+  pathRef.current = path;
+
+  /** Read one file into the pane. Shared, so the first attempt and a later retry cannot
+   * drift apart in what they set. */
+  const loadFile = useCallback(async (target: WirePath): Promise<boolean> => {
+    try {
+      const contents = await readFile(target);
+      // The tab may have moved on while this was in flight.
+      if (pathRef.current !== target) return false;
+      setFile(contents);
+      setDirty(dirtyPaths.current.has(target));
+      setStatus(null);
+      return true;
+    } catch (err) {
+      if (pathRef.current !== target) return false;
+      setFile(null);
+      setStatus(errorMessage(err));
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
-    let cancelled = false;
     if (!path) {
       setFile(null);
       setStatus(null);
@@ -104,22 +155,8 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
       return;
     }
     setStaleOnDisk(false);
-    readFile(path)
-      .then((contents) => {
-        if (cancelled) return;
-        setFile(contents);
-        setDirty(dirtyPaths.current.has(path));
-        setStatus(null);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setFile(null);
-        setStatus(errorMessage(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [path]);
+    void loadFile(path);
+  }, [path, loadFile]);
 
   /**
    * A closed tab gives its model back. `keepCurrentModel` disposes nothing, so forty open files
@@ -213,10 +250,24 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
 
   useEffect(() => {
     const current = fileRef.current;
-    if (!current) return;
+    /**
+     * Nothing loaded, but a tab is open on a path: the file was not there when the tab
+     * opened, and the watcher has just seen it appear.
+     *
+     * This is the ordinary case for an agent edit, not an exotic one. The tab opens from the
+     * `Write` *tool call*, which is drawn before the write reaches disk -- so the first read
+     * fails with `os error 2`, `file` goes null, and the guard below used to return here
+     * forever. The pane held "cannot stat" for the rest of the session while the file sat on
+     * disk beside it.
+     */
+    if (!current) {
+      if (!path || !changes.some((change) => change.path === path)) return;
+      void loadFile(path);
+      return;
+    }
     if (!changes.some((change) => change.path === current.path)) return;
     void reloadFromDisk();
-  }, [changes, reloadFromDisk]);
+  }, [changes, path, loadFile, reloadFromDisk]);
 
   function onMount(instance: MonacoNs.IStandaloneCodeEditor) {
     editorRef.current = instance;
@@ -290,6 +341,226 @@ export function EditorPane({ tabs, path, changes, reveal, lsp, onSelect, onClose
     editor.revealPositionInCenter(position);
     editor.focus();
   }, [reveal, file]);
+
+  /**
+   * Show the change the agent just made.
+   *
+   * Scrolls to it and marks the lines it wrote, so an edit is something you watch land
+   * rather than something you go looking for afterwards.
+   *
+   * Placed by anchor, never by line number: the tool's input says what it wrote, not where
+   * it ended up, and by the time this runs the file has been rewritten around it.
+   *
+   * Two things this got wrong first time round, both visible with one prompt.
+   *
+   * `locateHunks` renumbers a hunk it finds and leaves one it cannot *at its original
+   * numbering, which starts at line 1*. Taking its answer without asking whether the anchor
+   * was actually found meant an edit whose reload had not landed yet marked line 1 and
+   * consumed the nonce, so the retry that was supposed to fix it never ran. Hence `lineOf`
+   * here, where null is distinguishable, and an edit that locates nothing returns without
+   * recording itself.
+   *
+   * And the marks accumulate. One instruction is routinely five `Edit` calls -- five
+   * separate arrivals here -- so clearing the collection each time meant five edits could
+   * only ever leave the last one lit.
+   *
+   * Never steals focus, unlike the reveal above: that one answers a jump you asked for, and
+   * this one would interrupt whatever you were typing.
+   */
+  /**
+   * Draw the lines an edit removed, in the place they were removed from.
+   *
+   * A removed line is not in the file any more, so there is no line to colour -- which is
+   * why deletions were invisible while additions were not. A Monaco view zone is a block
+   * inserted *between* two lines, so the old text can sit directly above whatever replaced
+   * it and be read in place, the way a diff reads.
+   *
+   * Anchored to the first line the hunk added, so the pair reads old-then-new in file order.
+   * A hunk that added nothing cannot be placed at all: its anchor is the empty string, which
+   * matches nowhere, so a pure deletion is still not drawn here. That one needs the
+   * checkpoint's diff rather than the tool's own input.
+   */
+  const drawRemovals = useCallback((editor: MonacoNs.IStandaloneCodeEditor) => {
+    editor.changeViewZones((accessor) => {
+      for (const id of delZones.current) accessor.removeZone(id);
+      delZones.current = [];
+
+      // Where Monaco's own line numbers end, so the removed block's can end there too.
+      const layout = editor.getLayoutInfo();
+      const numbersRight = layout.contentLeft - (layout.lineNumbersLeft + layout.lineNumbersWidth);
+
+      for (const seam of removals.current) {
+        const domNode = document.createElement("div");
+        domNode.className = "agent-del-zone";
+        for (const text of seam.lines) {
+          const row = document.createElement("div");
+          row.className = "agent-del-line";
+          // `textContent`, never `innerHTML`: this is file content the model wrote, and it
+          // is being put into the DOM.
+          row.textContent = text;
+          domNode.appendChild(row);
+        }
+
+        /**
+         * The numbers these lines had before they went.
+         *
+         * A view zone is not a line, so Monaco has no number for it and the margin beside a
+         * removed block was simply blank -- which reads as the file skipping a number rather
+         * than as something having been taken out. These are the old file's numbering, which
+         * is what a diff shows on a removed line, and they are the only place it still
+         * exists once the write has landed.
+         */
+        const marginDomNode = document.createElement("div");
+        marginDomNode.className = "agent-del-margin";
+        marginDomNode.style.paddingRight = `${numbersRight}px`;
+        for (let i = 0; i < seam.lines.length; i += 1) {
+          const number = document.createElement("div");
+          number.className = "agent-del-number";
+          number.textContent = String(seam.first + i);
+          marginDomNode.appendChild(number);
+        }
+        delZones.current.push(
+          accessor.addZone({
+            afterLineNumber: seam.after,
+            heightInLines: seam.lines.length,
+            domNode,
+            marginDomNode,
+          }),
+        );
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !file) return;
+    const model = editor.getModel();
+    if (!model) return;
+
+    if (markedPath.current !== file.path) {
+      markedPath.current = file.path;
+      marked.current = new Set();
+      removals.current = [];
+      appliedRemovals.current = new Set();
+      appliedAdditions.current = new Set();
+    }
+
+    let drewRemoval = false;
+    let firstAdded: number | null = null;
+
+    for (const edit of agentEdits) {
+      if (edit.path !== file.path) continue;
+      // Re-read per edit: recording a removal does not change the buffer, but the reload
+      // between two edits of the same turn does, and a stale copy would look for the new
+      // text in the old file.
+      const text = model.getValue();
+
+      /**
+       * The removed lines, placed against the buffer as it *still is*.
+       *
+       * A deletion leaves nothing behind to search for -- for a pure deletion the anchor is
+       * the empty string, which matches nowhere. But a tool call is drawn before its write
+       * reaches disk, so at this moment the text being removed is still in front of us. That
+       * is the only moment it can be located, and it is why this runs before the reload
+       * while the additions below run after it.
+       *
+       * A deletion above an earlier seam moves that seam up by the lines it took, so records
+       * are shifted rather than re-searched: their text is gone from the file for good.
+       */
+      if (!appliedRemovals.current.has(edit.nonce)) {
+        let placed = false;
+        for (const hunk of edit.hunks) {
+          const removed = hunk.lines.filter((line) => line.kind === "remove").map((l) => l.text);
+          if (removed.length === 0) continue;
+          const at = lineOf(text, removed.join("\n"));
+          if (at === null) continue;
+          for (const seam of removals.current) {
+            if (seam.after >= at) seam.after -= removed.length;
+          }
+          removals.current.push({ lines: removed, first: at, after: at - 1 });
+          placed = true;
+        }
+        // Recorded either way when there is nothing to remove, so a pure addition is not
+        // reconsidered on every later render for the rest of the session.
+        if (placed || !edit.hunks.some((hunk) => hunk.lines.some((l) => l.kind === "remove"))) {
+          appliedRemovals.current.add(edit.nonce);
+          drewRemoval ||= placed;
+        }
+      }
+
+      // The added lines, placed once the write has landed in the buffer. Until the watcher's
+      // reload arrives that is none of them, and the nonce stays unrecorded so a later pass
+      // tries again -- which is the whole reason this is a queue and not one slot.
+      if (!appliedAdditions.current.has(edit.nonce)) {
+        const located = edit.hunks.filter((hunk) => lineOf(text, hunk.anchor) !== null);
+        const added = locateHunks(located, text)
+          .flatMap((hunk) => hunk.lines.filter((line) => line.kind === "add"))
+          .map((line) => line.number);
+        if (added.length > 0) {
+          appliedAdditions.current.add(edit.nonce);
+          for (const line of added) marked.current.add(line);
+          if (firstAdded === null) firstAdded = added[0] as number;
+        } else if (!edit.hunks.some((hunk) => hunk.lines.some((l) => l.kind === "add"))) {
+          appliedAdditions.current.add(edit.nonce);
+        }
+      }
+    }
+
+    if (drewRemoval) drawRemovals(editor);
+    if (marked.current.size > 0) {
+      editRibbon.current?.clear();
+      editRibbon.current = editor.createDecorationsCollection(
+        [...marked.current].map((line) => ({
+          range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
+          options: {
+            isWholeLine: true,
+            className: "agent-edit-line",
+            linesDecorationsClassName: "agent-edit-gutter",
+          },
+        })),
+      );
+    }
+
+    // Follow the newest change, and only when one actually landed this pass -- otherwise
+    // every unrelated re-render would drag the view back to the last edit.
+    const target = firstAdded ?? (drewRemoval ? removals.current[removals.current.length - 1]?.after : null);
+    if (target) editor.revealLineInCenterIfOutsideViewport(target);
+  }, [agentEdits, file, drawRemovals]);
+
+  /**
+   * Redraw the removal zones whenever this pane re-renders with some recorded.
+   *
+   * They used to be built only when a new edit arrived, which made them invisible to every
+   * change in how they are drawn: the module hot-reloads, the zone on screen stays the one
+   * the old code made, and the next edit is the earliest anything new can appear. That cost
+   * an evening of fixing things that were already fixed.
+   *
+   * It is not only a development concern -- a zone also has to survive the editor being
+   * re-laid out -- but that is what it was hiding.
+   */
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || removals.current.length === 0) return;
+    drawRemovals(editor);
+  }, [file, drawRemovals]);
+
+  // The marks describe one file's recent edits. Opening something else must not leave a
+  // ribbon behind on a line nothing touched.
+  useEffect(() => {
+    return () => {
+      editRibbon.current?.clear();
+      marked.current = new Set();
+      markedPath.current = null;
+      removals.current = [];
+      const editor = editorRef.current;
+      if (delZones.current.length > 0 && editor) {
+        editor.changeViewZones((accessor) => {
+          for (const id of delZones.current) accessor.removeZone(id);
+          delZones.current = [];
+        });
+      }
+    };
+  }, [file?.path]);
 
   /**
    * Which file is on screen and which buffers are unsaved -- the `ide_*` tools need both. The

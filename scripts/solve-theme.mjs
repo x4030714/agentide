@@ -138,6 +138,25 @@ const THEMES = [
     states: { uncommitted: 45, error: 25, warn: 60, hint: 250 },
   },
   {
+    name: "claude",
+    label: "Claude Code",
+    note: "Claude's cream and coral. The colours of the tool this one is built on.",
+    /** Warm, because everything about Claude's own surfaces is: the cream is a paper
+     * white with yellow in it, not a grey one. 60 is that warmth as a hue. */
+    neutralHue: 60,
+    /** Claude's own: `#faf9f5` paper and `#191917` ink in the light, and the warm
+     * near-black a Claude Code session sits on in the dark. */
+    light: { ground: "#f0eee6", surface: "#faf9f5", ink: "#191917" },
+    dark: { ground: "#161513", surface: "#1d1c19", ink: "#f0eee6" },
+    /**
+     * Coral is the accent, because in Claude's surfaces it always is -- `sym` is the one
+     * the app spends on "you are pointing at this", so the accent has to be that role.
+     * 40 is `#d97757` as a hue; the solver takes it to whatever lightness clears the floor.
+     */
+    roles: { addr: 75, sym: 40, xref: 155, imm: 5 },
+    states: { uncommitted: 330, error: 25, warn: 70, hint: 40 },
+  },
+  {
     name: "ferrous",
     label: "Ferrous",
     note: "Warm graphite and copper. The workshop end of the register.",

@@ -5,9 +5,16 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
+import { accountUsed, findAccount, loadAccounts, DEFAULT_KEY, type Account } from "./accounts.ts";
+import { account, signOut } from "./auth.ts";
 import { HostLink } from "./host.ts";
 import { ModelCatalogue } from "./models.ts";
-import { LineDecoder, parseHostMessage, type HostMessage } from "./protocol.ts";
+import {
+  LineDecoder,
+  parseHostMessage,
+  type AccountInfo,
+  type HostMessage,
+} from "./protocol.ts";
 import { checkup } from "./doctor.ts";
 import { loadProviders, publicProviders } from "./provider-config.ts";
 import { Session } from "./session.ts";
@@ -43,13 +50,24 @@ function sessionFor(sessionId: string): Session {
   return session;
 }
 
+/** One account as the wire carries it. No credential crosses -- an account is a directory,
+ * and what is inside it belongs to Claude Code. */
+function publicAccount(entry: Account): AccountInfo {
+  return {
+    key: entry.key,
+    name: entry.name,
+    configDir: entry.configDir,
+    used: accountUsed(entry),
+  };
+}
+
 function dispatch(message: HostMessage): void {
   switch (message.t) {
     case "prompt":
       // Not awaited: turns are long, and the loop must stay free to deliver the replies
       // this turn is about to ask for. `Session` serializes prompts per session itself.
       void sessionFor(message.sessionId)
-        .prompt(message.cwd, message.text, message.options)
+        .prompt(message.cwd, message.text, message.options, message.attachments)
         .catch((error: unknown) => log(`turn on ${message.sessionId} failed: ${describe(error)}`));
       return;
 
@@ -69,6 +87,42 @@ function dispatch(message: HostMessage): void {
       }
       return;
 
+    case "warm": {
+      // Fire and forget: nothing waits for it, and a failure here is not a failed turn --
+      // the next prompt prepares again and reports properly.
+      void sessionFor(message.sessionId).warm(message.cwd as string, message.options);
+      return;
+    }
+    case "auth": {
+      // Re-read every time, like `providers.json`: the file is meant to be edited, and a
+      // picker told once would go stale the moment an account was added.
+      const accounts = loadAccounts();
+      const key = message.account ?? DEFAULT_KEY;
+      const profile = findAccount(accounts, key);
+      if (!profile) {
+        // Named rather than silently falling back: running under the wrong account is the
+        // one outcome here worth failing for.
+        link.send({
+          t: "account",
+          account: { loggedIn: false, error: `no account named "${key}" in accounts.json` },
+          key,
+          accounts: accounts.map(publicAccount),
+          });
+        return;
+      }
+      // Both actions answer with the same message: after a sign-out the surface needs the
+      // new state, not just word that it happened, or it would draw the old account until
+      // something else refreshed it.
+      const note = message.action === "logout" ? signOut(profile).message : undefined;
+      link.send({
+        t: "account",
+        account: account(profile),
+        key,
+        accounts: accounts.map(publicAccount),
+        ...(note ? { note } : {}),
+      });
+      return;
+    }
     case "interrupt": {
       const session = sessions.get(message.sessionId);
       if (!session) {

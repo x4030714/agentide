@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { useFocusTarget } from "../lib/keys";
 
 import { useResolvedAppearance } from "../lib/appearance";
@@ -8,14 +17,21 @@ import {
   agentPermissionReply,
   agentPrompt,
   agentStart,
+  agentWarm,
   agentStop,
   agentToolReply,
   conversationRead,
   memoryVault,
   readFile,
+  readFileBase64,
   signedIn,
 } from "../lib/bridge";
 import { startBackground } from "../lib/agent-shell";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+
+import { attachmentLabel, fromPath, toAttachment } from "../lib/attachments";
+import { CHUNK, chunk, grow, keepPlace, nearTop } from "../lib/row-chunks";
+import { ownedCommand } from "../lib/terminal-commands";
 import { locateHunks, summarize, toolDiff } from "../lib/diff";
 import type { DiffHunk, LineKind } from "../lib/diff";
 import { languageForPath } from "../lib/lsp-monaco";
@@ -23,10 +39,13 @@ import { monaco, themeFor } from "../lib/monaco-setup";
 import { errorMessage } from "../lib/protocol";
 import { isEditMode, modeOptions } from "../lib/editmode";
 import type { EditMode } from "../lib/editmode";
-import { isPromptMode, readPromptAppend, readTunedPrompt } from "../lib/promptmode";
+import { isAdvanced, isPromptMode, readPromptAppend, readTunedPrompt } from "../lib/promptmode";
 import type { PromptMode } from "../lib/promptmode";
 import type {
+  Account,
+  AccountInfo,
   AgentEvent,
+  Attachment,
   Checkpoint,
   EffortLevel,
   JsonObject,
@@ -35,11 +54,11 @@ import type {
   WirePath,
 } from "../lib/protocol";
 import {
-  editedFile,
-  formatAddr,
+  editedChange,
   formatTokens,
   initialState,
   liveActivity,
+  sessionCost,
   reduce,
 } from "../lib/transcript";
 import { Markdown } from "./Markdown";
@@ -47,7 +66,7 @@ import { decodeModel } from "../lib/model-menu";
 import { mergeProviders, settleProviders, usePendingProviders } from "../lib/pending-providers";
 import { ensureProvider } from "../lib/provider";
 import { RunControls } from "./RunControls";
-import type { Activity, Row } from "../lib/transcript";
+import type { Activity, AgentEdit, Row } from "../lib/transcript";
 
 interface TranscriptProps {
   root: WirePath | null;
@@ -59,9 +78,10 @@ interface TranscriptProps {
   /** Answer one `ide_*` call. The parent holds the editor and language servers; this
    * pane only knows when a call arrives. */
   onToolCall: (name: string, args: JsonObject) => Promise<ToolResult>;
-  /** The agent is about to change this file, so show it. Watching an edit land is the
-   * reason to have an editor here at all; the watcher already handles reloading. */
-  onAgentEdit: (path: WirePath) => void;
+  /** The agent is about to change this file, so show it -- and the change itself, so the
+   * editor can scroll to it and mark it. Watching an edit land is the reason to have an
+   * editor here at all; the watcher already handles reloading. */
+  onAgentEdit: (edit: AgentEdit) => void;
   /** The names `onToolCall` will answer. Anything else is answered by the Rust core. */
   hostTools: readonly string[];
   /** A past conversation to continue, from the Conversations panel. Sent every prompt:
@@ -70,6 +90,15 @@ interface TranscriptProps {
   /** A new conversation was started. The parent clears what it was resuming — this pane
    * owns the transcript, the parent owns which conversation it continues. */
   onNewConversation: () => void;
+  /** Who is signed in, whenever the sidecar says. Passed up because the account belongs to
+   * the window rather than to this conversation; this pane is only where the channel lands. */
+  onAccount: (account: Account, key: string, accounts: AccountInfo[], note?: string) => void;
+  /** Which Claude account turns run under, or undefined for the machine's own login. */
+  account: string | undefined;
+  /** What this conversation has cost and how much of the window it fills, whenever either
+   * changes. The status bar shows them: they are about the session, and this pane is only
+   * where the results land. */
+  onUsage: (usage: { cost: number; context: { tokens: number; max: number } | null }) => void;
 }
 
 /** Survives a restart: this is the control, so it is also the setting. */
@@ -120,6 +149,9 @@ export function TranscriptPane({
   root,
   onTurnStart,
   onTurnEnd,
+  onAccount,
+  onUsage,
+  account,
   onToolCall,
   hostTools,
   onAgentEdit,
@@ -139,6 +171,9 @@ export function TranscriptPane({
   const [sessionId, setSessionId] = useState(newSessionId);
 
   const [draft, setDraft] = useState("");
+  /** Attached to the next prompt and cleared with it: an attachment belongs to the message
+   * it was collected for, not to the session. */
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [model, setModelState] = useState<string | null>(() => stored(MODEL_KEY));
   const [effort, setEffortState] = useState<EffortLevel | null>(() => stored<EffortLevel>(EFFORT_KEY));
   const [mode, setModeState] = useState<EditMode>(() => {
@@ -157,6 +192,19 @@ export function TranscriptPane({
   const [startError, setStartError] = useState<string | null>(null);
   /** Cleared once a sign-in has actually worked, so the banner goes without a turn. */
   const [solved, setSolved] = useState<string[]>([]);
+  /**
+   * How many rows from the tail are drawn.
+   *
+   * A long conversation used to render every row on every keystroke -- the composer's draft
+   * lives in this component, so typing re-created and diffed the whole list. Rows are
+   * memoised, so nothing re-rendered, but element creation alone is linear in the length of
+   * the conversation and that is what made typing lag.
+   */
+  const [shown, setShown] = useState(CHUNK);
+  /** Scroll height before a growth, so the rows under the reader can be held in place. */
+  const growingFrom = useRef<number | null>(null);
+  /** Which `session|workspace` has been warmed, so a turn's status changes do not re-warm. */
+  const warmed = useRef<string | null>(null);
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -166,9 +214,13 @@ export function TranscriptPane({
   const toolCallRef = useRef(onToolCall);
   const hostToolsRef = useRef(hostTools);
   const onAgentEditRef = useRef(onAgentEdit);
+  const onAccountRef = useRef(onAccount);
   /** The memory vault, once Rust resolves it. A ref, not state: the handler is installed
    * on mount and must not be rebuilt when this lands. */
   const vaultRef = useRef<string | null>(null);
+  /** The open workspace, for resolving the relative paths the model writes. */
+  const rootRef = useRef<WirePath | null>(null);
+  rootRef.current = root;
 
   useEffect(() => {
     let cancelled = false;
@@ -206,7 +258,8 @@ export function TranscriptPane({
     toolCallRef.current = onToolCall;
     hostToolsRef.current = hostTools;
     onAgentEditRef.current = onAgentEdit;
-  }, [onToolCall, hostTools, onAgentEdit]);
+    onAccountRef.current = onAccount;
+  }, [onToolCall, hostTools, onAgentEdit, onAccount]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,10 +267,15 @@ export function TranscriptPane({
       if (cancelled) return;
       dispatch(event);
       if (event.t === "event") {
-        const edited = editedFile(event.msg, vaultRef.current ?? undefined);
-        if (edited) onAgentEditRef.current(edited as WirePath);
+        const edited = editedChange(event.msg, vaultRef.current ?? undefined, rootRef.current);
+        if (edited) onAgentEditRef.current(edited);
       }
       if (event.t === "done" || event.t === "exited") onTurnEnd();
+      // Up to App, which owns the Settings overlay: the account belongs to the window, not
+      // to this conversation, and this pane is only where the sidecar's channel lands.
+      if (event.t === "account") {
+        onAccountRef.current(event.account, event.key, event.accounts, event.note);
+      }
       if (event.t === "tool_call") {
         // Every call gets an answer, failures included: an unanswered `tool_call` leaves
         // the turn on the sidecar's timeout with no sign of why.
@@ -240,6 +298,27 @@ export function TranscriptPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Build the query before anything is typed. The command and model lists live on a live
+  // `Query`, so without this `/` offers nothing and the picker is empty until a turn has
+  // been spent -- which is exactly when nobody needs the menu any more. Re-run on the
+  // workspace, because that is what the query is built against.
+  useEffect(() => {
+    // Not before the sidecar is listening. `agentStart` resolves asynchronously, and an
+    // earlier version fired this on mount: the message reached a router with no agent
+    // behind it, errored, and the catch swallowed it -- so `/` stayed empty and nothing
+    // said why. `ready` is the first moment there is something to warm.
+    if (!root || state.status === "idle" || state.status === "starting") return;
+    const key = `${sessionId}|${root}`;
+    if (warmed.current === key) return;
+    warmed.current = key;
+    void agentWarm(sessionId).catch((err) => {
+      // Reported rather than swallowed. A menu that never fills is the failure this whole
+      // path exists to prevent, and a silent catch is how it hid the first time.
+      warmed.current = null;
+      dispatch({ t: "local_notice", tone: "warn", text: `could not prepare: ${errorMessage(err)}` });
+    });
+  }, [root, sessionId, state.status]);
+
   // Only to label the control. The prompt itself is re-read at submit, so editing the
   // file takes effect on the next turn without a restart.
   useEffect(() => {
@@ -252,29 +331,117 @@ export function TranscriptPane({
     };
   }, [root]);
 
-  // Follow the tail, unless the reader has scrolled away from it.
+  /**
+   * Follow the tail, unless the reader has scrolled away from it.
+   *
+   * Watching the DOM rather than the state, because `rows` is only one of the things that
+   * make this taller. The answer streams in as text with no new row for the whole time it is
+   * being written, the activity line's clock ticks every second, and markdown and code
+   * blocks settle after they mount -- so keying on `rows` followed a finished message and
+   * sat still through one in progress, which is exactly when you want it to move.
+   *
+   * A mutation observer needs no list of what to watch and cannot fall behind a new kind of
+   * content. `pinned` is what makes it polite: it is false the moment the reader scrolls up,
+   * so this never fights them, and loading older rows above happens with it false too.
+   */
   useEffect(() => {
     const body = bodyRef.current;
-    if (body && pinned.current) body.scrollTop = body.scrollHeight;
-  }, [state.rows]);
+    if (!body) return;
+    const stick = () => {
+      if (pinned.current) body.scrollTop = body.scrollHeight;
+    };
+    stick();
+    const observer = new MutationObserver(stick);
+    observer.observe(body, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, []);
+
+  // A growth prepends rows, which pushes everything down by exactly the height it added.
+  // Layout effect, not effect: corrected before the browser paints, or the transcript is
+  // seen to jump.
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const before = growingFrom.current;
+    if (!body || before === null) return;
+    growingFrom.current = null;
+    body.scrollTop = keepPlace(body.scrollTop, before, body.scrollHeight);
+  }, [shown]);
+
+  // A different conversation starts at the tail again. Without this, replaying a short one
+  // after a long one would draw it with a thousand rows' worth of `shown` still set.
+  useEffect(() => {
+    setShown(CHUNK);
+  }, [sessionId, resumeConversation]);
 
   const onScroll = useCallback(() => {
     const body = bodyRef.current;
     if (!body) return;
     pinned.current = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+    // Reading upward past the top of what is drawn asks for the next chunk. Recorded here
+    // rather than in the effect, because the height has to be the one from *before* React
+    // prepends anything.
+    if (nearTop(body.scrollTop, body.clientHeight) && growingFrom.current === null) {
+      setShown((was) => {
+        if (was >= rowsRef.current) return was;
+        growingFrom.current = body.scrollHeight;
+        return grow(was, rowsRef.current);
+      });
+    }
   }, []);
+
+  /** The row count, for `onScroll` -- which is installed once and must not close over it. */
+  const rowsRef = useRef(0);
+  rowsRef.current = state.rows.length;
 
   const running = state.status === "running";
   // Derived on every render rather than memoised: it reads two fields and returns a small
   // object, and the render it feeds is already happening because a row arrived.
   const live: Activity | null = liveActivity(state);
 
+  // Reported rather than derived by the parent: the running total needs the whole result
+  // history to be counted correctly, and that lives in this reducer.
+  const cost = sessionCost(state);
+  const context = state.context;
+  useEffect(() => {
+    onUsage({ cost, context });
+  }, [cost, context, onUsage]);
+
   const submit = useCallback(() => {
     const text = draft.trim();
-    if (!text || running || state.status === "exited") return;
+    // An attachment on its own is a prompt: the image is the message, and refusing to send
+    // it because the box is empty would be the app disagreeing with what it can see.
+    if ((!text && attachments.length === 0) || running || state.status === "exited") return;
+
+    /**
+     * A command this window already does.
+     *
+     * Everything else goes to the CLI as prompt text -- it answers its own commands there,
+     * for no tokens. These few would answer *and* change state the window is showing, so the
+     * two would then disagree about the conversation.
+     */
+    const typed = /^\/([a-z0-9-]+)\s*$/i.exec(text);
+    const owned = typed ? ownedCommand(typed[1].toLowerCase()) : null;
+    if (typed && owned) {
+      setDraft("");
+      dispatch({
+        t: "local_notice",
+        tone: "info",
+        text: `/${typed[1].toLowerCase()} is agentide's to do — ${owned}.`,
+      });
+      return;
+    }
+    const sending = attachments;
     setDraft("");
+    setAttachments([]);
     pinned.current = true;
-    dispatch({ t: "prompt_submitted", text });
+    dispatch({
+      t: "prompt_submitted",
+      text,
+      sent: sending.map((attachment) => ({
+        kind: attachment.kind,
+        label: attachmentLabel(attachment),
+      })),
+    });
 
     /** Checkpoint first, prompt second, or the turn has nothing to go back to. One that
      * cannot be taken says so on its own row rather than blocking or going quiet. */
@@ -312,22 +479,33 @@ export function TranscriptPane({
             }
           }
         }
-        await agentPrompt(sessionId, text, {
+        await agentPrompt(
+          sessionId,
+          text,
+          {
           ...modeOptions(mode),
           ...(chosen.model ? { model: chosen.model } : {}),
           ...(chosen.provider ? { provider: chosen.provider } : {}),
           ...(effort ? { effort } : {}),
           ...(append ? { systemPromptAppend: append } : {}),
+          // One field; the sidecar owns what it means. A subagent's prompt is content and
+          // stays with the code that versions it, so none of it crosses the wire.
+          ...(isAdvanced(promptMode) ? { promptProfile: "advanced" as const } : {}),
+          // Which login this turn runs under. Absent is the machine's own, which is what
+          // the CLI would have used anyway.
+          ...(account ? { account } : {}),
           // The answer is drawn as it arrives rather than when it is finished; see
           // `streaming` in `transcript.ts` for why that cannot change what is drawn.
-          includePartialMessages: true,
-          ...(resumeConversation ? { resumeConversation } : {}),
-        });
+            includePartialMessages: true,
+            ...(resumeConversation ? { resumeConversation } : {}),
+          },
+          sending,
+        );
       } catch (err) {
         dispatch({ t: "exited", code: null, message: errorMessage(err), pending: [] });
       }
     })();
-  }, [draft, running, state.status, state.providers, sessionId, model, effort, mode, promptMode, root, resumeConversation, onTurnStart]);
+  }, [draft, running, state.status, state.providers, sessionId, model, effort, mode, promptMode, root, resumeConversation, onTurnStart, account, attachments]);
 
   /** Start over: new session id, empty transcript, nothing resumed. The sidecar keeps
    * running — it holds no per-conversation state, so restarting buys nothing. */
@@ -404,20 +582,20 @@ export function TranscriptPane({
   }, [root]);
 
   const visibleProblems = state.problems.filter((problem) => !solved.includes(problem.title));
+  const drawn = chunk(state.rows.length, shown);
+  const loadMore = useCallback(() => {
+    const body = bodyRef.current;
+    if (body) growingFrom.current = body.scrollHeight;
+    setShown((was) => grow(was, rowsRef.current));
+  }, []);
 
   return (
-    <div className="pane transcript">
+    <div className={`pane transcript${state.rows.length === 0 ? " is-empty" : ""}`}>
       <div className="pane-header">
         <span className="legend">Transcript</span>
-        {/* One live slot. Thinking outranks the model name because it is what changes;
-            idle, the header says what the next turn will run on. */}
-        {state.thinking !== null ? (
-          <span className="measure is-thinking">thinking · {formatTokens(state.thinking)}</span>
-        ) : running ? (
-          <span className="measure is-thinking">working</span>
-        ) : (
-          state.meta.model && <span className="measure">{state.meta.model}</span>
-        )}
+{/* What the next turn runs on. The live status is not here -- it is in the
+            transcript, under what you sent, where the answer is about to appear. */}
+        {state.meta.model && <span className="measure">{state.meta.model}</span>}
         {/* Disabled rather than hidden while a turn runs: a control that vanishes when
             you reach for it is worse than one that says why it will not work. */}
         <button
@@ -447,17 +625,27 @@ export function TranscriptPane({
             {root ? "no turns yet — describe a change below" : "open a folder to give the agent a workspace"}
           </p>
         )}
-        {state.rows.map((row, index) => (
-          <TranscriptRow
-            key={row.addr}
-            row={row}
-            // A turn's first row opens a new block, the way a listing fences a function.
-            opensTurn={index > 0 && row.turn !== state.rows[index - 1].turn}
-            expanded={expanded.has(row.addr)}
-            onToggle={toggle}
-            onAnswer={answer}
-          />
-        ))}
+        {drawn.hidden > 0 && (
+          <button type="button" className="note earlier" onClick={loadMore}>
+            {drawn.hidden} earlier {drawn.hidden === 1 ? "row" : "rows"} — scroll up or click to load
+          </button>
+        )}
+        {state.rows.slice(drawn.start).map((row, offset) => {
+          // The absolute index, because `opensTurn` compares against the row before this
+          // one in the *conversation*, which may not be drawn.
+          const index = drawn.start + offset;
+          return (
+            <TranscriptRow
+              key={row.addr}
+              row={row}
+              // A turn's first row opens a new block, the way a listing fences a function.
+              opensTurn={index > 0 && row.turn !== state.rows[index - 1].turn}
+              expanded={expanded.has(row.addr)}
+              onToggle={toggle}
+              onAnswer={answer}
+            />
+          );
+        })}
         {/* The answer as it arrives, replaced by a real row when the message lands. Not
             a `Row` — nothing provisional goes into the structure everything indexes by. */}
         {state.streaming !== null && state.streaming !== "" && (
@@ -467,6 +655,18 @@ export function TranscriptPane({
             </div>
           </div>
         )}
+        {/**
+         * What the agent is doing, at the end of the conversation rather than in the chrome.
+         *
+         * Directly under the prompt the moment you send one, and it stays at the foot of the
+         * transcript as rows arrive -- which is where you are already looking, and where the
+         * answer is about to land. The two places it used to live were both wrong: the header
+         * is chrome you are not watching, and a band above the composer moved the composer
+         * every time a turn began.
+         *
+         * Not a `Row`: it takes no address, and a transient state must never consume one.
+         */}
+        {live && <ActivityLine activity={live} startedAt={state.turnStartedAt} />}
       </div>
 
       {/* Above the composer, not a row: it describes the machine, and a row would scroll
@@ -486,6 +686,9 @@ export function TranscriptPane({
         </div>
       )}
 
+      {/* One block, because it is one thing: what the next turn will be, and the place you
+          say it. Three unrelated strips stacked above a box is how it read before. */}
+      <div className="composer-dock">
       <RunControls
         mode={mode}
         onMode={setMode}
@@ -502,7 +705,6 @@ export function TranscriptPane({
         disabled={state.status === "exited"}
       />
 
-      {live && <ActivityLine activity={live} startedAt={state.turnStartedAt} />}
 
       <Composer
         value={draft}
@@ -511,7 +713,12 @@ export function TranscriptPane({
         disabled={!root || state.status === "exited"}
         running={running}
         commands={state.commands}
+        attachments={attachments}
+        onAttach={(attachment) => setAttachments((was) => [...was, attachment])}
+        onDetach={(index) => setAttachments((was) => was.filter((_, at) => at !== index))}
+        onAttachError={(text) => dispatch({ t: "local_notice", tone: "warn", text })}
       />
+      </div>
     </div>
   );
 }
@@ -531,7 +738,7 @@ const TranscriptRow = memo(function TranscriptRow({
   onToggle: (addr: number) => void;
   onAnswer: (id: string, decision: "allow" | "deny") => void;
 }) {
-  const addr = <span className="t-addr">{formatAddr(row.addr)}</span>;
+  const addr = <span className="t-addr" />;
   const cls = ["t-row", `is-${row.kind}`, opensTurn ? "opens-turn" : ""]
     .filter(Boolean)
     .join(" ");
@@ -541,7 +748,18 @@ const TranscriptRow = memo(function TranscriptRow({
       return (
         <div className={cls}>
           {addr}
-          <span className="t-prompt">{row.text}</span>
+          <span className="t-prompt">
+            {row.text}
+            {row.sent && (
+              <span className="t-sent">
+                {row.sent.map((item, index) => (
+                  <span key={`${item.label}-${index}`} className="t-sent-item">
+                    {item.kind === "image" ? "▣" : "▤"} {item.label}
+                  </span>
+                ))}
+              </span>
+            )}
+          </span>
         </div>
       );
 
@@ -684,7 +902,7 @@ function ToolRow({
   return (
     <>
       <div className={className}>
-        <span className="t-addr">{formatAddr(row.addr)}</span>
+        <span className="t-addr" />
         {/* A div, not a button: approval controls nest here and a button inside a button
             is invalid markup. Keyboard expansion is wired by hand instead. */}
         <div
@@ -878,6 +1096,10 @@ function Composer({
   disabled,
   running,
   commands,
+  attachments,
+  onAttach,
+  onDetach,
+  onAttachError,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -886,14 +1108,67 @@ function Composer({
   running: boolean;
   /** What this installation accepts, as the SDK reported it. */
   commands: SlashCommand[];
+  /** Waiting to be sent with the next prompt. */
+  attachments: Attachment[];
+  onAttach: (attachment: Attachment) => void;
+  onDetach: (index: number) => void;
+  onAttachError: (message: string) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [highlight, setHighlight] = useState(0);
+  const [over, setOver] = useState(false);
+
+  /** Take what was pasted. The clipboard gives a `File` with bytes and no path. */
+  const take = useCallback(
+    (files: FileList | File[]) => {
+      for (const file of Array.from(files)) {
+        void toAttachment(file, () => null).then((result) => {
+          if ("error" in result) onAttachError(result.error);
+          else onAttach(result);
+        });
+      }
+    },
+    [onAttach, onAttachError],
+  );
+
+  /**
+   * Take what was dropped, through Tauri rather than through the DOM.
+   *
+   * `dragDropEnabled` defaults to true, which means the OS handles the drop and the webview
+   * never sees `dragover` or `drop` at all -- the HTML handlers this used to have could not
+   * fire. Tauri's event is also the only one that carries a real path, which is what makes a
+   * non-image attachable in the first place.
+   */
+  useEffect(() => {
+    if (disabled) return;
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type === "over") setOver(true);
+        else if (event.payload.type === "leave") setOver(false);
+        else if (event.payload.type === "drop") {
+          setOver(false);
+          for (const path of event.payload.paths) {
+            void fromPath(path, readFileBase64).then((result) => {
+              if ("error" in result) onAttachError(result.error);
+              else onAttach(result);
+            });
+          }
+        }
+      })
+      .then((unlisten) => {
+        if (gone) unlisten();
+        else stop = unlisten;
+      });
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, [disabled, onAttach, onAttachError]);
 
   // Ctrl+2 lands here: the composer is what the transcript column is *for*, and focusing
   // the scrollback instead would put the cursor nowhere useful.
-  useFocusTarget("composer", () => ref.current?.focus());
-
   // Ctrl+2 lands here: the composer is what the transcript column is *for*, and focusing
   // the scrollback instead would put the cursor nowhere useful.
   useFocusTarget("composer", () => ref.current?.focus());
@@ -904,13 +1179,13 @@ function Composer({
     const typed = /^\/(\S*)$/.exec(value);
     if (!typed) return [];
     const query = typed[1].toLowerCase();
-    return commands
-      .filter(
-        (command) =>
-          command.name.toLowerCase().startsWith(query) ||
-          command.aliases?.some((alias) => alias.toLowerCase().startsWith(query)),
-      )
-      .slice(0, 8);
+    // Every match, not a first few: the menu scrolls, and a list that silently stopped at
+    // eight read as the installation having eight commands.
+    return commands.filter(
+      (command) =>
+        command.name.toLowerCase().startsWith(query) ||
+        command.aliases?.some((alias) => alias.toLowerCase().startsWith(query)),
+    );
   }, [value, commands]);
 
   // Any change to the list puts the selection back at the top, so typing one more
@@ -935,7 +1210,23 @@ function Composer({
   }, [value]);
 
   return (
-    <div className="composer">
+    <div className={`composer${over ? " is-over" : ""}`}>
+      {attachments.length > 0 && (
+        <div className="attachments">
+          {attachments.map((attachment, index) => (
+            <button
+              key={`${attachmentLabel(attachment)}-${index}`}
+              type="button"
+              className="chip attachment"
+              title={attachment.kind === "file" ? attachment.path : "Remove"}
+              onClick={() => onDetach(index)}
+            >
+              {attachment.kind === "image" ? "▣" : "▤"} {attachmentLabel(attachment)}
+              <span className="attachment-remove">×</span>
+            </button>
+          ))}
+        </div>
+      )}
       {matches.length > 0 && (
         <div className="command-menu" role="listbox" aria-label="Commands">
           {matches.map((command, index) => (
@@ -951,6 +1242,10 @@ function Composer({
               <span className="command-name">/{command.name}</span>
               {command.argumentHint && (
                 <span className="command-args">{command.argumentHint}</span>
+              )}
+              {/* Said before you pick it, not after it quietly disagrees with the window. */}
+              {ownedCommand(command.name) && (
+                <span className="command-where">agentide</span>
               )}
               <span className="command-note">{command.description}</span>
             </button>
@@ -971,6 +1266,14 @@ function Composer({
           disabled ? "no workspace" : running ? "running — enter queues the next turn" : "describe a change"
         }
         onChange={(event) => onChange(event.target.value)}
+        onPaste={(event) => {
+          // Only when something was actually attached: a paste of ordinary text has files
+          // of length zero and must still reach the textarea.
+          const files = event.clipboardData?.files;
+          if (!files || files.length === 0) return;
+          event.preventDefault();
+          take(files);
+        }}
         onKeyDown={(event) => {
           if (matches.length > 0) {
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {

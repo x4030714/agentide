@@ -15,9 +15,20 @@ import { ago, formatSize } from "../lib/format";
 import { IconChevron, IconPalette } from "../lib/icons";
 import { PALETTES } from "../lib/palette";
 import type { Palette } from "../lib/palette";
+import {
+  COMPACT_CHOICES,
+  DEFAULT_COMPACT_WINDOW,
+  compactChoiceFor,
+  readCompactWindow,
+  writeCompactWindow,
+  type CompactWindow,
+} from "../lib/context-window";
 import { errorMessage } from "../lib/protocol";
+import type { Layout } from "../lib/layout";
 import type { Transparency } from "../lib/transparency";
 import type {
+  Account,
+  AccountInfo,
   ClaudeProject,
   ConversationEntry,
   ConversationSummary,
@@ -34,14 +45,35 @@ interface SettingsProps {
   onPalette: (next: Palette) => void;
   transparency: Transparency;
   onTransparency: (next: Transparency) => void;
+  /** Which shape the window takes. See `lib/layout.ts`. */
+  layout: Layout;
+  onLayout: (next: Layout) => void;
   /** An imported conversation, by its new id: the next prompt should continue it. */
   onImported: (id: string) => void;
   onClose: () => void;
+  /** Who is signed in, or null until the sidecar has answered. */
+  account: Account | null;
+  /** Every account that could be picked. One entry means there is nothing to pick. */
+  accounts: AccountInfo[];
+  /** The key of the account turns currently run under. */
+  activeAccount: string;
+  /** Run the next turns under this account. */
+  onSelectAccount: (key: string) => void;
+  /** The outcome of the last sign-out, in the sidecar's own words. */
+  accountNote: string | null;
+  /** Ask again. Called when the Account section mounts, and after signing out. */
+  onAccountRefresh: () => void;
+  /** Sign out machine-wide. The section confirms before calling this. */
+  onSignOut: () => void;
+  /** Run the sign-in command in a terminal tab, where the device code is readable. */
+  onSignIn: (command: string) => void;
 }
 
 /** The sections, in the order they are worth reaching. */
 const SECTIONS = [
+  { id: "account", label: "Account" },
   { id: "appearance", label: "Appearance" },
+  { id: "context", label: "Context" },
   { id: "memory", label: "Memory" },
   { id: "import", label: "Import" },
 ] as const;
@@ -52,6 +84,19 @@ const APPEARANCES: Array<{ id: Appearance; label: string }> = [
   { id: "system", label: "System" },
   { id: "light", label: "Light" },
   { id: "dark", label: "Dark" },
+];
+
+const LAYOUTS: Array<{ id: Layout; label: string; note: string }> = [
+  {
+    id: "workbench",
+    label: "Workbench",
+    note: "The IDE: tree, transcript, editor and terminal at once.",
+  },
+  {
+    id: "basic",
+    label: "Basic",
+    note: "The conversation on its own, with past ones beside it. The agent still edits files.",
+  },
 ];
 
 const TRANSPARENCIES: Array<{ id: Transparency; label: string; note: string }> = [
@@ -73,14 +118,24 @@ export function Settings({
   onPalette,
   transparency,
   onTransparency,
+  layout,
+  onLayout,
   onImported,
   onClose,
+  account,
+  accounts,
+  activeAccount,
+  onSelectAccount,
+  accountNote,
+  onAccountRefresh,
+  onSignOut,
+  onSignIn,
 }: SettingsProps) {
   /**
    * Which section is showing. Not remembered across opens: Settings is opened to change
    * one thing, and landing on wherever you were last is landing somewhere arbitrary.
    */
-  const [section, setSection] = useState<SectionId>("appearance");
+  const [section, setSection] = useState<SectionId>("account");
 
   useEffect(() => {
     // On the window rather than on the dialog: there are a dozen focusable controls in
@@ -126,9 +181,42 @@ export function Settings({
           </nav>
 
           <div className="settings-panel">
+          {section === "account" && (
+            <AccountSection
+              account={account}
+              accounts={accounts}
+              active={activeAccount}
+              note={accountNote}
+              onRefresh={onAccountRefresh}
+              onSelect={onSelectAccount}
+              onSignOut={onSignOut}
+              onSignIn={onSignIn}
+            />
+          )}
           {section === "appearance" && (
           <section className="settings-section">
             <h2 className="settings-legend">Appearance</h2>
+            <div className="settings-row">
+              <span className="settings-label">Layout</span>
+              <div className="settings-choices">
+                {LAYOUTS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={`settings-choice${option.id === layout ? " is-on" : ""}`}
+                    aria-pressed={option.id === layout}
+                    title={option.note}
+                    onClick={() => onLayout(option.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="note settings-note">
+              {LAYOUTS.find((option) => option.id === layout)?.note}
+            </p>
+
             <div className="settings-row">
               <span className="settings-label">Theme</span>
               <div className="settings-choices">
@@ -185,6 +273,7 @@ export function Settings({
           </section>
           )}
 
+          {section === "context" && <ContextSection />}
           {section === "memory" && <MemorySection />}
           {section === "import" && <ImportSection root={root} onImported={onImported} />}
           </div>
@@ -196,6 +285,223 @@ export function Settings({
 
 /** What the agent remembers, and where. Read-only: the path has a working default, so
  * this names the override rather than growing an editor for a value set once. */
+
+/**
+ * Who is signed in, and the two ways to change it.
+ *
+ * The account is asked for on open rather than held: it is one spawn, it is the only place
+ * that shows it, and a cached answer would keep saying "signed in" after the credential went.
+ */
+function AccountSection({
+  account,
+  accounts,
+  active,
+  note,
+  onRefresh,
+  onSelect,
+  onSignOut,
+  onSignIn,
+}: {
+  account: Account | null;
+  accounts: AccountInfo[];
+  active: string;
+  note: string | null;
+  onRefresh: () => void;
+  onSelect: (key: string) => void;
+  onSignOut: () => void;
+  onSignIn: (command: string) => void;
+}) {
+  /**
+   * Signing out is confirmed in place rather than in a dialog.
+   *
+   * It is not scoped to agentide -- it drops the credential the person's own Claude Code
+   * uses -- and nothing here can put it back. A second click is cheap; a browser round trip
+   * they did not ask for is not.
+   */
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    onRefresh();
+  }, [onRefresh]);
+
+  // A fresh answer arriving is what ends the confirmation, not the click: the button must
+  // not go back to "Sign out" while the sign-out is still running.
+  useEffect(() => {
+    setConfirming(false);
+  }, [account]);
+
+  const waiting = account === null;
+
+  return (
+    <section className="settings-section">
+      <h2 className="settings-legend">Account</h2>
+
+      {accounts.length > 1 && (
+        <div className="settings-row">
+          <span className="settings-label">Use</span>
+          <div className="settings-choices">
+            {accounts.map((entry) => (
+              <button
+                key={entry.key}
+                type="button"
+                className={`settings-choice${entry.key === active ? " is-on" : ""}`}
+                aria-pressed={entry.key === active}
+                // The directory, because switching accounts switches conversation history
+                // with it, and that is the part the word "account" does not say.
+                title={`${entry.configDir}${entry.used ? "" : " — never signed in"}`}
+                onClick={() => onSelect(entry.key)}
+              >
+                {entry.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="settings-row">
+        <span className="settings-label">Signed in</span>
+        {waiting ? (
+          <span className="note">asking…</span>
+        ) : account.loggedIn ? (
+          <div className="settings-account">
+            <span className="settings-value">{account.email ?? "yes"}</span>
+            <span className="note">
+              {[account.plan, account.organization].filter(Boolean).join(" · ") || account.method}
+            </span>
+          </div>
+        ) : (
+          <span className="note">{account.error ?? "no — turns cannot run"}</span>
+        )}
+      </div>
+
+      {note && <p className="note settings-note">{note}</p>}
+
+      <div className="settings-row">
+        <span className="settings-label" />
+        <div className="settings-choices">
+          {account?.loginCommand && (
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => onSignIn(account.loginCommand!)}
+            >
+              {account.loggedIn ? "Sign in as someone else" : "Sign in"}
+            </button>
+          )}
+          {account?.loggedIn && !confirming && (
+            <button type="button" className="ghost-button" onClick={() => setConfirming(true)}>
+              Sign out
+            </button>
+          )}
+          {account?.loggedIn && confirming && (
+            <>
+              <button type="button" className="ghost-button is-warn" onClick={onSignOut}>
+                Sign out everywhere
+              </button>
+              <button type="button" className="ghost-button" onClick={() => setConfirming(false)}>
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {confirming && (
+        <p className="note settings-note">
+          This signs Claude Code out on this whole machine, not just agentide. Signing back in
+          needs a browser.
+        </p>
+      )}
+
+      {accounts.length > 1 && !confirming && (
+        <p className="note settings-note">
+          An account is a config directory, so switching also switches which conversations
+          Resume can see. The next turn starts a new agent process.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Where a conversation gets compacted.
+ *
+ * Its own section because it is the one setting in here that changes what a turn *costs*.
+ * A conversation on Opus 5 reached 925,000 tokens without compacting -- the model's window
+ * is a million and Claude Code compacts near the edge of it -- and every request, including
+ * the one behind every tool call, carried all of it. Two prompts spent a session allowance.
+ * Nothing in the window said so, which is why this is a control and not a constant.
+ */
+function ContextSection() {
+  const [window, setWindow] = useState<CompactWindow>(DEFAULT_COMPACT_WINDOW);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void readCompactWindow().then((value) => {
+      if (!cancelled) setWindow(value);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const choose = (value: CompactWindow) => {
+    // Optimistic: the control answers immediately and the file follows. A failed write says
+    // so and puts the old value back, rather than leaving the two disagreeing.
+    const previous = window;
+    setWindow(value);
+    setSaving(true);
+    setError(null);
+    void writeCompactWindow(value)
+      .catch((err) => {
+        setWindow(previous);
+        setError(errorMessage(err));
+      })
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <section className="settings-section">
+      <h2 className="settings-legend">Context</h2>
+      <p className="note">
+        A conversation is re-sent in full on every request — including the one behind every
+        tool call — until it is compacted. Compacting summarises the older part of it, which
+        is what keeps a long session from costing a multiple of a short one.{" "}
+        <strong>The status bar shows how full the window is</strong> after each turn.
+      </p>
+
+      <div className="settings-row">
+        <span className="settings-label">Compact at</span>
+        <div className="settings-choices">
+          {COMPACT_CHOICES.map((choice) => (
+            <button
+              key={choice.label}
+              type="button"
+              className={`settings-choice${choice.value === window ? " is-on" : ""}`}
+              aria-pressed={choice.value === window}
+              title={choice.note}
+              disabled={saving}
+              onClick={() => choose(choice.value)}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <p className={`note settings-note${error ? " is-error" : ""}`}>
+        {error ?? compactChoiceFor(window).note}
+      </p>
+      <p className="note">
+        Takes effect on the next prompt. An oversized conversation shrinks on its next turn,
+        or immediately with <code>/compact</code>.
+      </p>
+    </section>
+  );
+}
+
 function MemorySection() {
   const [vault, setVault] = useState<MemoryVault | null>(null);
   const [stats, setStats] = useState<MemoryStats | null>(null);

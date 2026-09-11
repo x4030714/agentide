@@ -132,6 +132,43 @@ export function toFileUri(path: WirePath): string {
 /** One thing this install is missing, and what to do about it. Mirrors `Problem` in
  * `sidecar/src/doctor.ts`: `blocked` means no turn can run, `degraded` means a feature is
  * absent but the agent still works. */
+/**
+ * Something attached to a prompt.
+ *
+ * An `image` is inlined for the model to look at; a `file` is a path it reads with its own
+ * tools, which costs one tool call instead of the whole file in every later turn.
+ */
+export type Attachment =
+  | {
+      kind: "image";
+      mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+      /** Base64, no data: prefix. */
+      data: string;
+      name?: string;
+    }
+  | { kind: "file"; path: string };
+
+/** One switchable Claude account. Carries no credential -- it names a config directory. */
+export interface AccountInfo {
+  key: string;
+  name: string;
+  configDir: string;
+  used: boolean;
+}
+
+/** Who is signed in. Everything but `loggedIn` is absent on some auth methods. */
+export interface Account {
+  loggedIn: boolean;
+  method?: string;
+  email?: string;
+  organization?: string;
+  plan?: string;
+  /** Why the answer is not trustworthy, when the binary could not be asked at all. */
+  error?: string;
+  /** What to run in a terminal to sign in, resolved by the sidecar. */
+  loginCommand?: string;
+}
+
 export interface Problem {
   severity: "blocked" | "degraded";
   title: string;
@@ -177,6 +214,10 @@ export interface PromptOptions {
   /** Appended to Claude Code's preset system prompt, never replacing it. Omitted means the bare
    * preset, which is what the "Default" prompt mode sends. */
   systemPromptAppend?: string;
+  /** A bundle of SDK options the sidecar owns: subagents, thinking budget, hooks. */
+  promptProfile?: "advanced";
+  /** Which Claude account this turn runs under; absent for the machine's own login. */
+  account?: string;
   /** Emit `stream_event` messages so text renders as it arrives. Off by default: it multiplies
    * event volume, which a transcript rendering only complete messages should not pay for. */
   includePartialMessages?: boolean;
@@ -283,6 +324,10 @@ export type AgentEvent =
   | { t: "providers"; providers: ProviderInfo[] }
   | { t: "commands"; commands: SlashCommand[] }
   | { t: "readiness"; problems: Problem[] }
+  /** Who is signed in, after `agentAuth`. `note` carries the outcome of a sign-out. */
+  | { t: "account"; account: Account; key: string; accounts: AccountInfo[]; note?: string }
+  /** How much of the context window the conversation occupies, after a turn. */
+  | { t: "context"; sessionId: string; tokens: number; max: number }
   /** The external MCP servers this turn was built without, their gate being closed. Sent at the
    * start of every turn, empty list included — the empty list is what clears last turn's chips. */
   | { t: "mcp_gated"; sessionId: string; servers: GatedServer[] }

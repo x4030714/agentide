@@ -77,6 +77,36 @@ export function RunControls({
     (selected && selected.supportsEffort === false ? [] : ALL_EFFORTS);
 
   return (
+    <>
+      {/**
+       * One chip per MCP server. Connected-but-zero-tools warns: that shape hid the IDE's own
+       * tools for three phases. Gated servers are drawn too, or they vanish from the strip.
+       */}
+      {mcpServers.length > 0 && (
+        <div className="mcp-strip">
+          <span className="legend">MCP</span>
+          {mcpServers.map((server) => {
+            const empty = server.status === "connected" && server.tools === 0;
+            // Gated servers name the address, not the tool count: the port says what to open.
+            const title = server.at
+              ? `${server.name}: not started — nothing is listening on ${server.at}`
+              : `${server.name}: ${server.status}, ${server.tools} tool${server.tools === 1 ? "" : "s"}`;
+            return (
+              <span
+                key={server.name}
+                className={`mcp-server is-${empty ? "warn" : mcpTone(server.status)}`}
+                title={title}
+              >
+                {server.name}
+                <span className="mcp-count">
+                  {server.status === "connected" ? server.tools : server.status}
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
     <div className="run-controls">
       {/* Segmented, not a select: how much the agent may do unasked should be readable
           without opening anything. */}
@@ -97,26 +127,34 @@ export function RunControls({
         ))}
       </div>
 
-      <div className="segmented" role="radiogroup" aria-label="System prompt">
-        {PROMPT_MODES.map((option) => (
-          <button
-            key={option}
-            type="button"
-            role="radio"
-            aria-checked={option === promptMode}
-            className={`segment${option === promptMode ? " is-on" : ""}`}
-            title={
-              option === "tuned" && !tunedAvailable
-                ? "No system.md in ~/.agentide or this workspace, so this adds nothing yet."
-                : PROMPT_HELP[option]
-            }
-            disabled={disabled}
-            onClick={() => onPromptMode(option)}
-          >
-            {PROMPT_LABEL[option]}
-          </button>
-        ))}
-      </div>
+      {/**
+        * A select, where the edit mode beside it is segments.
+        *
+        * It was segments too, until a fourth mode arrived: the row does not wrap (see
+        * `.run-controls`), so a control that grows with the list pushed Model and Effort off
+        * the end and left the pane with a horizontal scrollbar. Edit mode is three fixed
+        * options you toggle constantly; this is a list that grows and you set once a week.
+        */}
+      <label className="control">
+        <span className="legend">Prompt</span>
+        <select
+          className="control-select"
+          value={promptMode}
+          title={
+            promptMode === "tuned" && !tunedAvailable
+              ? "No system.md in ~/.agentide or this workspace, so this adds nothing yet."
+              : PROMPT_HELP[promptMode]
+          }
+          disabled={disabled}
+          onChange={(event) => onPromptMode(event.target.value as PromptMode)}
+        >
+          {PROMPT_MODES.map((option) => (
+            <option key={option} value={option}>
+              {PROMPT_LABEL[option]}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <label className="control">
         <span className="legend">Model</span>
@@ -181,34 +219,7 @@ export function RunControls({
         !known && <span className="note control-note">catalogue arrives with the first turn</span>
       )}
 
-      {/**
-       * One chip per MCP server. Connected-but-zero-tools warns: that shape hid the IDE's own
-       * tools for three phases. Gated servers are drawn too, or they vanish from the strip.
-       */}
-      {mcpServers.length > 0 && (
-        <div className="mcp-strip">
-          <span className="legend">MCP</span>
-          {mcpServers.map((server) => {
-            const empty = server.status === "connected" && server.tools === 0;
-            // Gated servers name the address, not the tool count: the port says what to open.
-            const title = server.at
-              ? `${server.name}: not started — nothing is listening on ${server.at}`
-              : `${server.name}: ${server.status}, ${server.tools} tool${server.tools === 1 ? "" : "s"}`;
-            return (
-              <span
-                key={server.name}
-                className={`mcp-server is-${empty ? "warn" : mcpTone(server.status)}`}
-                title={title}
-              >
-                {server.name}
-                <span className="mcp-count">
-                  {server.status === "connected" ? server.tools : server.status}
-                </span>
-              </span>
-            );
-          })}
-        </div>
-      )}
     </div>
+    </>
   );
 }

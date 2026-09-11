@@ -39,6 +39,25 @@
   opacity: 0.75;
 }
 
+/* What a long transcript is holding back. A row, so it scrolls with the conversation
+   rather than hovering over it, and a button because scrolling is not the only way up. */
+.note.earlier {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  color: var(--ink-dim);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.note.earlier:hover {
+  color: var(--ink);
+}
+
 /* The button that fixes a problem, on the row that names it. Inline, so the fix is where
    the sentence describing it ends rather than somewhere else on screen. */
 .chip.is-action {
@@ -82,7 +101,7 @@
 
 .titlebar-mark {
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--ink);
@@ -98,7 +117,7 @@
   min-width: 0;
   margin: 0 auto;
   padding: 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .titlebar-workspace {
@@ -178,40 +197,58 @@
   min-height: 0;
 }
 
+/**
+ * The ground shows between the panes.
+ *
+ * The window used to be one continuous sheet cut into cells by hairlines: six regions, one
+ * surface, and a line wherever two met. That reads as a table, and on a translucent window
+ * it wastes the one thing that makes it translucent -- the desktop is behind all of it and
+ * was visible nowhere.
+ *
+ * So the separators became gaps rather than lines. Each pane is a plate sitting on the
+ * ground, and the ground is what you see between them. Square, not rounded: rounding was
+ * taken out of this app deliberately, and a listing has straight edges.
+ */
 .workbench-panels {
   flex: 1 1 auto;
   min-width: 0;
+  padding: var(--seam);
 }
 
+/**
+ * A gap, not a line. It only draws anything while you are using it.
+ *
+ * The grab area was already wider than the hairline it painted; now the paint is gone and
+ * the gap is the whole of it, so nothing has to be drawn to say two panes are different
+ * things. The accent still appears on hover and drag, because that is the app pointing at
+ * something -- which is the one job the accent has.
+ */
 .separator {
   position: relative;
-  background: var(--hairline);
+  background: transparent;
   transition: background var(--t-fast) var(--ease);
 }
 
-/* Paints as a hairline, grabs at 7px — the same reason as before. */
+/* Still grabs beyond its own width, so a 6px seam is not a 6px target. */
 .separator::after {
   content: "";
   position: absolute;
-  inset: -3px;
+  inset: -2px;
 }
 
 .separator:hover,
-.separator[data-resize-handle-active] {
-  background: var(--sym);
-}
-
+.separator[data-resize-handle-active],
 .separator:focus-visible {
   background: var(--sym);
   outline: none;
 }
 
 .separator.vertical {
-  width: 1px;
+  width: var(--seam);
 }
 
 .separator.horizontal {
-  height: 1px;
+  height: var(--seam);
 }
 
 .pane {
@@ -254,12 +291,32 @@
   border-bottom: 1px solid var(--hairline);
 }
 
+/**
+ * The title takes the room it needs, and gives way last.
+ *
+ * It used to be `flex: 1 1 auto; min-width: 0`, which made the header's own name the first
+ * thing to shrink -- a narrow sidebar showed "EX..." beside a full-width Open button. A
+ * header that cannot say which pane it is has truncated the wrong thing.
+ */
 .pane-header .legend {
+  /* `0 0`, not `0 1`: dropping only the grow factor still left a shrink factor of 1, so
+     the title went on giving way first and the sidebar still read "EX...". */
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* What gives way instead: the actions after the title, and the gap between them. */
+/* What gives way instead. A button whose label is cut still reads as a button; a header
+   whose name is cut has stopped saying which pane it is. */
+.pane-header .ghost-button {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pane-header .spacer {
   flex: 1 1 auto;
   min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .pane-header .filename {
@@ -268,7 +325,7 @@
   gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--ink);
   white-space: nowrap;
@@ -311,7 +368,6 @@
   width: var(--rail);
   padding: 2px 0 6px;
   background: var(--chrome);
-  border-right: 1px solid var(--hairline);
 }
 
 .rail-item {
@@ -388,13 +444,246 @@
   min-width: 15px;
   padding: 0 3px;
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: var(--fs-2xs);
   line-height: 15px;
   font-variant-numeric: tabular-nums;
   text-align: center;
   color: #ffffff;
   background: var(--sym-fill);
   border-radius: 8px;
+}
+
+/* --- Conversation search ------------------------------------------------------ */
+
+.convo-search-row {
+  flex: 0 0 auto;
+  padding: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.convo-search {
+  width: 100%;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  background: var(--sunken);
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  outline: none;
+}
+
+.convo-search::placeholder {
+  color: var(--ink-dim);
+}
+
+.convo-search:focus {
+  border-color: var(--sym);
+}
+
+/* The browser's own clear affordance, which is a different shape in every engine. */
+.convo-search::-webkit-search-cancel-button {
+  filter: grayscale(1);
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- The compact conversation list -------------------------------------------- */
+
+/**
+ * One line per conversation, and the line is the control.
+ *
+ * The full pane gives each one a title, a meta line and a Continue button -- three rows of
+ * furniture for one thing you want to click. Here the line *is* the click, the title is what
+ * you scan, and everything else is in the tooltip for the once you need it.
+ */
+.convo-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--ink-dim);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+}
+
+.convo-line:hover {
+  color: var(--ink);
+  background: var(--sunken);
+}
+
+/* The one being continued. A field, not just brighter ink: it is a state, not emphasis. */
+.convo-line.is-live {
+  color: var(--ink);
+  background: var(--tint-accent);
+}
+
+.convo-line .convo-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A mark, not a bullet: it is what tells the live one apart at a glance. */
+.convo-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--ink-dim);
+}
+
+.convo-line.is-live .convo-dot {
+  background: var(--sym);
+  border-color: var(--sym);
+}
+
+.conversations.is-compact .pane-body {
+  padding: 4px;
+}
+
+/* --- Basic layout ------------------------------------------------------------ */
+
+/**
+ * The conversation on its own.
+ *
+ * Two columns and nothing else: past conversations down the side, the live one in the
+ * middle. The rail goes with the panes it switched between -- there is nothing left for it
+ * to switch to, and a rail with one destination is furniture.
+ */
+/* Nothing of its own: the rail and the panels inside carry the layout, the same as the
+   workbench. It exists to be the thing `is-basic` hangs off. */
+.workbench.is-basic {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.basic-main {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  /* Both, or the pane refuses to shrink below its content and the scrolling never happens
+     where it should. */
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+/**
+ * The reading column.
+ *
+ * Capped and centred, because a conversation is prose and prose set to the width of a
+ * maximised window is unreadable -- the eye loses the line it was on coming back from the
+ * right edge. The cap is on the *contents*, not the pane, so the scrollbar and the pane's
+ * own ground still run the full width.
+ */
+[data-layout="basic"] .transcript-body > *,
+[data-layout="basic"] .setup,
+[data-layout="basic"] .run-controls,
+[data-layout="basic"] .mcp-strip,
+[data-layout="basic"] .composer,
+[data-layout="basic"] .activity {
+  max-width: 52rem;
+  margin-inline: auto;
+  width: 100%;
+}
+
+/* The composer keeps its own side margins inside that cap. */
+[data-layout="basic"] .composer {
+  max-width: calc(52rem - 20px);
+}
+
+/**
+ * An empty conversation puts the box in the middle of the window, not at the foot of it.
+ *
+ * With nothing to read, a composer pinned to the bottom leaves a screen of empty space above
+ * it and reads as the end of something rather than the start. Centred, it is the one thing
+ * on screen and obviously where to begin. The moment a turn exists this stops applying and
+ * the composer returns to the bottom, where it belongs once there is a conversation above it.
+ */
+[data-layout="basic"] .pane.transcript.is-empty {
+  justify-content: center;
+}
+
+[data-layout="basic"] .pane.transcript.is-empty .transcript-body {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+/**
+ * The controls and the box, as one rounded field.
+ *
+ * They already belonged together -- everything in here describes the turn you are about to
+ * send -- but stacked as three bare strips they read as three unrelated bars above an input.
+ * One border around the group says what the grouping is, and the composer inside it drops
+ * its own, or the field would have a second field drawn inside it.
+ *
+ * Basic only. The workbench wants every pixel for the panes around it, and a border there
+ * would be one more line in a window that already had too many.
+ */
+[data-layout="basic"] .composer-dock {
+  margin: 4px 10px 10px;
+  padding: 6px 2px 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+}
+
+[data-layout="basic"] .composer-dock:focus-within {
+  border-color: var(--sym);
+  box-shadow: var(--shadow-1);
+}
+
+/* Inside the field now, so it brings no edge of its own. */
+[data-layout="basic"] .composer-dock .composer {
+  margin: 0;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+[data-layout="basic"] .composer-dock .composer:focus-within {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* The cap moves to the group; the parts inside it just fill their parent. */
+/* Wider than the reading column above it: prose wants a short line, a row of controls wants
+   to stay one row. */
+[data-layout="basic"] .composer-dock {
+  max-width: 58rem;
+  margin-inline: auto;
+  width: 100%;
+}
+
+[data-layout="basic"] .composer-dock .run-controls,
+[data-layout="basic"] .composer-dock .mcp-strip,
+[data-layout="basic"] .composer-dock .composer {
+  max-width: none;
+}
+
+/**
+ * Nothing but the box.
+ *
+ * The header names a pane you are not choosing between and carries a New button for a
+ * conversation that has not started; the empty-state line tells you to use the box directly
+ * beneath it. Both are answers to questions an empty screen does not raise. They come back
+ * with the first turn, when the header has a model and a Stop to show and the line is gone
+ * anyway.
+ */
+[data-layout="basic"] .pane.transcript.is-empty > .pane-header,
+[data-layout="basic"] .pane.transcript.is-empty .transcript-body .note {
+  display: none;
 }
 
 /* --- Sidebar ----------------------------------------------------------------- */
@@ -446,7 +735,7 @@
  * already shown, and the view's actions have to live somewhere anyway.
  */
 .sidebar .pane-header .legend {
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -471,7 +760,7 @@
   flex: 0 0 auto;
   height: var(--statusbar);
   padding: 0 10px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
   background: var(--chrome);
   border-top: 1px solid var(--hairline);
@@ -482,6 +771,27 @@
   flex: 0 0 auto;
   font-family: var(--mono);
   white-space: nowrap;
+}
+
+/* Tabular, because it changes a digit at a time and a proportional font would make the
+   whole figure shuffle every turn. */
+.status-cost {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status-context {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Past four fifths of the window. `--warn`, because that is what it is. */
+.status-context.is-high {
+  color: var(--warn);
 }
 
 /* Pinned right, because it is the one thing here that changes while you type and
@@ -504,7 +814,7 @@
   height: 22px;
   padding: 0 9px;
   font-family: var(--ui);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--ink-dim);
   background: var(--sunken);
@@ -599,7 +909,7 @@
   padding-left: calc(6px + var(--depth, 0) * 13px);
   padding-right: 8px;
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: var(--ink);
   text-align: left;
   background: transparent;
@@ -678,10 +988,20 @@
   padding: 6px 0 10px;
 }
 
+/**
+ * One column. The address column went when the addresses did.
+ *
+ * Keeping it as an indent left every row -- prompts, answers, tool calls, the turn's own
+ * summary -- pushed 44px right of a pane edge with nothing in the space. An empty column is
+ * not alignment, it is margin nobody asked for, and on the narrow pane this sits in it was
+ * the most expensive thing on screen.
+ *
+ * The nesting under a tool call is drawn by the `└` on the row itself, not by this grid, so
+ * it survives the column going.
+ */
 .t-row {
   display: grid;
-  grid-template-columns: 4ch minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
   padding: 1px 12px;
   align-items: baseline;
 }
@@ -694,19 +1014,43 @@
   padding-bottom: 3px;
 }
 
+/**
+ * The gutter's edge, drawn on the scroller rather than per row.
+ *
+ * A border on `.t-addr` would dash rather than rule: rows are baseline-aligned and a prose
+ * row is three times the height of a tool call, so the spans do not touch. One background
+ * gradient on the container is a single unbroken line down the pane, which is what makes
+ * the column read as a gutter instead of as an indent.
+ */
+/**
+ * A turn opens the way a function opens in a listing: a rule, and the label in the gutter.
+ *
+ * The rule stops at the gutter rather than crossing it -- the address column runs the whole
+ * length of the pane, and a separator that cut through it would break the one line holding
+ * the thing together.
+ */
 .t-row.opens-turn {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--hairline);
 }
 
-/** The address column survives the redesign: the anchor is function, not decoration. */
+/**
+ * The address column is an indent now, not a listing gutter.
+ *
+ * It carried the row's address in `--addr`, with a rule down its edge -- the first move of
+ * the listing direction. Taken out on the grounds that the numbers were not worth their
+ * noise: a row is found by reading it, not by its address, and a column of amber figures on
+ * every line is a lot of ink for something nobody looked up.
+ *
+ * The column itself stays, because the detail and diff rows are aligned against it. Rows
+ * still carry an address, and nothing renumbers -- `row.addr` is still what expansion state
+ * is keyed on. It is simply not drawn.
+ */
+/* Rows still carry an address -- it keys expansion state and never renumbers -- but nothing
+   draws it, and it no longer holds a column open. */
 .t-addr {
-  color: var(--ink-dim);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-  user-select: none;
+  display: none;
 }
 
 /**
@@ -740,7 +1084,7 @@
   display: inline-block;
   max-width: 72ch;
   padding: 7px 11px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--ink);
   border-radius: var(--r-panel);
   white-space: pre-wrap;
@@ -762,7 +1106,7 @@
   max-width: 72ch;
   padding: 0;
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: var(--ink-dim);
   text-align: left;
   background: none;
@@ -787,7 +1131,7 @@
   padding: 0 6px;
   margin-left: -6px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   background: transparent;
   border: 0;
@@ -811,7 +1155,7 @@
 /** The op column keeps its class colour: what the agent reached for is the signal. */
 .t-op {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -828,13 +1172,15 @@
   color: var(--warn);
 }
 .t-tool.is-semantic .t-op,
+/* Plain ink. Delegation is named by the row's own tool name, and the accent means the app
+   is pointing at something -- not that a call was interesting. */
 .t-tool.is-agent .t-op {
-  color: var(--sym);
+  color: var(--ink);
 }
 
 .t-operand {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -901,7 +1247,7 @@
   overflow: auto;
   color: var(--ink-dim);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   background: var(--sunken);
   border-radius: var(--r-control);
   white-space: pre-wrap;
@@ -914,7 +1260,7 @@
 .t-diffstat {
   color: var(--ink-dim);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   /* Tighter than the row rhythm: this line belongs to the call above it, and 24px of
      leading under a 24px row reads as a second entry rather than as a continuation. */
   line-height: 16px;
@@ -941,7 +1287,7 @@
   overflow: auto;
   overscroll-behavior: contain;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 17px;
   background: var(--sunken);
   border-radius: var(--r-control);
@@ -1028,30 +1374,81 @@
 
 .t-turn {
   color: var(--ink-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .t-turn.is-error {
   color: var(--error);
 }
 
-/* The live reasoning estimate. Pulses, never spins. */
-.measure.is-thinking {
-  color: var(--sym);
-  /* `ease-in-out`, not `--ease`: a loop that returns to where it started has two ends
-     to soften, and the decelerating curve makes the same pulse read as a stutter. */
-  animation: thinking-pulse 1.6s ease-in-out infinite;
+/* --- The agent's last edit, in the listing ----------------------------------- */
+
+/**
+ * The lines the agent just wrote.
+ *
+ * `--xref` at the same 14% the transcript's own diff uses for an addition, so a change reads
+ * identically whether you meet it in the turn or in the file. It is a mark on the listing,
+ * not a selection: it must survive you clicking elsewhere, and it must not look like
+ * something you did.
+ */
+.agent-edit-line {
+  background: color-mix(in oklch, var(--xref) 14%, transparent);
 }
 
-@keyframes thinking-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
+/* The marker beside an added line, in the strip between the numbers and the text. */
+.agent-edit-gutter {
+  background: var(--xref);
+  width: 2px !important;
+  margin-left: 3px;
 }
+
+/**
+ * The numbers a removed block had before it went.
+ *
+ * Right-aligned to end where Monaco's own numbers end -- the padding is measured from its
+ * layout, not guessed -- so the column reads as one column. In `--imm`, because these are
+ * numbers from a file that no longer says this.
+ */
+.agent-del-margin {
+  /* Tinted like the block it belongs to, so the margin beside a removed run reads as part
+     of it rather than as a gap in the file. */
+  background: color-mix(in oklch, var(--imm) 14%, transparent);
+  font-family: var(--mono);
+  font-size: var(--fs-md);
+  line-height: 20px;
+  text-align: right;
+  color: var(--imm);
+}
+
+/**
+ * The lines an edit removed, drawn in the place they were removed from.
+ *
+ * `--imm` at the same 14% the transcript's diff uses for a removal, so a deletion reads the
+ * same whether you meet it in the turn or in the file. Monospace and the editor's own line
+ * height, or the block would not sit on the same grid as the code around it.
+ */
+.agent-del-zone {
+  background: color-mix(in oklch, var(--imm) 14%, transparent);
+  font-family: var(--mono);
+  font-size: var(--fs-md);
+  line-height: 20px;
+  white-space: pre;
+  overflow: hidden;
+}
+
+/**
+ * No indent. A view zone's node already starts where the code starts, so the 68px this used
+ * to carry -- meant to clear the line-number gutter -- was added on top of an offset that
+ * was already there, and pushed the old text out of line with the new. The removed line has
+ * to sit exactly where it sat.
+ *
+ * No `-` sign either: it cost a character of that alignment, and the red ground, the red ink
+ * and the bar in the margin have already said this three times.
+ */
+.agent-del-line {
+  color: var(--imm);
+}
+
 
 /* --- Run controls ----------------------------------------------------------- */
 
@@ -1061,24 +1458,33 @@
  * off the end instead of moving it to a second line.
  */
 /**
- * One line, always. See `.control-note` for why that is the rule.
+ * Wraps, and the note still truncates.
  *
- * `nowrap` rather than `wrap`: this row's contents change with the model — Effort is only
- * drawn for a model that takes one — and a row that reflows moves everything above it as
- * you change the selection.
+ * This was `nowrap`, to stop the row gaining a line when Effort appeared for a model that
+ * takes one. That held while the row was short. It is not short any more — two segmented
+ * groups, Prompt, Model and Effort — and in a transcript pane narrowed to 265px `nowrap`
+ * did not keep one line, it pushed Model and Effort past the edge and put a horizontal
+ * scrollbar under the whole pane. A row that reflows when you change model is a jump you
+ * caused; a row you cannot read is broken at rest.
+ *
+ * The controls still never shrink: they wrap whole, and `.control-note` remains the only
+ * thing here allowed to truncate.
  */
 .run-controls {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px 12px;
   flex: 0 0 auto;
   padding: 6px 12px 2px;
 }
 
-/* The controls keep their size; only the note gives way. */
+/* The controls keep their size and wrap whole; only the note gives way. `min-width: 0` so
+   a control carrying a long model id can still truncate inside its own line. */
 .run-controls > .control {
   flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .control {
@@ -1090,10 +1496,20 @@
 .control-select {
   appearance: none;
   min-width: 5.5rem;
+  /**
+   * A model id runs to twenty characters, and a `<select>` sizes itself to its *longest
+   * option* rather than its current value -- so one long id in the list made the Model
+   * control wide enough to push Effort onto a line of its own, whatever was selected.
+   *
+   * Capped and truncating instead. The full id is one click away in the open list, which is
+   * where you read it; the control only has to say which one is on.
+   */
+  max-width: 14rem;
+  text-overflow: ellipsis;
   height: 22px;
   padding: 0 18px 0 8px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   color: var(--ink);
   background-color: var(--sunken);
   /* The icon family's chevron, inlined: a select cannot hold a child element. */
@@ -1169,7 +1585,7 @@
   flex: 0 1 auto;
   margin-left: auto;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1182,20 +1598,29 @@
  * config, and a run of chips wrapping through the middle of the model and effort
  * controls turns a row you read at a glance into one you have to parse.
  */
+/**
+ * Above the controls, not below them.
+ *
+ * It reports what the turn will be built with, which is the same kind of fact the controls
+ * beneath it set -- and it belongs before them, because it is the part you do not choose.
+ * Its own padding now: it used to be `flex: 0 0 100%`, a full-width row inside the control
+ * strip's flex container, and outside that container that declaration means nothing.
+ */
 .mcp-strip {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 3px 8px;
-  flex: 0 0 100%;
+  flex: 0 0 auto;
   min-width: 0;
+  padding: 4px 12px 0;
 }
 
 .mcp-server {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
 }
 
@@ -1246,14 +1671,19 @@
  * empty when idle rather than pushing the composer around — a line that appears and
  * disappears is already motion enough without the layout moving too.
  */
+/**
+ * The live status, at the foot of the transcript.
+ *
+ * Padded to the same 12px as a row, so it sits in the conversation's column rather than
+ * looking like something bolted underneath it. It is the last thing in the scroller, so the
+ * pane's follow-the-tail behaviour keeps it in view without any work of its own.
+ */
 .activity {
   display: flex;
   align-items: baseline;
   gap: 7px;
-  flex: 0 0 auto;
-  margin: 0 12px;
-  padding: 2px 0;
-  font-size: 11px;
+  padding: 4px 12px 2px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
 }
 
@@ -1325,12 +1755,71 @@
   color: var(--warn);
 }
 
+/* What a prompt was sent with, under the prompt itself. */
+.t-sent {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-dim);
+}
+
+/* --- Attachments ------------------------------------------------------------ */
+
+/**
+ * What is waiting to go with the next prompt.
+ *
+ * Above the input rather than inside it: an attachment is part of the message but not part
+ * of the sentence, and putting chips on the same line as the caret moves the caret every
+ * time one arrives.
+ */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  /* `flex-basis`, not `width`: in a flex row the basis is what decides the line break. */
+  flex: 0 0 100%;
+  margin-bottom: 6px;
+}
+
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* The whole chip removes it, so the × says which click it is rather than being a target. */
+.attachment-remove {
+  color: var(--ink-dim);
+}
+
+.attachment:hover .attachment-remove {
+  color: var(--error);
+}
+
+/* Something is over the composer and would be taken if dropped. */
+.composer.is-over {
+  border-color: var(--sym);
+  background: var(--tint-accent);
+}
+
 /* --- Composer --------------------------------------------------------------- */
 
 .composer {
   /* The command menu is absolutely positioned against this. */
   position: relative;
   display: flex;
+  /* Wraps, so the attachment row can claim a line of its own. Without it `width: 100%` on
+     a row-direction flex child is just a very wide item sitting beside the caret, which is
+     what pushed the prompt halfway across the box. */
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 8px;
   flex: 0 0 auto;
@@ -1353,7 +1842,7 @@
   flex: 0 0 auto;
   color: var(--ink-dim);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 20px;
   user-select: none;
 }
@@ -1363,7 +1852,7 @@
   resize: none;
   padding: 0;
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   line-height: 20px;
   color: var(--ink);
   background: transparent;
@@ -1423,7 +1912,7 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .gutter-sync,
-  .measure.is-thinking {
+  .activity-mark {
     animation: none;
   }
 
@@ -1486,7 +1975,7 @@
 .settings-tab {
   padding: 6px 10px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   color: var(--ink-dim);
   background: transparent;
@@ -1559,14 +2048,14 @@
 }
 
 .model-name {
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--ink);
 }
 
 .model-size {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
 }
 
@@ -1574,21 +2063,28 @@
   margin-left: auto;
   flex: 0 0 auto;
   padding: 1px 6px;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   border-radius: var(--r-chip);
   background: var(--elevated);
   color: var(--ink-dim);
 }
 
-/* Only the good news is coloured. Everything else is a fact, not a warning. */
+/**
+ * Only the good news is coloured. Everything else is a fact, not a warning.
+ *
+ * White on the fill, like every other field built from a role. It was `--sym` on
+ * `--sym-fill`, which in the light palette are the same value -- blue ink on a blue field,
+ * so the chip was invisible. The fills exist precisely because a role at ink brightness is
+ * unreadable as a background; see the note beside them in `world.css`.
+ */
 .model-fit.is-vram {
-  color: var(--sym);
+  color: #ffffff;
   background: var(--sym-fill);
 }
 
 .model-note {
   margin: 4px 0 0;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--ink-dim);
 }
@@ -1621,7 +2117,7 @@
 }
 
 .model-ready {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
 }
 
@@ -1683,7 +2179,7 @@
   height: 22px;
   padding: 0 4px 0 9px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--ink-dim);
   background: transparent;
@@ -1705,7 +2201,7 @@
   width: 18px;
   height: 18px;
   margin-right: 3px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--ink-dim);
   background: transparent;
   border: 0;
@@ -1738,7 +2234,7 @@
   flex: 0 0 auto;
   height: 24px;
   padding: 0 12px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
   border-top: 1px solid var(--hairline);
 }
@@ -1796,7 +2292,7 @@
   width: 100%;
   padding: 3px 8px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   background: transparent;
   border: 0;
@@ -1849,7 +2345,7 @@
 .change-dir {
   min-width: 0;
   color: var(--ink-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1860,7 +2356,7 @@
   gap: 6px;
   flex: 0 0 auto;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1892,7 +2388,7 @@
   flex: 1 1 auto;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1921,7 +2417,7 @@
 
 .hunk-header {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -1946,10 +2442,15 @@
 }
 
 .segment {
+  /* Centred explicitly rather than left to the button's default box: with an explicit
+     height and an inherited line-height, WebView2 sits the label off-centre. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 9px;
   height: 18px;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--ink-dim);
   background: transparent;
@@ -1964,6 +2465,12 @@
 
 .segment:hover:not(:disabled) {
   color: var(--ink);
+  background: var(--sunken);
+}
+
+.segment.is-on:hover:not(:disabled) {
+  /* Already raised; a second fill under it would only muddy the shadow. */
+  background: var(--elevated);
 }
 
 .segment.is-on {
@@ -2005,7 +2512,7 @@
   padding: 0 4px 0 9px;
   height: 22px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--ink-dim);
   background: transparent;
@@ -2049,7 +2556,7 @@
   height: 22px;
   padding: 0;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-lg);
   line-height: 1;
   color: var(--ink-dim);
   background: transparent;
@@ -2148,8 +2655,10 @@
 
 /* Amber is the operation in progress, matching the address column. */
 .lsp-server.is-starting .lsp-dot,
+/* `--warn`, not `--addr`: indexing is a state you may be waiting on, and `--addr` means a
+   position in a listing everywhere else in this file. */
 .lsp-server.is-indexing .lsp-dot {
-  background: var(--addr);
+  background: var(--warn);
 }
 
 .lsp-server.is-ready .lsp-dot {
@@ -2249,7 +2758,7 @@
   min-width: 0;
   padding: 3px 8px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   background: transparent;
   border: 0;
@@ -2320,7 +2829,7 @@
   width: 100%;
   padding: 3px 8px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   background: transparent;
   border: 0;
@@ -2345,7 +2854,7 @@
 .branch-subject {
   min-width: 0;
   color: var(--ink-dim);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2363,7 +2872,7 @@
   min-width: 0;
   padding: 6px 8px;
   font-family: var(--ui);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
   color: var(--ink);
   background: var(--sunken);
@@ -2412,7 +2921,7 @@
 
 .timeline-label {
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -2467,7 +2976,7 @@
 
 .convo-name {
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -2475,7 +2984,7 @@
 }
 
 .convo-meta {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -2501,7 +3010,7 @@
   max-width: 72ch;
   margin-bottom: 8px;
   padding: 7px 11px;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   line-height: 1.55;
   color: var(--ink);
   border-radius: var(--r-panel);
@@ -2522,8 +3031,8 @@
   display: block;
   margin-top: 4px;
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--sym);
+  font-size: var(--fs-xs);
+  color: var(--ink-dim);
 }
 
 /* The agent's terminal tab. Marked, not decorated: the dot says whose output this is,
@@ -2599,7 +3108,7 @@
   padding: 8px 10px;
   overflow-x: auto;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--ink);
   background: var(--sunken);
@@ -2617,16 +3126,18 @@
   position: absolute;
   top: 4px;
   right: 8px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--ink-dim);
   user-select: none;
 }
 
+/* The sunken ground already separates it. Accent ink on top said "this is interactive",
+   which a fragment of code in a sentence is not. */
 .md-inline-code {
   padding: 1px 4px;
   font-family: var(--mono);
   font-size: 0.92em;
-  color: var(--sym);
+  color: var(--ink);
   background: var(--sunken);
   border-radius: var(--r-chip);
 }
@@ -2701,14 +3212,14 @@
 }
 
 .palette-label {
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: var(--ink);
 }
 
 /* The note sits under the label, in the second column, so the chips stay in one line. */
 .palette-note {
   grid-column: 2;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
 }
 
@@ -2777,8 +3288,11 @@
   z-index: 20;
   display: grid;
   gap: 1px;
-  max-height: 260px;
+  max-height: 320px;
   overflow-y: auto;
+  /* A skill's argument hint runs to eighty characters. Without this the row grows past the
+     menu and the whole thing scrolls sideways instead of the description ellipsing. */
+  overflow-x: hidden;
   padding: 4px;
   background: var(--elevated);
   border: 1px solid var(--border);
@@ -2788,7 +3302,9 @@
 
 .command-row {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  /* Both the hint and the description may shrink; only the name keeps its width, because it
+     is the thing being read and typed. */
+  grid-template-columns: auto minmax(0, auto) minmax(0, 1fr);
   align-items: baseline;
   gap: 8px;
   padding: 4px 8px;
@@ -2802,27 +3318,53 @@
 
 /* Highlight follows the keyboard, and hover moves the keyboard's idea of where it is, so
    the two can never disagree about which row Tab would take. */
+/* Keyboard selection is the strong state, so hover sits one step under it and gives way
+   to it. Without this the menu ignored the pointer entirely. */
+.command-row:hover:not(.is-on) {
+  background: var(--sunken);
+}
+
 .command-row.is-on {
   background: var(--tint-accent);
 }
 
+/* Every row wore the accent, so the row that actually is selected had nothing left to
+   say it with. The selected row's field carries that; the name is just the name. */
 .command-name {
   font-family: var(--mono);
-  font-size: 12px;
-  color: var(--sym);
+  font-size: var(--fs-sm);
+  color: var(--ink);
   white-space: nowrap;
 }
 
 .command-args {
+  min-width: 0;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Where a command actually runs, when it is not the model. Dim: it is a qualifier on the
+   name, not a second name. */
+.command-where {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  font-size: var(--fs-2xs);
+  color: var(--ink-dim);
+  background: var(--sunken);
+  border-radius: var(--r-chip);
+}
+
+.command-where.is-owned {
+  color: var(--xref);
 }
 
 .command-note {
   min-width: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -2902,7 +3444,7 @@
   flex: 0 0 auto;
   padding: 11px 14px;
   font-family: var(--ui);
-  font-size: 14px;
+  font-size: var(--fs-lg);
   color: var(--ink);
   background: transparent;
   border: 0;
@@ -2934,12 +3476,16 @@
   cursor: default;
 }
 
+.quick-row:hover:not(.is-on) {
+  background: var(--sunken);
+}
+
 .quick-row.is-on {
   background: var(--tint-accent);
 }
 
 .quick-name {
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: var(--ink);
   white-space: nowrap;
 }
@@ -2947,7 +3493,7 @@
 /* The directory is context, not the answer, so it never competes with the name. */
 .quick-dir {
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -3011,7 +3557,7 @@
 .settings-legend {
   margin: 12px 0 8px;
   font-family: var(--ui);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 550;
   color: var(--ink-dim);
 }
@@ -3027,7 +3573,7 @@
 }
 
 .settings-label {
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: var(--ink);
 }
 
@@ -3044,7 +3590,7 @@
   height: 22px;
   padding: 0 9px;
   font-family: var(--ui);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--ink-dim);
   background: var(--sunken);
@@ -3080,7 +3626,7 @@
 .settings-path {
   min-width: 0;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -3091,8 +3637,29 @@
 }
 
 /* A setting that is read rather than chosen, so it sits where a control would. */
+/* The account, and what kind it is. Two lines rather than one: the email is what
+   identifies it and the plan is what qualifies it, and joining them makes both harder to
+   find at a glance. */
+.settings-account {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.settings-account .settings-value {
+  color: var(--ink);
+}
+
+/* A consequence the click has not had yet. Indented under the row it belongs to, so it
+   reads as part of that control rather than as a note about the section. */
+.settings-note {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+
 .settings-value {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--ink-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -3154,7 +3721,7 @@
  */
 .settings-project-name {
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -3165,7 +3732,7 @@
 }
 
 .settings-project-meta {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--ink-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

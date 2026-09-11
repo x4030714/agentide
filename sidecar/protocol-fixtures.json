@@ -107,6 +107,74 @@
         "t": "ping",
         "id": "ping-1"
       }
+    },
+    {
+      "name": "warm, before the first prompt",
+      "message": {
+        "t": "warm",
+        "sessionId": "s-1",
+        "cwd": "C:/work/thing"
+      }
+    },
+    {
+      "name": "prompt, in Advanced mode",
+      "message": {
+        "t": "prompt",
+        "sessionId": "s-1",
+        "cwd": "C:/work/thing",
+        "text": "rename this symbol everywhere",
+        "options": {
+          "promptProfile": "advanced"
+        }
+      }
+    },
+    {
+      "name": "auth, asking who is signed in",
+      "message": {
+        "t": "auth",
+        "action": "status"
+      }
+    },
+    {
+      "name": "auth, signing out",
+      "message": {
+        "t": "auth",
+        "action": "logout",
+        "account": "work"
+      }
+    },
+    {
+      "name": "prompt, on a second account",
+      "message": {
+        "t": "prompt",
+        "sessionId": "s-1",
+        "cwd": "C:/work/thing",
+        "text": "who am i",
+        "options": {
+          "account": "work"
+        }
+      }
+    },
+    {
+      "name": "prompt, with an image and a file attached",
+      "message": {
+        "t": "prompt",
+        "sessionId": "s-1",
+        "cwd": "C:/work/thing",
+        "text": "what is wrong with this screenshot",
+        "attachments": [
+          {
+            "kind": "image",
+            "mediaType": "image/png",
+            "data": "iVBORw0KGgo=",
+            "name": "shot.png"
+          },
+          {
+            "kind": "file",
+            "path": "C:/work/thing/src/main.rs"
+          }
+        ]
+      }
     }
   ],
   "sidecarToHost": [
@@ -366,6 +434,69 @@
             "fix": "Install Git for Windows -- checkpoints are the whole undo story"
           }
         ]
+      }
+    },
+    {
+      "name": "account, signed in on a subscription",
+      "message": {
+        "t": "account",
+        "account": {
+          "loggedIn": true,
+          "method": "claude.ai",
+          "email": "someone@example.com",
+          "organization": "someone's Organization",
+          "plan": "pro",
+          "loginCommand": "\"C:/x/claude.exe\" auth login"
+        },
+        "key": "default",
+        "accounts": [
+          {
+            "key": "default",
+            "name": "Default",
+            "configDir": "C:/Users/someone/.claude",
+            "used": true
+          },
+          {
+            "key": "work",
+            "name": "Work",
+            "configDir": "C:/Users/someone/.claude-work",
+            "used": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "account, after signing out",
+      "message": {
+        "t": "account",
+        "account": {
+          "loggedIn": false
+        },
+        "note": "signed out",
+        "key": "default",
+        "accounts": [
+          {
+            "key": "default",
+            "name": "Default",
+            "configDir": "C:/Users/someone/.claude",
+            "used": true
+          },
+          {
+            "key": "work",
+            "name": "Work",
+            "configDir": "C:/Users/someone/.claude-work",
+            "used": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "context, after a turn",
+      "message": {
+        "t": "context",
+        "sessionId": "s-1",
+        "tokens": 41476,
+        "max": 200000
       }
     }
   ]

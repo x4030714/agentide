@@ -5,9 +5,11 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
+import { inOrder } from "./in-order";
 import { MAXIMIZED_EVENT } from "./protocol";
 import type {
   AgentEvent,
+  Attachment,
   AgentStartOptions,
   DirListing,
   FileContents,
@@ -113,13 +115,34 @@ export async function agentPrompt(
   sessionId: string,
   text: string,
   options?: PromptOptions,
+  attachments?: Attachment[],
 ): Promise<void> {
-  return invoke("agent_prompt", { sessionId, text, options });
+  return invoke("agent_prompt", { sessionId, text, attachments, options });
+}
+
+/** Build the query before the first prompt, so `/` has commands to offer and the model
+ * picker is populated. Fire and forget: a failure costs a menu, never a turn. */
+export async function agentWarm(sessionId: string, options?: PromptOptions): Promise<void> {
+  return invoke("agent_warm", { sessionId, options });
 }
 
 /** Stop the running turn and drop anything queued behind it. */
 export async function agentInterrupt(sessionId: string): Promise<void> {
   return invoke("agent_interrupt", { sessionId });
+}
+
+/**
+ * Ask who is signed in, or sign out. The answer arrives as an `account` event, not here —
+ * the sidecar owns the binary that knows.
+ *
+ * Signing out is machine-wide: it drops the credential the person's own Claude Code uses.
+ * Confirm before calling it; nothing here can put it back.
+ */
+export async function agentAuth(
+  action: "status" | "logout",
+  account?: string,
+): Promise<void> {
+  return invoke("agent_auth", { action, account });
 }
 
 /** Answer a `permission_request`. Rejects with an `agent` error if something already answered it,
@@ -266,7 +289,18 @@ export async function ptySpawn(
     if (message instanceof ArrayBuffer) onOutput(new Uint8Array(message));
     else onEvent(message);
   };
-  return invoke<PtyInfo>("pty_spawn", { options, onEvent: channel });
+  // Queued per id: see `in-order.ts` for the race this closes.
+  return inOrder(options.id, () => invoke<PtyInfo>("pty_spawn", { options, onEvent: channel }));
+}
+
+/**
+ * A file as base64, for attaching an image to a prompt.
+ *
+ * Rejects rather than truncates when the file is over `maxBytes`: half an image is not a
+ * smaller image, and the caller has a limit worth naming in the error.
+ */
+export async function readFileBase64(path: WirePath, maxBytes: number): Promise<string> {
+  return invoke<string>("read_file_base64", { path, maxBytes });
 }
 
 /** Send input to the shell — xterm's `onData` unchanged. Rejects with a `"pty"` error once the
@@ -284,7 +318,8 @@ export async function ptyResize(id: string, rows: number, cols: number): Promise
 /** End a session and everything in it. Safe to call twice, and on one that already exited —
  * closing a tab should not have to check first. */
 export async function ptyKill(id: string): Promise<void> {
-  return invoke("pty_kill", { id });
+  // Behind the same queue as the spawn: a kill that overtakes one kills the wrong session.
+  return inOrder(id, () => invoke<void>("pty_kill", { id }));
 }
 
 // --- Language servers -- wrappers over `src-tauri/src/lsp.rs` ----------------

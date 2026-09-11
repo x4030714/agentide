@@ -18,6 +18,7 @@ function shape(change: Partial<QueryShape> = {}, options: Partial<PromptOptions>
       autoMemoryDirectory: "C:/Users/dev/agentide-vault",
     },
     provider: null,
+    account: null,
     ...change,
     options: {
       model: "claude-opus-5",
@@ -179,5 +180,19 @@ test("resumeConversation is not read directly; the conversation field carries it
   assert.equal(
     queryFingerprint(shape()),
     queryFingerprint(shape({}, { resumeConversation: "some-old-conversation" })),
+  );
+});
+
+test("switching Claude account rebuilds: CLAUDE_CONFIG_DIR is read once, at startup", () => {
+  const work = { key: "work", name: "Work", configDir: "C:/Users/dev/.claude-work" };
+  assert.notEqual(queryFingerprint(shape()), queryFingerprint(shape({ account: work })));
+});
+
+test("repointing an account's directory rebuilds, even under the same name", () => {
+  const before = { key: "work", name: "Work", configDir: "C:/Users/dev/.claude-work" };
+  const after = { key: "work", name: "Work", configDir: "D:/claude-work" };
+  assert.notEqual(
+    queryFingerprint(shape({ account: before })),
+    queryFingerprint(shape({ account: after })),
   );
 });

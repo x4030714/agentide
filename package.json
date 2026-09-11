@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/free-port.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "build:sidecar": "npm --prefix sidecar run build",
@@ -22,7 +23,7 @@
   "dependencies": {
     "@fontsource/archivo-narrow": "^5.3.0",
     "@fontsource/geist-sans": "^5.3.0",
-    "@fontsource/iosevka": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.3",
@@ -47,5 +48,10 @@
   },
   "bin": {
     "agentide": "sidecar/dist/cli.mjs"
+  },
+  "overrides": {
+    "@xterm/addon-canvas": {
+      "@xterm/xterm": "$@xterm/xterm"
+    }
   }
 }

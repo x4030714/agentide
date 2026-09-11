@@ -24,8 +24,8 @@
 @import "@fontsource/geist-sans/latin-400.css";
 @import "@fontsource/geist-sans/latin-500.css";
 @import "@fontsource/geist-sans/latin-600.css";
-@import "@fontsource/iosevka/400.css";
-@import "@fontsource/iosevka/500.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
 
 :root {
   color-scheme: light dark;
@@ -84,6 +84,18 @@
   --uncommitted: #9c1489; /* 4.79 */
 
   /**
+   * One token, one meaning. This is the rule the four roles above are worth having.
+   *
+   * `--sym` is the accent, and the accent means exactly one thing: **the app is pointing at
+   * this** -- selected, focused, live, the thing your next keystroke acts on. It is not
+   * available for emphasis. Inline code, a command's name and a running token count all wore
+   * it once, which is how a menu ended up with every row accented and nothing left to mark
+   * the row that was actually selected.
+   *
+   * The other three are content, not state: `--addr` is a position in a listing, `--xref` is
+   * an addition, `--imm` is a removal. A status that is none of those takes `--warn`,
+   * `--error` or `--hint`, which is what those are for.
+   *
    * Fills, for the few places a role becomes a field with white text on it: the tree
    * selection pill and the primary/warn buttons. Separate from the ink roles because
    * `--sym` at syntax brightness gives 2.03:1 under white — legible as ink, unreadable
@@ -237,6 +249,30 @@
   --t-base: 180ms;
   --t-slow: 260ms;
 
+  /**
+   * Five type ranks, and no sixth.
+   *
+   * Whole pixels on purpose: the file grew twenty-three fractional sizes -- 9.5, 10.5,
+   * 11.5, 12.5 -- each a nudge that looked right in one pane. WebView2 rasterises a
+   * fractional size softly, so the cost was blurred text everywhere for a difference
+   * nobody could name. `--fs-md` is the root size: body text agrees with the document
+   * rather than sitting half a pixel under it.
+   */
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
+
+
+  /**
+   * The gap between panes, and around them.
+   *
+   * Wide enough that the ground reads as ground rather than as a thick border, narrow
+   * enough that it costs no room worth having on a dense surface.
+   */
+  --seam: 6px;
+
   /* UI rows are roomier than code lines; they are read at a glance, not scanned. */
   --row: 24px;
   --titlebar: 38px;
@@ -249,10 +285,20 @@
   --rail-item: 44px;
 
   --ui: "Geist Sans", -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --mono: "Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  /**
+   * Iosevka was here for its width -- it fits more characters per inch than anything else --
+   * but that narrowness is the whole of what it reads as, and it made every tool name and
+   * path in the transcript look cramped. Density is worth paying for in layout, not in
+   * letterforms.
+   *
+   * Geist Mono replaced it and read as barely different, so this is the deliberately
+   * unmistakable one: a tall x-height and a wide, upright figure that nobody confuses with
+   * the Consolas fallback.
+   */
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
 
   font-family: var(--ui);
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-feature-settings: "cv01", "ss01";
   line-height: var(--row);
   color: var(--ink);
@@ -329,8 +375,8 @@ body {
 /** A section label. Sentence case at UI weight — not the etched small caps of before. */
 .legend {
   font-family: var(--ui);
-  font-size: 11px;
-  font-weight: 550;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   letter-spacing: 0.005em;
   color: var(--ink-dim);
   line-height: 1;
@@ -339,7 +385,7 @@ body {
 /** Secondary prose: empty states, notes, anything that is not itself data. */
 .note {
   color: var(--ink-dim);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .note.is-error {
@@ -350,7 +396,7 @@ body {
 .measure {
   color: var(--ink-dim);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

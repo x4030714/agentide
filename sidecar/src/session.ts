@@ -11,9 +11,12 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { accountEnv, findAccount, loadAccounts, type Account } from "./accounts.ts";
+import { advancedOptions } from "./advanced.ts";
 import { HostLink } from "./host.ts";
 import { createIdeServer, IDE_SERVER_NAME, ideToolNames } from "./ide-tools.ts";
 import { loadMcpServers } from "./mcp-config.ts";
+import { contextSettings, loadCompactWindow } from "./context-config.ts";
 import { loadMemoryConfig, memorySettings } from "./memory-config.ts";
 import {
   findProvider,
@@ -25,7 +28,7 @@ import {
 } from "./provider-config.ts";
 import { ModelCatalogue } from "./models.ts";
 import { createPermissionHandler } from "./permissions.ts";
-import type { DoneReason, JsonObject, PromptOptions } from "./protocol.ts";
+import type { Attachment, DoneReason, JsonObject, PromptOptions } from "./protocol.ts";
 
 /** Used when the host does not name one. */
 export const DEFAULT_MODEL = "claude-opus-5";
@@ -53,6 +56,10 @@ export interface QueryShape {
   /** The backend this turn runs against, or null for Anthropic. Resolved, not a key: editing a
    * provider's URL without renaming it must rebuild the query too. */
   provider: Provider | null;
+  /** Which Claude account this turn runs under, or null for the machine's own login.
+   * Resolved for the same reason as the provider: repointing an account's directory without
+   * renaming it has to rebuild the query. */
+  account: Account | null;
   options?: PromptOptions;
 }
 
@@ -72,12 +79,18 @@ export function queryFingerprint(shape: QueryShape): string {
     options?.disallowedTools ?? null,
     options?.maxTurns ?? null,
     options?.includePartialMessages ?? null,
+    // No setter for `agents`, `hooks` or `thinking`: the CLI reads all three at startup, so
+    // switching into or out of Advanced is a spawn rather than a retune.
+    options?.promptProfile ?? null,
     shape.settings,
     // By value: the backend is environment the CLI reads once at startup, so a live query
     // cannot move between backends. The token is in because rotating a key must rebuild too.
     shape.provider
       ? [shape.provider.key, shape.provider.baseUrl, shape.provider.token]
       : null,
+    // By value, and for the same reason: `CLAUDE_CONFIG_DIR` is read once when the CLI
+    // starts and there is no setter, so a live query cannot move between accounts.
+    shape.account ? [shape.account.key, shape.account.configDir] : null,
   ]);
 }
 
@@ -161,9 +174,14 @@ export class Session {
   }
 
   /** Queue a turn. Resolves when it has finished and its `done` has been sent. */
-  prompt(cwd: string, text: string, options?: PromptOptions): Promise<void> {
+  prompt(
+    cwd: string,
+    text: string,
+    options?: PromptOptions,
+    attachments?: Attachment[],
+  ): Promise<void> {
     this.#claim();
-    this.#chain = this.#chain.then(() => this.#runTurn(cwd, text, options));
+    this.#chain = this.#chain.then(() => this.#runTurn(cwd, text, options, attachments));
     return this.#chain;
   }
 
@@ -281,11 +299,20 @@ export class Session {
     // Sent every turn, empty or not -- the empty list clears the strip. A skipped server
     // never reaches the SDK's init message, so this is the only report it exists.
     this.#link.send({ t: "mcp_gated", sessionId: this.#sessionId, servers: external.gated });
+    // Resolved here rather than in `#options`, so an unknown key fails the turn with a name
+    // instead of quietly running it under whichever account the machine last used.
+    const account = options?.account ? findAccount(loadAccounts(), options.account) : null;
+    if (options?.account && !account) {
+      throw new Error(`no account named "${options.account}" in ~/.agentide/accounts.json`);
+    }
     const shape: QueryShape = {
       cwd,
       conversation: this.#resumeId,
-      settings: memorySettings(memory),
+      // Memory and the compaction window travel in one inline block; both are startup-only
+      // and both belong in `queryFingerprint`, which `settings` already is.
+      settings: { ...(memorySettings(memory) ?? {}), ...contextSettings(loadCompactWindow()) },
       provider,
+      account,
       options,
     };
     const live = await this.#ensureQuery(shape, external.servers);
@@ -295,7 +322,12 @@ export class Session {
     return live;
   }
 
-  async #runTurn(cwd: string, text: string, options?: PromptOptions): Promise<void> {
+  async #runTurn(
+    cwd: string,
+    text: string,
+    options?: PromptOptions,
+    attachments?: Attachment[],
+  ): Promise<void> {
     if (this.#disposed) return;
     if (this.#cancelled) {
       // Queued behind a turn that was interrupted; report it rather than silently
@@ -330,7 +362,7 @@ export class Session {
       // the cancelled text must not reach the model.
       if (this.#pending === pending) {
         pending.live = live;
-        live.queue.push(userMessage(text));
+        live.queue.push(userMessage(text, attachments));
       }
       outcome = await finished;
     } catch (thrown) {
@@ -455,6 +487,9 @@ export class Session {
           msg: message as unknown as JsonObject,
         });
         if (message.type !== "result") continue;
+        // Measured now, when the turn's whole history is in the window. Fire and forget: a
+        // failed measurement costs a number in the status bar, never the turn.
+        void this.#publishContext(live);
         const reason = resultReason(message.subtype);
         this.#settle(live, { reason, error: reason === "error" ? message.subtype : undefined });
       }
@@ -526,15 +561,67 @@ export class Session {
           : {}),
       },
       /** Spread over `process.env`, never in place of it -- `env` replaces the subprocess
-       * environment whole. Omitted for an Anthropic turn rather than merely matching. */
-      ...(shape.provider
-        ? { env: { ...process.env, ...providerEnv(shape.provider) } }
+       * environment whole. Both of these are read by the CLI at startup, which is why both
+       * are in `queryFingerprint`. */
+      ...(shape.provider || shape.account
+        ? {
+            env: {
+              ...process.env,
+              ...(shape.provider ? providerEnv(shape.provider) : {}),
+              ...(shape.account ? accountEnv(shape.account) : {}),
+            },
+          }
         : {}),
       /** The agent's memory, and who may write to it. Inline rather than in the person's
        * `~/.claude/settings.json`: this must not change their Claude Code everywhere else. */
       ...(shape.settings ? { settings: shape.settings as Options["settings"] } : {}),
+      /** Advanced mode's subagents, thinking budget and hooks. Last, so what it adds is
+       * plainly the mode's and not tangled into the options every turn gets. */
+      ...(options?.promptProfile === "advanced"
+        ? advancedOptions((text) => this.#note(text))
+        : {}),
       stderr: (data) => process.stderr.write(data),
     };
+  }
+
+  /**
+   * A line for the transcript that no SDK message would produce.
+   *
+   * Sent as an `event` in the SDK's own shape rather than as a new wire message: the
+   * transcript already turns a `system` message into a row, and a second path into that
+   * surface would be a second thing to keep in step with it.
+   */
+  #note(text: string): void {
+    if (this.#disposed) return;
+    this.#link.send({
+      t: "event",
+      sessionId: this.#sessionId,
+      msg: { type: "system", subtype: "agentide_note", text },
+    });
+  }
+
+  /**
+   * How much of the window this conversation now occupies.
+   *
+   * Asked of the live query after every result, because nothing else says. A conversation
+   * on a million-token model grew to 925k tokens with no sign of it anywhere in the window,
+   * and every tool call was re-reading all of it. `max` is the window the SDK measures
+   * against -- the compaction window when one is set -- so the percentage means "how close
+   * to being compacted", which is the useful question.
+   */
+  async #publishContext(live: LiveQuery): Promise<void> {
+    try {
+      const usage = await live.query.getContextUsage();
+      if (this.#live !== live || this.#disposed) return;
+      this.#link.send({
+        t: "context",
+        sessionId: this.#sessionId,
+        tokens: Math.max(0, Math.round(usage.totalTokens)),
+        max: Math.max(1, Math.round(usage.rawMaxTokens)),
+      });
+    } catch {
+      /* A retired query, or a CLI too old to answer. The status bar keeps its last figure. */
+    }
   }
 
   /** Learn the SDK's session id so the next turn continues this conversation. */
@@ -586,11 +673,51 @@ class PromptQueue {
 
 /** One prompt in the shape the CLI reads off its stdin, `session_id: ""` and all: the streaming
  * path forwards this object verbatim, so any difference here is one the CLI sees. */
-function userMessage(text: string): SDKUserMessage {
+/**
+ * The prompt as content blocks: the text, plus whatever was attached to it.
+ *
+ * Images become `image` blocks, which is the only way a model sees one. Files become a line
+ * of text naming the path -- deliberately not the file's contents. The model already has
+ * `Read` and the `ide_*` tools, and inlining a source file would put every byte of it into
+ * the prompt on this turn *and every later turn of the conversation*, where a tool call
+ * costs it once. The exception is an image, which no tool can hand back usefully.
+ *
+ * The text goes last. An instruction after its attachments reads as being about them.
+ */
+function promptContent(text: string, attachments: Attachment[] | undefined) {
+  const blocks: NonNullable<SDKUserMessage["message"]["content"]> = [];
+  const files: string[] = [];
+
+  for (const attachment of attachments ?? []) {
+    if (attachment.kind === "image") {
+      blocks.push({
+        type: "image",
+        source: { type: "base64", media_type: attachment.mediaType, data: attachment.data },
+      });
+    } else {
+      files.push(attachment.path);
+    }
+  }
+
+  if (files.length > 0) {
+    blocks.push({
+      type: "text",
+      text:
+        files.length === 1
+          ? `Attached file: ${files[0]}`
+          : `Attached files:\n${files.map((path) => `- ${path}`).join("\n")}`,
+    });
+  }
+  // An empty prompt is legitimate when something is attached: "look at this" is the image.
+  if (text !== "" || blocks.length === 0) blocks.push({ type: "text", text });
+  return blocks;
+}
+
+function userMessage(text: string, attachments?: Attachment[]): SDKUserMessage {
   return {
     type: "user",
     session_id: "",
-    message: { role: "user", content: [{ type: "text", text }] },
+    message: { role: "user", content: promptContent(text, attachments) },
     parent_tool_use_id: null,
   };
 }

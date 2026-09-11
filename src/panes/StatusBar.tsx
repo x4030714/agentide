@@ -16,9 +16,13 @@ interface StatusBarProps {
   /** Bumped when a turn ends, the other way the repository moves under us. */
   revision: number;
   servers: ServerRow[];
+  /** What the open conversation has cost, in USD. Zero until a turn has finished. */
+  cost: number;
+  /** How much of the window the conversation fills. Null until a turn has finished. */
+  context: { tokens: number; max: number } | null;
 }
 
-export function StatusBar({ root, changes, revision, servers }: StatusBarProps) {
+export function StatusBar({ root, changes, revision, servers, cost, context }: StatusBarProps) {
   const [git, setGit] = useState<GitStatus | null>(null);
   const cursor = useCursor();
 
@@ -54,6 +58,37 @@ export function StatusBar({ root, changes, revision, servers }: StatusBarProps) 
         </span>
       )}
       <ServerStatus servers={servers} />
+      {/**
+       * What this conversation has cost so far.
+       *
+       * Here rather than in the transcript because it is a fact about the session, like the
+       * branch and the language servers beside it -- and because the place you want it is
+       * before you send the next turn, not buried in the last one.
+       *
+       * Three decimals: turns land in the tens of cents and a two-decimal figure would sit
+       * at $0.00 through the first few, which reads as free rather than as cheap.
+       */}
+      {cost > 0 && (
+        <span className="status-cost" title="Estimated cost of this conversation">
+          ${cost.toFixed(3)}
+        </span>
+      )}
+      {/**
+       * How full the window is.
+       *
+       * The number that was missing when a conversation reached 925k tokens and every tool
+       * call re-read all of it. Shown as a share of the window the SDK will compact at, so
+       * it answers "how close to compaction", and coloured only past 80% -- a warning that is
+       * always on is not a warning.
+       */}
+      {context && (
+        <span
+          className={`status-context${context.tokens / context.max >= 0.8 ? " is-high" : ""}`}
+          title={`${context.tokens.toLocaleString()} of ${context.max.toLocaleString()} tokens in the window — compaction happens at the limit`}
+        >
+          {Math.round((context.tokens / context.max) * 100)}% ctx
+        </span>
+      )}
       {cursor && (
         <span className="status-cursor">
           Ln {cursor.line}, Col {cursor.column}

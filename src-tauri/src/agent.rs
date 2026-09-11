@@ -32,6 +32,8 @@ enum HostMessage {
         cwd: WirePath,
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        attachments: Option<Vec<crate::ipc::Attachment>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         options: Option<PromptOptions>,
     },
     #[serde(rename_all = "camelCase")]
@@ -47,6 +49,23 @@ enum HostMessage {
     ToolReply { id: String, result: ToolResult },
     #[serde(rename_all = "camelCase")]
     Interrupt { session_id: String },
+    /// Ask who is signed in, or sign out. Both answer with `Account`. Signing out is
+    /// machine-wide, so the surface sending it has already confirmed with the person.
+    #[serde(rename_all = "camelCase")]
+    Auth {
+        action: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        account: Option<String>,
+    },
+    /// Build the query without running a turn, so the command and model lists are there
+    /// before the first prompt rather than after it.
+    #[serde(rename_all = "camelCase")]
+    Warm {
+        session_id: String,
+        cwd: WirePath,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        options: Option<PromptOptions>,
+    },
     /// Liveness probe, answered without touching the model. Used by the tests.
     #[serde(rename_all = "camelCase")]
     Ping { id: String },
@@ -105,6 +124,22 @@ enum SidecarMessage {
         reason: DoneReason,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// Who is signed in, after an `Auth` request.
+    #[serde(rename_all = "camelCase")]
+    Account {
+        account: crate::ipc::Account,
+        key: String,
+        accounts: Vec<crate::ipc::AccountInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+    /// How much of the context window the conversation occupies, after a turn.
+    #[serde(rename_all = "camelCase")]
+    Context {
+        session_id: String,
+        tokens: u64,
+        max: u64,
     },
     #[serde(rename_all = "camelCase")]
     Pong { id: String },
@@ -336,6 +371,30 @@ impl Router {
             }
             SidecarMessage::Readiness { problems } => {
                 self.emit(AgentEvent::Readiness { problems });
+            }
+            SidecarMessage::Context {
+                session_id,
+                tokens,
+                max,
+            } => {
+                self.emit(AgentEvent::Context {
+                    session_id,
+                    tokens,
+                    max,
+                });
+            }
+            SidecarMessage::Account {
+                account,
+                key,
+                accounts,
+                note,
+            } => {
+                self.emit(AgentEvent::Account {
+                    account,
+                    key,
+                    accounts,
+                    note,
+                });
             }
             SidecarMessage::Commands { commands } => {
                 self.emit(AgentEvent::Commands { commands });
@@ -629,6 +688,10 @@ pub fn agent_prompt(
     workspace: State<'_, WorkspaceState>,
     session_id: String,
     text: String,
+    // Images the model looks at and files it is pointed at. Never logged: an image is the
+    // whole of whatever was on screen when it was taken. (`//`, not `///`: a doc comment on
+    // a function parameter is a hard error, not a lint.)
+    attachments: Option<Vec<crate::ipc::Attachment>>,
     options: Option<PromptOptions>,
 ) -> Result<(), IpcError> {
     let cwd = workspace.root().ok_or_else(|| {
@@ -642,6 +705,31 @@ pub fn agent_prompt(
             session_id,
             cwd,
             text,
+            attachments,
+            options,
+        })
+    })
+}
+
+/// Build the query before the first prompt, so the command and model lists are there when
+/// someone types `/` rather than only after a turn has been spent.
+///
+/// Silent when no folder is open: there is nothing to warm against, and the first prompt
+/// will refuse for the same reason with a message that fits the moment better.
+#[tauri::command]
+pub fn agent_warm(
+    state: State<'_, AgentState>,
+    workspace: State<'_, WorkspaceState>,
+    session_id: String,
+    options: Option<PromptOptions>,
+) -> Result<(), IpcError> {
+    let Some(cwd) = workspace.root() else {
+        return Ok(());
+    };
+    with_agent(&state, |agent| {
+        agent.router.send(&HostMessage::Warm {
+            session_id,
+            cwd,
             options,
         })
     })
@@ -652,6 +740,25 @@ pub fn agent_prompt(
 pub fn agent_interrupt(state: State<'_, AgentState>, session_id: String) -> Result<(), IpcError> {
     with_agent(&state, |agent| {
         agent.router.send(&HostMessage::Interrupt { session_id })
+    })
+}
+
+/// Ask who is signed in, or sign out. The answer arrives as an `account` event rather
+/// than a return value, because the sidecar owns the binary that knows.
+///
+/// Signing out is machine-wide -- it drops the credential the person's own Claude Code uses
+/// -- so the caller has already confirmed with them. Nothing here can put it back.
+#[tauri::command]
+pub fn agent_auth(
+    state: State<'_, AgentState>,
+    action: String,
+    account: Option<String>,
+) -> Result<(), IpcError> {
+    with_agent(&state, |agent| {
+        agent.router.send(&HostMessage::Auth {
+            action: action.clone(),
+            account: account.clone(),
+        })
     })
 }
 

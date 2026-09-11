@@ -4,16 +4,21 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
 import { useAppearance } from "./lib/appearance";
-import { openWorkspace, pickFolder } from "./lib/bridge";
+import { agentAuth, openWorkspace, pickFolder } from "./lib/bridge";
+import { startBackground } from "./lib/agent-shell";
+import type { AgentEdit } from "./lib/transcript";
 import { errorMessage } from "./lib/protocol";
 import { answerIdeTool, HOST_TOOL_NAMES } from "./lib/ide-host";
 import { requestFocus, useKeybindings } from "./lib/keys";
 import { usePalette } from "./lib/palette";
 import { closeTab, NO_TABS, openTab, selectTab } from "./lib/tabs";
 import type { Tabs } from "./lib/tabs";
+import { useLayout } from "./lib/layout";
 import { useTransparency } from "./lib/transparency";
 import { useLsp } from "./lib/useLsp";
 import type {
+  Account,
+  AccountInfo,
   Checkpoint,
   FsEvent,
   JsonObject,
@@ -32,6 +37,7 @@ import { GitPane } from "./panes/Git";
 import { LocalModelsView } from "./panes/LocalModelsView";
 import { QuickOpen } from "./panes/QuickOpen";
 import { Settings } from "./panes/Settings";
+import type { AgentEditTarget } from "./panes/Editor";
 import { StatusBar } from "./panes/StatusBar";
 import { TitleBar } from "./panes/TitleBar";
 import { TerminalPane } from "./panes/Terminal";
@@ -40,6 +46,20 @@ import "./App.css";
 
 /** Reopened on launch so the dev reload loop does not mean re-picking a folder. */
 const LAST_WORKSPACE_KEY = "agentide.lastWorkspace";
+
+/** How many recent agent edits the editor is asked to draw. Comfortably more than a turn
+ * makes, and small enough that it is a queue rather than a log. */
+const EDIT_QUEUE = 50;
+
+/** Survives a restart: the account is the control, so it is also the setting. */
+const ACCOUNT_KEY = "agentide.account";
+/** The machine's own login. Never sent on the wire -- absent means exactly this. */
+const DEFAULT_ACCOUNT = "default";
+
+/** The wire wants the key, or nothing at all for the machine's own login. */
+function accountArg(key: string): string | undefined {
+  return key === DEFAULT_ACCOUNT ? undefined : key;
+}
 
 export default function App() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -50,6 +70,7 @@ export default function App() {
   const [appearance, setAppearance] = useAppearance();
   const [palette, setPalette] = usePalette();
   const [transparency, setTransparency] = useTransparency();
+  const [layout, setLayout] = useLayout();
   /** The checkpoint the current turn started from, and what the review queue reads against. */
   const [checkpoint, setCheckpoint] = useState<Checkpoint | null>(null);
   const [reviewRevision, setReviewRevision] = useState(0);
@@ -67,6 +88,85 @@ export default function App() {
   const [resumed, setResumed] = useState<string | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /**
+   * Who is signed in, and what the last sign-out said.
+   *
+   * Held here rather than in Settings because the transcript is where the sidecar's channel
+   * lands and Settings is its sibling; and null rather than a guess, so the panel can say it
+   * is still asking instead of showing an account that may be gone.
+   */
+  /**
+   * Every change the agent has made, newest last.
+   *
+   * A list rather than one slot. One instruction is routinely five `Edit` calls, and an
+   * edit is only fully drawable in two moments -- its removals before the write lands, its
+   * additions after -- so a single slot was always overwritten by the next edit before the
+   * second moment arrived. Only the last edit of a turn could ever finish, and if that one
+   * happened to be a pure deletion nothing was marked at all.
+   *
+   * Bounded because it is a display queue, not a history: the editor keys off the nonce and
+   * skips what it has already drawn.
+   */
+  const [agentEdits, setAgentEdits] = useState<AgentEditTarget[]>([]);
+  const editNonce = useRef(1);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
+  const [accountNote, setAccountNote] = useState<string | null>(null);
+  /** What the open conversation has cost. In the status bar, where the other facts about
+   * the session are. */
+  const [usage, setUsage] = useState<{
+    cost: number;
+    context: { tokens: number; max: number } | null;
+  }>({ cost: 0, context: null });
+  /**
+   * Which account turns run under. Survives a restart, because it is the control and so it
+   * is also the setting -- coming back to yesterday's account without being told would be
+   * the same surprise in the other direction.
+   */
+  const [activeAccount, setActiveAccount] = useState<string>(() => {
+    try {
+      return localStorage.getItem(ACCOUNT_KEY) ?? DEFAULT_ACCOUNT;
+    } catch {
+      return DEFAULT_ACCOUNT;
+    }
+  });
+
+  const onAccountRefresh = useCallback(() => {
+    // A failure leaves it null, which the panel draws as "asking" -- the sidecar may simply
+    // not be listening yet, and the section asks again on its next open.
+    void agentAuth("status", accountArg(activeAccount)).catch(() => {});
+  }, [activeAccount]);
+
+  const onSignOut = useCallback(() => {
+    setAccount(null);
+    // The selected account, not the machine's: signing out of the one on screen is the
+    // only reading of that button that is not a trap.
+    void agentAuth("logout", accountArg(activeAccount)).catch(() =>
+      setAccountNote("could not reach the agent host"),
+    );
+  }, [activeAccount]);
+
+  const onSelectAccount = useCallback((key: string) => {
+    setActiveAccount(key);
+    try {
+      localStorage.setItem(ACCOUNT_KEY, key);
+    } catch {
+      /* A private window; the choice lasts this session. */
+    }
+    setAccount(null);
+    void agentAuth("status", accountArg(key)).catch(() => {});
+  }, []);
+
+  const onSignIn = useCallback(
+    (command: string) => {
+      // A terminal tab, not a hidden spawn: signing in is a device code to read and a
+      // browser to click through, and neither is visible in captured output.
+      void startBackground(command, workspace?.root ?? null).catch(() => {
+        setAccountNote("could not open a terminal to sign in");
+      });
+    },
+    [workspace],
+  );
   /** The sidebar panel, so Ctrl+B and the rail can collapse it through the layout's own API. */
   const sidebarRef = useRef<PanelImperativeHandle>(null);
 
@@ -92,10 +192,22 @@ export default function App() {
     setTabs((previous) => openTab(previous, path));
   }, []);
 
-  /** A file the agent just edited, opened behind whatever you are reading. Before tabs
-   * this replaced your file, which made a useful feature the fastest way to lose it. */
-  const openEdited = useCallback((path: WirePath) => {
-    setTabs((previous) => openTab(previous, path, true));
+  /**
+   * A file the agent just edited: opened, brought to the front, and handed to the editor to
+   * scroll to and mark.
+   *
+   * It used to open *behind* what you were reading, because before tabs it replaced your
+   * file and that made a useful feature the fastest way to lose one. Tabs settled that --
+   * nothing is lost by showing this, your file is a tab away -- and watching the edit land
+   * is the reason the pane is on screen at all.
+   */
+  const openEdited = useCallback((edit: AgentEdit) => {
+    const path = edit.path as WirePath;
+    setTabs((previous) => openTab(previous, path));
+    // A nonce per edit: the same file edited twice must scroll and mark twice, and object
+    // identity alone would also replay on every unrelated re-render.
+    const next = { path, hunks: edit.hunks, nonce: editNonce.current++ };
+    setAgentEdits((was) => [...was, next].slice(-EDIT_QUEUE));
   }, []);
 
   const selectFile = useCallback((path: WirePath) => {
@@ -257,6 +369,115 @@ export default function App() {
     ),
   );
 
+  /**
+   * The rail's views, built once and placed by whichever layout is on.
+   *
+   * Basic is not a smaller app -- it is the same app with the editor out of the way. An
+   * earlier version of it dropped the rail on the grounds that there was nothing left to
+   * switch between, which was simply wrong: Explorer, Changes, Git and Local models all live
+   * there, and hiding the rail made every one of them unreachable.
+   */
+  const sidebar = (
+          <div className="sidebar">
+            <div className="sidebar-view" hidden={view !== "explorer"}>
+              <FileTree
+                root={workspace?.root ?? null}
+                activePath={activePath}
+                changes={changes}
+                onOpenFile={openFile}
+                onOpenFolder={() => void openFolder()}
+              />
+            </div>
+            <div className="sidebar-view" hidden={view !== "changes"}>
+              <ChangesPane
+                checkpoint={checkpoint}
+                revision={reviewRevision}
+                onCountChange={setChangeCount}
+              />
+            </div>
+            {/* Distinct from Changes on purpose: that view is the agent's turn waiting
+                on review, this one is the repository's own state. */}
+            <div className="sidebar-view" hidden={view !== "git"}>
+              <GitPane
+                root={workspace?.root ?? null}
+                changes={changes}
+                revision={reviewRevision}
+                onOpenFile={(path) => openFile(path as WirePath)}
+              />
+            </div>
+            <div className="sidebar-view" hidden={view !== "conversations"}>
+              <ConversationsPane
+                root={workspace?.root ?? null}
+                revision={reviewRevision}
+                resumedId={resumed}
+                onResume={setResumed}
+              />
+            </div>
+            {/* Mounted only while shown, unlike the four above: this one polls a
+                directory every second, and paying that all session is for nothing. */}
+            {view === "models" && (
+              <div className="sidebar-view">
+                <LocalModelsView root={workspace?.root ?? null} />
+              </div>
+            )}
+          </div>
+  );
+
+  /** The editor and the terminal. In Basic they appear only once a file is open. */
+  const workColumn = (
+          <Group orientation="vertical">
+            <Panel id="editor" defaultSize="72" minSize="30">
+              <EditorPane
+                tabs={tabs.open}
+                path={activePath}
+                changes={changes}
+                reveal={reveal}
+                agentEdits={agentEdits}
+                lsp={lsp}
+                onSelect={selectFile}
+                onClose={closeFile}
+              />
+            </Panel>
+            <Separator className="separator horizontal" />
+            <Panel id="terminal" defaultSize="28" minSize="8" collapsible>
+              <TerminalPane root={workspace?.root ?? null} />
+            </Panel>
+          </Group>
+  );
+
+  /**
+   * The conversation, built once and placed by whichever layout is on.
+   *
+   * Lifted out of the tree rather than duplicated: it takes a dozen props, and two copies of
+   * that list is two things to keep in step for no reason. It also means switching layout
+   * does not remount it -- the same element in a different parent keeps its state, so a
+   * running turn survives the switch.
+   */
+  const transcript = (
+          <TranscriptPane
+            root={workspace?.root ?? null}
+            onTurnStart={onTurnStart}
+            onTurnEnd={onTurnEnd}
+            resumeConversation={resumed}
+            onNewConversation={() => setResumed(null)}
+            onAgentEdit={openEdited}
+            onToolCall={onToolCall}
+            hostTools={HOST_TOOL_NAMES}
+            account={accountArg(activeAccount)}
+            onUsage={setUsage}
+            onAccount={(next, key, list, note) => {
+              setAccount(next);
+              setAccounts(list);
+              // The sidecar decides what is selected, not this state: an account removed
+              // from the file must not leave the window pointing at it.
+              if (!list.some((entry) => entry.key === key)) setActiveAccount(DEFAULT_ACCOUNT);
+              // Only a sign-out carries one; a plain status must not clear the last word
+              // about what happened, nor keep it forever.
+              setAccountNote(note ?? null);
+            }}
+          />
+  );
+
   return (
     <div className="app">
       <TitleBar
@@ -286,6 +507,8 @@ export default function App() {
           onPalette={setPalette}
           transparency={transparency}
           onTransparency={setTransparency}
+          layout={layout}
+          onLayout={setLayout}
           onImported={(id) => {
             // Set it resumed so the transcript replays it. Opening the Conversations list
             // instead showed a read-only copy of the thing they asked to carry on with.
@@ -294,11 +517,67 @@ export default function App() {
             setSettingsOpen(false);
           }}
           onClose={() => setSettingsOpen(false)}
+          account={account}
+          accountNote={accountNote}
+          onAccountRefresh={onAccountRefresh}
+          onSignOut={onSignOut}
+          onSignIn={onSignIn}
+          accounts={accounts}
+          activeAccount={activeAccount}
+          onSelectAccount={onSelectAccount}
         />
       )}
 
       {/* Rail, its view, the transcript, the work column. The transcript is a permanent
           column, not a rail view: one you have to summon is one you consult. */}
+      {layout === "basic" ? (
+        /**
+         * The same app, with the editor out of the way until there is something in it.
+         *
+         * Basic is not a smaller agentide. The rail is here, every view it reaches is here,
+         * and the agent has the same tools -- what changes is that the conversation gets the
+         * middle of the window instead of a third of it, and the editor does not sit there
+         * empty waiting to be used.
+         *
+         * An earlier version dropped the rail entirely, which made Explorer, Changes, Git
+         * and Local models unreachable. A layout is a rearrangement, not a subset.
+         */
+        <div className="workbench is-basic">
+          <ActivityBar
+            view={view}
+            collapsed={sidebarCollapsed}
+            changeCount={changeCount}
+            onSelect={selectView}
+            onSettings={() => setSettingsOpen(true)}
+          />
+          <Group orientation="horizontal" className="workbench-panels">
+            <Panel
+              id="basic-sidebar"
+              defaultSize="20"
+              minSize="14"
+              collapsible
+              panelRef={sidebarRef}
+              onResize={(size) => setSidebarCollapsed(size.asPercentage <= 0)}
+            >
+              {sidebar}
+            </Panel>
+            <Separator className="separator vertical" />
+            <Panel id="basic-main" defaultSize={tabs.open.length > 0 ? "45" : "80"} minSize="25">
+              <main className="basic-main">{transcript}</main>
+            </Panel>
+            {/* Only once a file is open. An empty editor beside a conversation is a pane
+                asking to be filled, which is the thing this layout is for not doing. */}
+            {tabs.open.length > 0 && (
+              <>
+                <Separator className="separator vertical" />
+                <Panel id="basic-work" defaultSize="35" minSize="22">
+                  {workColumn}
+                </Panel>
+              </>
+            )}
+          </Group>
+        </div>
+      ) : (
       <div className="workbench">
         <ActivityBar
           view={view}
@@ -310,100 +589,40 @@ export default function App() {
         <Group orientation="horizontal" className="workbench-panels">
           <Panel
             id="sidebar"
-            defaultSize="16"
-            minSize="10"
+            /* Percentages, so these are what an 800px-wide window gets: 16% of it was
+               130px, which truncated every filename to eight characters and the header to
+               "EX...". The floor matters more than the default -- a column narrower than a
+               name is not a narrower column, it is a broken one. */
+            defaultSize="19"
+            minSize="14"
             collapsible
             panelRef={sidebarRef}
             onResize={(size) => setSidebarCollapsed(size.asPercentage <= 0)}
           >
             {/* All four stay mounted: switching must not drop expanded folders or a diff
                 you were reading. Hidden trees stop measuring — see `measure` in FileTree. */}
-            <div className="sidebar">
-              <div className="sidebar-view" hidden={view !== "explorer"}>
-                <FileTree
-                  root={workspace?.root ?? null}
-                  activePath={activePath}
-                  changes={changes}
-                  onOpenFile={openFile}
-                  onOpenFolder={() => void openFolder()}
-                />
-              </div>
-              <div className="sidebar-view" hidden={view !== "changes"}>
-                <ChangesPane
-                  checkpoint={checkpoint}
-                  revision={reviewRevision}
-                  onCountChange={setChangeCount}
-                />
-              </div>
-              {/* Distinct from Changes on purpose: that view is the agent's turn waiting
-                  on review, this one is the repository's own state. */}
-              <div className="sidebar-view" hidden={view !== "git"}>
-                <GitPane
-                  root={workspace?.root ?? null}
-                  changes={changes}
-                  revision={reviewRevision}
-                  onOpenFile={(path) => openFile(path as WirePath)}
-                />
-              </div>
-              <div className="sidebar-view" hidden={view !== "conversations"}>
-                <ConversationsPane
-                  root={workspace?.root ?? null}
-                  revision={reviewRevision}
-                  resumedId={resumed}
-                  onResume={setResumed}
-                />
-              </div>
-              {/* Mounted only while shown, unlike the four above: this one polls a
-                  directory every second, and paying that all session is for nothing. */}
-              {view === "models" && (
-                <div className="sidebar-view">
-                  <LocalModelsView root={workspace?.root ?? null} />
-                </div>
-              )}
-            </div>
+            {sidebar}
           </Panel>
           <Separator className="separator vertical" />
           {/* The agent leads by reading order, not width. At 45% the editor was ~79
               columns — under rustfmt's max_width of 100, so real files scrolled sideways. */}
           <Panel id="transcript" defaultSize="35" minSize="20" collapsible>
-            <TranscriptPane
-              root={workspace?.root ?? null}
-              onTurnStart={onTurnStart}
-              onTurnEnd={onTurnEnd}
-              resumeConversation={resumed}
-              onNewConversation={() => setResumed(null)}
-              onAgentEdit={openEdited}
-              onToolCall={onToolCall}
-              hostTools={HOST_TOOL_NAMES}
-            />
+            {transcript}
           </Panel>
           <Separator className="separator vertical" />
           <Panel id="work" defaultSize="49" minSize="22">
-            <Group orientation="vertical">
-              <Panel id="editor" defaultSize="72" minSize="30">
-                <EditorPane
-                  tabs={tabs.open}
-                  path={activePath}
-                  changes={changes}
-                  reveal={reveal}
-                  lsp={lsp}
-                  onSelect={selectFile}
-                  onClose={closeFile}
-                />
-              </Panel>
-              <Separator className="separator horizontal" />
-              <Panel id="terminal" defaultSize="28" minSize="8" collapsible>
-                <TerminalPane root={workspace?.root ?? null} />
-              </Panel>
-            </Group>
+              {workColumn}
           </Panel>
         </Group>
       </div>
+      )}
       <StatusBar
         root={workspace?.root ?? null}
         changes={changes}
         revision={reviewRevision}
         servers={lsp.servers}
+        cost={usage.cost}
+        context={usage.context}
       />
     </div>
   );

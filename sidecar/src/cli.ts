@@ -10,7 +10,14 @@ import { HostLink } from "./host.ts";
 import { ModelCatalogue } from "./models.ts";
 import { allCommands, complete, format, lookup } from "./cli-commands.ts";
 import { ago, listConversations } from "./conversations.ts";
-import { checkup, claudeBinary, ready, signedIn } from "./doctor.ts";
+import {
+  DEFAULT_KEY,
+  accountUsed,
+  loadAccounts,
+  type Account as Profile,
+} from "./accounts.ts";
+import { account, signOut, type Account } from "./auth.ts";
+import { checkup, claudeBinary, ready } from "./doctor.ts";
 import type { Problem } from "./doctor.ts";
 import { CLOUD, modelRows, pickModel, pickProvider, providerRows } from "./cli-picks.ts";
 import type { PastConversation } from "./conversations.ts";
@@ -46,6 +53,9 @@ interface Options {
   verbose: boolean;
   /** A past conversation to continue, chosen with `/resume`. */
   resume?: string;
+  /** Which Claude account the next turns run under, chosen with `/account`. Undefined is
+   * the machine's own login. */
+  account?: string;
 }
 
 function usage(): never {
@@ -252,6 +262,7 @@ async function main(): Promise<void> {
     ...(options.model ? { model: options.model } : {}),
     ...(options.provider ? { provider: options.provider } : {}),
     ...(options.resume ? { resumeConversation: options.resume } : {}),
+    ...(options.account ? { account: options.account } : {}),
     // Edits land. There is nobody to review them here, and a terminal that asked would
     // hang on a question with no answer.
     permissionMode: "acceptEdits" as const,
@@ -666,9 +677,12 @@ function attachMenu(
  * blocks until they are done, which is correct — there is nothing to do until they are.
  */
 function signIn(): void {
-  if (signedIn()) {
-    process.stdout.write(`  ${paint.accent("already signed in")}\n`);
-    process.stdout.write(paint.dim("  /login again only if you want to switch account\n"));
+  const before = account();
+  if (before.loggedIn) {
+    // The account, not just the fact: on a machine with two of them, "already signed in"
+    // is the answer to a question nobody asked.
+    process.stdout.write(`  ${paint.accent("signed in")} ${who(before)}\n`);
+    process.stdout.write(paint.dim("  /login again only to switch account, /logout to sign out\n"));
     return;
   }
   const binary = claudeBinary();
@@ -678,16 +692,97 @@ function signIn(): void {
     return;
   }
   process.stdout.write(paint.dim("  handing over to Claude Code to sign in…\n"));
-  const done = spawnSync(binary, ["/login"], { stdio: "inherit", windowsHide: false });
+  const done = spawnSync(binary, ["auth", "login"], { stdio: "inherit", windowsHide: false });
   if (done.error) {
     process.stdout.write(paint.danger(`  could not start it: ${done.error.message}\n`));
     return;
   }
+  const after = account();
   process.stdout.write(
-    signedIn()
-      ? `  ${paint.accent("signed in")} — the next turn will run\n`
+    after.loggedIn
+      ? `  ${paint.accent("signed in")} ${who(after)} — the next turn will run\n`
       : paint.dim("  still not signed in; /login again, or set ANTHROPIC_API_KEY\n"),
   );
+}
+
+/** The account in one line, as much of it as there is. */
+function who(entry: Account): string {
+  const parts = [entry.email, entry.plan].filter(Boolean);
+  return parts.length > 0 ? paint.dim(`(${parts.join(", ")})`) : "";
+}
+
+/**
+ * Sign out, once they have said so twice.
+ *
+ * Confirmed by re-typing rather than by a yes/no read: the dispatch here is synchronous,
+ * and a second command is a clearer record of intent than a keypress caught mid-render.
+ * The warning is not decoration -- this drops the credential their own Claude Code uses.
+ */
+function signOutCommand(argument: string): void {
+  const before = account();
+  if (!before.loggedIn) {
+    process.stdout.write(paint.dim("  not signed in\n"));
+    return;
+  }
+  if (argument.trim() !== "confirm") {
+    process.stdout.write(`  signed out of ${paint.accent("everything")}, not just agentide\n`);
+    process.stdout.write(paint.dim(`  ${who(before)} — signing back in needs a browser\n`));
+    process.stdout.write(paint.dim("  type /logout confirm to go ahead\n"));
+    return;
+  }
+  const outcome = signOut();
+  process.stdout.write(
+    outcome.ok
+      ? `  ${paint.accent("signed out")} — /login to sign back in\n`
+      : paint.danger(`  could not sign out: ${outcome.message}\n`),
+  );
+}
+
+/**
+ * List the accounts, or switch to one.
+ *
+ * Switching is a spawn, not a retune -- `CLAUDE_CONFIG_DIR` is read once when the CLI starts
+ * -- so the next turn is slower by one startup. Said here rather than discovered.
+ */
+function chooseAccount(argument: string, options: { account?: string }): void {
+  const accounts = loadAccounts();
+  const current = options.account ?? DEFAULT_KEY;
+
+  if (!argument) {
+    accounts.forEach((entry, index) => {
+      const mark = entry.key === current ? paint.accent("*") : " ";
+      const state = accountUsed(entry) ? "" : paint.dim(" (never signed in)");
+      process.stdout.write(`  ${mark} ${index + 1}. ${entry.name}${state}\n`);
+      process.stdout.write(paint.dim(`      ${entry.configDir}\n`));
+    });
+    process.stdout.write(paint.dim("  /account <n|key> to switch; add one in ~/.agentide/accounts.json\n"));
+    return;
+  }
+
+  const picked = pickAccount(accounts, argument);
+  if (!picked) {
+    process.stdout.write(paint.danger(`  no account "${argument}"\n`));
+    return;
+  }
+  options.account = picked.key === DEFAULT_KEY ? undefined : picked.key;
+  process.stdout.write(`  next turns run as ${paint.accent(picked.name)}\n`);
+  if (!accountUsed(picked)) {
+    // The turn would otherwise fail with the SDK's own "Please run /login", which names a
+    // command only its TUI has.
+    process.stdout.write(paint.dim("  never signed in — /login first\n"));
+  }
+  // The whole directory moves, not just the credential, and someone reaching for /resume
+  // right after a switch should not have to work out why it is empty.
+  process.stdout.write(paint.dim("  its own history too: /resume shows that account's conversations\n"));
+}
+
+/** By number as listed, or by key. Numbers first: the listing is what they just read. */
+function pickAccount(accounts: Profile[], argument: string): Profile | null {
+  const index = Number.parseInt(argument, 10);
+  if (Number.isInteger(index) && index >= 1 && index <= accounts.length) {
+    return accounts[index - 1] ?? null;
+  }
+  return accounts.find((entry) => entry.key === argument) ?? null;
 }
 
 /** Print what is wrong with this machine. `all` also prints the clean bill of health. */
@@ -880,6 +975,12 @@ async function handleLocal(
       return;
     case "login":
       signIn();
+      return;
+    case "logout":
+      signOutCommand(argument);
+      return;
+    case "account":
+      chooseAccount(argument, options);
       return;
     case "doctor":
       report(checkup(), true);

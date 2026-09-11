@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The roster's source as text, the way `ide-tool-names.test.ts` reads the sidecar: `?raw`
+// keeps the Agent SDK out of a frontend test that only needs the names.
+import advancedSource from "../../sidecar/src/advanced.ts?raw";
+
 const files = new Map<string, string>();
 
 vi.mock("@tauri-apps/api/path", () => ({
@@ -14,7 +18,8 @@ vi.mock("./bridge", () => ({
   },
 }));
 
-const { readTunedPrompt, readPromptAppend, AUTISM_PROMPT } = await import("./promptmode");
+const { readTunedPrompt, readPromptAppend, isPromptMode, AUTISM_PROMPT, ADVANCED_PROMPT, PROMPT_MODES } =
+  await import("./promptmode");
 
 const USER = "C:/Users/tung/.agentide/system.md";
 const PROJECT = "C:/work/thing/.agentide/system.md";
@@ -100,5 +105,61 @@ describe("autism mode", () => {
   it("tuned mode is unchanged by the new option", async () => {
     files.set(USER, "machine facts");
     expect(await readPromptAppend("tuned", null)).toBe("machine facts");
+  });
+});
+
+describe("advanced mode", () => {
+  it("stacks the machine facts, then method, then shape", async () => {
+    files.set(USER, "no rust-src on this machine");
+
+    const append = await readPromptAppend("advanced", "C:/work/thing" as never);
+
+    expect(append).toContain("no rust-src on this machine");
+    expect(append).toContain("How to work");
+    expect(append).toContain("How to write the answer");
+    // Shape last: it is the instruction about how to report, so it must be the most
+    // recent thing said about it.
+    expect(append!.indexOf("How to work")).toBeLessThan(append!.indexOf("How to write the answer"));
+  });
+
+  it("works on a machine with no system.md, like autism mode", async () => {
+    // A mode whose meaning depends on a file that may not exist silently does nothing.
+    const append = await readPromptAppend("advanced", null);
+
+    expect(append).toBe(`${ADVANCED_PROMPT}\n\n${AUTISM_PROMPT}`);
+  });
+
+  it("keeps the short-answer rules — capability is not licence to write at length", async () => {
+    const append = await readPromptAppend("advanced", null);
+
+    expect(append).toContain("Lead with the result");
+  });
+
+  it("spends freely on method and never on less checking", async () => {
+    // Same line as autism mode, from the other direction: this one may cost anything, so
+    // the thing to guard is that it does not buy speed with a worse answer.
+    const text = ADVANCED_PROMPT.toLowerCase();
+    for (const banned of ["skip", "truncate", "lower effort", "fewer tokens", "smaller model"]) {
+      expect(text).not.toContain(banned);
+    }
+    expect(text).toContain("ide-architect, ide-implementer, ide-reviewer, ide-validator");
+  });
+
+  it("names exactly the agents the sidecar defines, no more and no fewer", () => {
+    // The prompt is here and the roster is in the sidecar, so renaming one without the
+    // other fails nowhere else. A prompt that names an agent the roster lacks sends the
+    // model to delegate to nothing; a roster agent the prompt never names is never used.
+    const defined = [...advancedSource.matchAll(/^\s*"(ide-[a-z]+)":\s*\{/gm)].map((m) => m[1]);
+    const named = [...new Set(ADVANCED_PROMPT.match(/\bide-[a-z]+\b/g) ?? [])];
+    expect(defined.length).toBe(4);
+    expect(named.sort()).toEqual([...defined].sort());
+  });
+
+  it("is restored from a saved choice rather than falling back to stock", async () => {
+    // The guard, not the list, is what reads the stored value on launch. A mode missing
+    // from it comes back as Stock without a word.
+    for (const mode of PROMPT_MODES) expect(isPromptMode(mode)).toBe(true);
+    expect(isPromptMode("advanced")).toBe(true);
+    expect(isPromptMode("Advanced")).toBe(false);
   });
 });

@@ -39,6 +39,13 @@ export const PromptOptionsSchema = z.strictObject({
   /** Appended to Claude Code's preset system prompt, never replacing it: replacing throws away the
    * tool-use discipline the preset carries. Omitted means the bare preset. */
   systemPromptAppend: z.string().optional(),
+  /** A bundle of SDK options the sidecar owns; see `advanced.ts`. One field rather than
+   * five, so a subagent's prompt never crosses the wire. Startup-only, so it is in
+   * `queryFingerprint`. */
+  promptProfile: z.enum(["advanced"]).optional(),
+  /** Which Claude account this turn runs under -- a key from `accounts.json`, or absent for
+   * the machine's own login. Startup-only, so it is in `queryFingerprint`. */
+  account: z.string().optional(),
   /** Continue a past conversation: the id of a transcript on disk, not a session this process has
    * seen. Per prompt, because picking one is something the user does mid-session. */
   resumeConversation: z.string().optional(),
@@ -134,6 +141,58 @@ export const ProviderInfoSchema = z.strictObject({
 });
 export type ProviderInfo = z.infer<typeof ProviderInfoSchema>;
 
+/** One switchable Claude account. Carries no credential: an account here is a
+ * `CLAUDE_CONFIG_DIR`, and the credential inside it is Claude Code's. */
+export const AccountInfoSchema = z.strictObject({
+  key: z.string(),
+  name: z.string(),
+  /** Shown so it is clear that switching also switches conversation history. */
+  configDir: z.string(),
+  /** Whether this directory has ever been signed in. Cheap: a file check, not a spawn. */
+  used: z.boolean(),
+});
+export type AccountInfo = z.infer<typeof AccountInfoSchema>;
+
+/** Who is signed in. Everything but `loggedIn` is absent on some auth methods, and all of
+ * it is absent when the binary could not be asked at all. */
+export const AccountSchema = z.strictObject({
+  loggedIn: z.boolean(),
+  method: z.string().optional(),
+  email: z.string().optional(),
+  organization: z.string().optional(),
+  plan: z.string().optional(),
+  error: z.string().optional(),
+  /** What to run in a terminal to sign in. Resolved here because this is where the binary
+   * is found; the window runs it in a tab rather than guessing the path itself. */
+  loginCommand: z.string().optional(),
+});
+export type Account = z.infer<typeof AccountSchema>;
+
+/**
+ * Something attached to a prompt.
+ *
+ * Two kinds, because they reach the model two different ways. An `image` is inlined as a
+ * content block -- the model looks at it, and there is no other way for it to. A `file` is
+ * a path: the model already has Read and the `ide_*` tools, so pointing at it beats inlining
+ * a megabyte of source into every later turn of the conversation.
+ */
+export const AttachmentSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("image"),
+    /** What the Messages API accepts. Anything else is refused before it gets here. */
+    mediaType: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]),
+    /** Base64, no data: prefix. */
+    data: z.string().min(1),
+    /** For the transcript row; a pasted image has none. */
+    name: z.string().optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("file"),
+    path: z.string().min(1),
+  }),
+]);
+export type Attachment = z.infer<typeof AttachmentSchema>;
+
 // host -> sidecar
 
 export const HostMessageSchema = z.discriminatedUnion("t", [
@@ -144,6 +203,8 @@ export const HostMessageSchema = z.discriminatedUnion("t", [
     sessionId: z.string(),
     cwd: z.string(),
     text: z.string(),
+    /** Images to look at and files to read. Absent is the ordinary case. */
+    attachments: z.array(AttachmentSchema).optional(),
     options: PromptOptionsSchema.optional(),
   }),
   /** Answer to a `permission_request`. `message` is the reason shown to the model on deny. */
@@ -162,6 +223,24 @@ export const HostMessageSchema = z.discriminatedUnion("t", [
   }),
   /** Stop the running turn and drop anything queued behind it. */
   z.strictObject({ t: z.literal("interrupt"), sessionId: z.string() }),
+  /** Build the query without running a turn, so the command and model lists -- which live
+   * on a live `Query` -- are there before the first prompt rather than after it. */
+  z.strictObject({
+    t: z.literal("warm"),
+    sessionId: z.string(),
+    cwd: z.string(),
+    options: PromptOptionsSchema.optional(),
+  }),
+  /** Ask who is signed in, or sign out. Both answer with `account`.
+   *
+   * `logout` is machine-wide -- it drops the credential the person's own Claude Code uses --
+   * so the surface that sends it has already confirmed with them. */
+  z.strictObject({
+    t: z.literal("auth"),
+    action: z.enum(["status", "logout"]),
+    /** Which account to ask about, or act on. Absent means the machine's own login. */
+    account: z.string().optional(),
+  }),
   /** Liveness probe. Answered with `pong` without touching the model. */
   z.strictObject({ t: z.literal("ping"), id: z.string() }),
 ]);
@@ -213,6 +292,26 @@ export const SidecarMessageSchema = z.discriminatedUnion("t", [
     sessionId: z.string(),
     reason: DoneReasonSchema,
     error: z.string().optional(),
+  }),
+  /** Who is signed in, after an `auth` request. `note` carries the outcome of a sign-out,
+   * in words the surface shows as-is. */
+  z.strictObject({
+    t: z.literal("account"),
+    account: AccountSchema,
+    /** Which account this describes, and every account that could be picked. Sent together
+     * so the picker and the panel can never disagree about what is selected. */
+    key: z.string(),
+    accounts: z.array(AccountInfoSchema),
+    note: z.string().optional(),
+  }),
+  /** How much of the context window the conversation occupies, after a turn. The number
+   * that was invisible when a 925k-token conversation ate a session allowance in two turns. */
+  z.strictObject({
+    t: z.literal("context"),
+    sessionId: z.string(),
+    tokens: z.number().int().nonnegative(),
+    /** The window the SDK measures against -- the compaction window when one is set. */
+    max: z.number().int().positive(),
   }),
   z.strictObject({ t: z.literal("pong"), id: z.string() }),
 ]);

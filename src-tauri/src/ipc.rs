@@ -335,6 +335,55 @@ pub enum EffortLevel {
     Max,
 }
 
+/// Something attached to a prompt: an image the model looks at, or a file it reads.
+/// Untagged on the wire by `kind`, matching the zod union in `sidecar/src/protocol.ts`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Attachment {
+    #[serde(rename_all = "camelCase")]
+    Image {
+        media_type: String,
+        /// Base64, no `data:` prefix. Never logged: it is the whole of a screenshot.
+        data: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    File { path: String },
+}
+
+/// One switchable Claude account. Carries no credential: an account is a
+/// `CLAUDE_CONFIG_DIR`, and the credential inside it belongs to Claude Code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountInfo {
+    pub key: String,
+    pub name: String,
+    pub config_dir: String,
+    pub used: bool,
+}
+
+/// Who is signed in. Everything but `logged_in` is absent on some auth methods, and all of
+/// it is absent when the binary could not be asked at all.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub logged_in: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// What to run in a terminal to sign in, resolved by the sidecar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_command: Option<String>,
+}
+
 /// Per-turn agent configuration. Travels with each prompt rather than at startup so a
 /// mode change takes effect on the next turn without restarting the sidecar.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -357,6 +406,14 @@ pub struct PromptOptions {
     /// the bare preset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt_append: Option<String>,
+    /// A bundle of SDK options the sidecar owns: subagents, thinking budget, hooks. One
+    /// field rather than five, so a subagent's prompt never crosses this boundary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_profile: Option<String>,
+    /// Which Claude account this turn runs under -- a key from `accounts.json`, or `None`
+    /// for the machine's own login. Carries no credential, only the name of one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_partial_messages: Option<bool>,
     /// Continue a past conversation by its transcript id, rather than this session's own.
@@ -530,6 +587,23 @@ pub enum AgentEvent {
     /// window can say so before the first prompt fails.
     #[serde(rename_all = "camelCase")]
     Readiness { problems: Vec<Problem> },
+    /// How much of the context window the conversation occupies, measured after a turn.
+    #[serde(rename_all = "camelCase")]
+    Context {
+        session_id: String,
+        tokens: u64,
+        max: u64,
+    },
+    /// Who is signed in, after an `agent_auth` request. Also carries the outcome of a
+    /// sign-out, in `note`, in words the surface shows as-is.
+    #[serde(rename_all = "camelCase")]
+    Account {
+        account: Account,
+        key: String,
+        accounts: Vec<AccountInfo>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
     /// External MCP servers this turn was built without, because their application is not
     /// open. Sent every turn, empty list included: the empty list clears the last turn's chips.
     #[serde(rename_all = "camelCase")]
