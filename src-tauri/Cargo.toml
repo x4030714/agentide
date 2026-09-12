@@ -1,6 +1,6 @@
 [package]
 name = "agentide"
-version = "0.1.0"
+version = "0.1.1"
 description = "An IDE where the coding agent works over the semantic model"
 authors = ["x4030714"]
 license = "MIT"
