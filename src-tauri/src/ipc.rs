@@ -9,7 +9,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A normalized absolute path: `/`-separated, no verbatim prefix, upper-case drive letter,
 /// no trailing slash. Windows names one directory three ways; `Deserialize` settles it once.
-#[derive(Clone, PartialEq, Eq, Hash)]
+/// Ordered as well as compared, so a list of results can be sorted by path without a second
+/// notion of what a path is: the string is already normalized, so byte order is path order.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WirePath(String);
 
 impl WirePath {
@@ -251,6 +253,51 @@ pub struct DirEntry {
 pub struct DirListing {
     pub path: WirePath,
     pub entries: Vec<DirEntry>,
+}
+
+/// How to match, for [`crate::search::search_workspace`]. Literal text only: a regex box
+/// invites a pattern that scans the whole tree for a minute, and every search here is
+/// search-as-you-type.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOptions {
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+}
+
+/// One occurrence, with enough of its line to read it without opening the file.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchMatch {
+    pub path: WirePath,
+    /// 1-based, the way the editor counts.
+    pub line: u32,
+    /// 1-based, in UTF-16 code units -- Monaco's column. Computed here so nothing on the
+    /// frontend has to redo offset arithmetic and get a different answer.
+    pub column: u32,
+    /// Exclusive end, same units.
+    pub end_column: u32,
+    /// The line up to the match, leading whitespace dropped and clipped from the left.
+    pub before: String,
+    pub matched: String,
+    /// The line after the match, clipped from the right.
+    pub after: String,
+}
+
+/// A whole search. The counts are what lets the pane say "narrow it" instead of quietly
+/// showing a prefix of the truth.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResults {
+    pub matches: Vec<SearchMatch>,
+    /// Files with at least one match.
+    pub files: u32,
+    /// Files actually searched, which is not the same as files walked: one skipped for its
+    /// size or for being binary was never read for a match. The number worth showing when a
+    /// search comes back empty.
+    pub searched: u32,
+    /// The match cap was reached, so `matches` is a prefix rather than the answer.
+    pub truncated: bool,
 }
 
 /// A file's text plus the metadata needed to write it back unchanged.

@@ -90,7 +90,7 @@ export function describeChord(binding: Binding): string {
 
 /** Moving focus between panes, as a subscription rather than a prop threaded through every
  * component between the app and whatever finally calls `.focus()`. */
-export type Pane = "tree" | "composer" | "editor" | "terminal";
+export type Pane = "tree" | "search" | "composer" | "editor" | "terminal";
 
 const listeners = new Map<Pane, () => void>();
 

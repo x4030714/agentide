@@ -1,6 +1,14 @@
 import type { CSSProperties, ReactNode } from "react";
 
-import { IconBranch, IconChat, IconChip, IconEdit, IconFiles, IconSettings } from "../lib/icons";
+import {
+  IconBranch,
+  IconChat,
+  IconChip,
+  IconEdit,
+  IconFiles,
+  IconSearch,
+  IconSettings,
+} from "../lib/icons";
 
 /**
  * The icon rail: which view the sidebar shows, plus settings. These are indexes into the
@@ -8,7 +16,7 @@ import { IconBranch, IconChat, IconChip, IconEdit, IconFiles, IconSettings } fro
  */
 
 /** Which view the sidebar is showing. The rail is the only thing that sets it. */
-export type SidebarView = "explorer" | "changes" | "git" | "conversations" | "models";
+export type SidebarView = "explorer" | "search" | "changes" | "git" | "conversations" | "models";
 
 interface ViewSpec {
   id: SidebarView;
@@ -19,6 +27,8 @@ interface ViewSpec {
 
 const VIEWS: ViewSpec[] = [
   { id: "explorer", label: "Explorer", icon: <IconFiles /> },
+  // Next to the Explorer, because both answer "where is it": one by name, one by content.
+  { id: "search", label: "Search", icon: <IconSearch /> },
   { id: "changes", label: "Changes", icon: <IconEdit /> },
   { id: "git", label: "Repository", icon: <IconBranch /> },
   { id: "conversations", label: "Conversations", icon: <IconChat /> },

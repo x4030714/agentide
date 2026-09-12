@@ -11,6 +11,7 @@ mod lsp;
 mod memory;
 mod pty;
 mod reaper;
+mod search;
 mod tools;
 mod window;
 
@@ -59,6 +60,7 @@ pub fn run() {
             fs::read_file,
             fs::read_file_base64,
             fs::write_file,
+            search::search_workspace,
             tools::tools_signed_in,
             memory::memory_vault,
             memory::memory_seed,

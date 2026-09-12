@@ -24,8 +24,10 @@ use crate::ipc::{
 /// mirrors this into the shadow repo's `info/exclude` so the two cannot drift apart.
 pub const ALWAYS_IGNORED: [&str; 5] = [".git", ".agentide", "node_modules", "target", "dist"];
 
-/// Opening anything larger than this in the editor is a mistake, not a feature.
-const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+/// Opening anything larger than this in the editor is a mistake, not a feature. Shared with
+/// `search.rs`, which skips the same files: a hit in something the editor refuses to open is
+/// a result you cannot follow.
+pub(crate) const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// A save typically produces several OS notifications; collapse everything that lands
 /// within this window into one event per path.
@@ -116,16 +118,8 @@ pub async fn list_dir(path: WirePath) -> Result<DirListing, IpcError> {
     }
 
     let mut entries = Vec::new();
-    let walk = WalkBuilder::new(&dir)
-        .max_depth(Some(1))
-        // Dotfiles are real files in an IDE; `.git` is handled by ALWAYS_IGNORED.
-        .hidden(false)
-        // Honor `.gitignore` even when the folder is not a git repository.
-        .require_git(false)
-        .filter_entry(|entry| entry.depth() == 0 || !is_always_ignored(entry.path()))
-        .build();
-
-    for result in walk {
+    // One level, since the tree expands one folder at a time.
+    for result in workspace_walk(&dir).max_depth(Some(1)).build() {
         // Depth 0 is the directory itself. An unreadable child is skipped rather than
         // failing the whole listing.
         let Ok(entry) = result else { continue };
@@ -143,6 +137,23 @@ pub async fn list_dir(path: WirePath) -> Result<DirListing, IpcError> {
     Ok(DirListing { path, entries })
 }
 
+/// A walk of the workspace with this project's ignore rules, for whoever needs every file.
+///
+/// One function because the tree, the quick-open palette and the search must agree about what
+/// is in the workspace: a palette offering a file the search never looks at is two answers to
+/// one question, and the disagreement shows up as "search is broken" rather than as drift.
+/// `.build()` or `.build_parallel()` is the caller's to choose.
+pub(crate) fn workspace_walk(root: &Path) -> WalkBuilder {
+    let mut builder = WalkBuilder::new(root);
+    builder
+        // Dotfiles are real files in an IDE; `.git` is handled by ALWAYS_IGNORED.
+        .hidden(false)
+        // Honor `.gitignore` even when the folder is not a git repository.
+        .require_git(false)
+        .filter_entry(|entry| entry.depth() == 0 || !is_always_ignored(entry.path()));
+    builder
+}
+
 /// Every file in the workspace, for the quick-open palette: one capped walk, not lazy, since
 /// the palette ranks the whole project per keystroke. Same ignore rules as the tree.
 #[tauri::command]
@@ -157,13 +168,7 @@ pub async fn list_files(
     let cap = limit.unwrap_or(20_000).min(100_000);
 
     let mut files = Vec::new();
-    let walk = WalkBuilder::new(root.to_path())
-        .hidden(false)
-        .require_git(false)
-        .filter_entry(|entry| entry.depth() == 0 || !is_always_ignored(entry.path()))
-        .build();
-
-    for result in walk {
+    for result in workspace_walk(&root.to_path()).build() {
         let Ok(entry) = result else { continue };
         // Directories are not openable, so they are not offered.
         if !entry.file_type().is_some_and(|kind| kind.is_file()) {
@@ -250,8 +255,7 @@ pub async fn read_file(path: WirePath) -> Result<FileContents, IpcError> {
 
     let bytes =
         fs::read(&target).map_err(|err| IpcError::from_io(&err, format!("cannot read {path}")))?;
-    // A NUL byte in the first block is the same heuristic git uses for "binary".
-    if bytes.iter().take(8000).any(|b| *b == 0) {
+    if looks_binary(&bytes) {
         return Err(IpcError::new(
             ErrorCode::NotUtf8,
             format!("{path} looks like a binary file"),
@@ -323,6 +327,13 @@ fn modified_ms(meta: &fs::Metadata) -> Option<u64> {
         .duration_since(UNIX_EPOCH)
         .ok()
         .map(|since| since.as_millis() as u64)
+}
+
+/// A NUL byte in the first block is the same heuristic git uses for "binary". One function
+/// rather than two copies of the number: `search.rs` must skip exactly what the editor
+/// refuses to open, or the search offers hits in files nothing can show.
+pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8000).any(|b| *b == 0)
 }
 
 pub(crate) fn is_always_ignored(path: &Path) -> bool {

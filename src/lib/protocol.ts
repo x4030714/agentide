@@ -52,6 +52,39 @@ export interface DirListing {
   entries: DirEntry[];
 }
 
+/** How to match. Literal text only — there is no regex flag, rather than one that does nothing. */
+export interface SearchOptions {
+  caseSensitive: boolean;
+  wholeWord: boolean;
+}
+
+export interface SearchMatch {
+  path: WirePath;
+  /** 1-based, the way the editor counts. */
+  line: number;
+  /** 1-based, in UTF-16 code units — Monaco's own column, computed in Rust so nothing here
+   * has to redo offset arithmetic and get a different answer. */
+  column: number;
+  /** Exclusive end, same units. */
+  endColumn: number;
+  /** The same line either side of the match, clipped. Not the neighbouring lines. */
+  before: string;
+  matched: string;
+  after: string;
+}
+
+export interface SearchResults {
+  matches: SearchMatch[];
+  /** Files with at least one match. */
+  files: number;
+  /** Files actually searched, which is not the same as files walked: one skipped for its size
+   * or for being binary was never read for a match. The number worth showing when a search
+   * comes back empty. */
+  searched: number;
+  /** The match cap was reached, so `matches` is a prefix rather than the answer. */
+  truncated: boolean;
+}
+
 export interface FileContents {
   path: WirePath;
   /** UTF-8 text with any byte-order mark removed. */

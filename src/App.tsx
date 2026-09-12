@@ -36,6 +36,7 @@ import { ConversationsPane } from "./panes/Conversations";
 import { GitPane } from "./panes/Git";
 import { LocalModelsView } from "./panes/LocalModelsView";
 import { QuickOpen } from "./panes/QuickOpen";
+import { SearchPane } from "./panes/Search";
 import { Settings } from "./panes/Settings";
 import type { AgentEditTarget } from "./panes/Editor";
 import { StatusBar } from "./panes/StatusBar";
@@ -303,6 +304,20 @@ export default function App() {
           run: () => setQuickOpen(true),
         },
         {
+          // Ctrl+Shift+F is find-in-files everywhere else. Monaco keeps Ctrl+F for the
+          // open file, which is the other half of the same pair.
+          key: "f",
+          ctrl: true,
+          shift: true,
+          whileTyping: true,
+          describe: "Search the workspace",
+          run: () => {
+            // Same order as Ctrl+1: the view has to be on screen before it can take focus.
+            flushSync(() => showView("search"));
+            requestFocus("search");
+          },
+        },
+        {
           // Ctrl+, is settings in every other editor, so it is settings here.
           key: ",",
           ctrl: true,
@@ -387,6 +402,9 @@ export default function App() {
                 onOpenFile={openFile}
                 onOpenFolder={() => void openFolder()}
               />
+            </div>
+            <div className="sidebar-view" hidden={view !== "search"}>
+              <SearchPane root={workspace?.root ?? null} onOpenAt={openAt} />
             </div>
             <div className="sidebar-view" hidden={view !== "changes"}>
               <ChangesPane

@@ -193,6 +193,14 @@ export const IconFiles = () => (
   </RailGlyph>
 );
 
+/** Search. A lens over the whole workspace, which is the one it looks through. */
+export const IconSearch = () => (
+  <RailGlyph>
+    <circle cx="9" cy="9" r="4.5" />
+    <path d="M12.5 12.5l4 4" />
+  </RailGlyph>
+);
+
 /** Changes. A pencil: the queue is what the agent edited, waiting on you. */
 export const IconEdit = () => (
   <RailGlyph>

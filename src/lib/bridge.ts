@@ -18,6 +18,8 @@ import type {
   JsonObject,
   PermissionDecision,
   PromptOptions,
+  SearchOptions,
+  SearchResults,
   ToolResult,
   WirePath,
   Workspace,
@@ -74,6 +76,15 @@ export async function listDir(path: WirePath): Promise<DirListing> {
  * whole project per keystroke. Capped in Rust, so a huge repository returns a prefix, not a hang. */
 export async function listFiles(limit?: number): Promise<WirePath[]> {
   return invoke<WirePath[]>("list_files", { limit });
+}
+
+/** Every occurrence of `query` in the workspace. One walk per call, capped in Rust — a long
+ * answer comes back with `truncated` set rather than as a hang. */
+export async function searchWorkspace(
+  query: string,
+  options: SearchOptions,
+): Promise<SearchResults> {
+  return invoke<SearchResults>("search_workspace", { query, options });
 }
 
 export async function readFile(path: WirePath): Promise<FileContents> {

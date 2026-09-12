@@ -453,6 +453,176 @@
   border-radius: 8px;
 }
 
+/* --- Workspace search --------------------------------------------------------- */
+
+/**
+ * Find in files. The box and its two toggles share one row: a toggle changes what the next
+ * keystroke finds, so it belongs beside what you are typing rather than in the header above
+ * it, which is where the pane's name goes.
+ */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  background: var(--sunken);
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  outline: none;
+}
+
+.search-input::placeholder {
+  color: var(--ink-dim);
+}
+
+.search-input:focus {
+  border-color: var(--sym);
+}
+
+/* The browser's own clear affordance, which is a different shape in every engine. */
+.search-input::-webkit-search-cancel-button {
+  filter: grayscale(1);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.search-toggles {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+/* `Aa` and `ab` rather than drawn marks: the two letters say which letters are being
+   compared, and at this size no glyph does. */
+.search-toggle {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-dim);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-chip);
+  cursor: default;
+}
+
+.search-toggle:hover {
+  color: var(--ink);
+  background: var(--sunken);
+}
+
+/* On is a field, not brighter ink: it changes the answer, so it reads as a state. */
+.search-toggle.is-on {
+  color: var(--ink);
+  background: var(--tint-accent);
+}
+
+/* One row per file, and clicking it folds the file away: a hundred hits in one generated
+   file should cost one line of the list, not a hundred. */
+.search-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: default;
+}
+
+.search-file:hover {
+  background: var(--sunken);
+}
+
+/* Cut at the end, with the whole path in the tooltip. The folders are the part you already
+   know -- you asked for this workspace -- so losing them is the cheaper loss. */
+.search-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Indented past the file's chevron, so the hits read as belonging to the row above them. */
+.search-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 1px 8px 1px 20px;
+  font: inherit;
+  color: var(--ink-dim);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: default;
+}
+
+/* The keyboard's row. The same field Quick Open marks its own with -- there is one
+   selected-row look in this app and this is it. No separate hover rule: the pointer moves
+   the highlight, so hovering is being selected. */
+.search-hit.is-on {
+  color: var(--ink);
+  background: var(--tint-accent);
+}
+
+.search-line {
+  flex: 0 0 auto;
+  min-width: 26px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* `pre`, so a run of spaces inside the line is not collapsed into one and the match keeps
+   the shape it has in the file. Clipped rather than wrapped: a wrapped hit is three rows
+   and the list is the thing being scanned. */
+.search-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+/* The app's own highlight pair. `mark`'s default yellow would be the one colour on screen
+   that nothing else uses, and it is not in any palette. */
+.search-text mark {
+  color: var(--ink);
+  background: var(--tint-accent);
+  border-radius: 2px;
+}
+
+/* On the selected row the tint is already the background, so the match needs the solid
+   accent to stay visible -- otherwise the one row you are looking at is the one that
+   stops showing you what it matched. */
+.search-hit.is-on .search-text mark {
+  color: #ffffff;
+  background: var(--sym-fill);
+}
+
 /* --- Conversation search ------------------------------------------------------ */
 
 .convo-search-row {
