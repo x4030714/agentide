@@ -52,16 +52,40 @@ pub struct ClaudeProject {
     pub bytes: u64,
 }
 
-/// One message, flattened for display.
+/// One record of a past conversation, as close to what the SDK streamed as the file keeps.
+/// The frontend replays these through the same reducer as a live turn, so a message is handed
+/// over whole. It used to be flattened here into text plus tool names, and a reopened
+/// conversation drew every tool call as `(used ide_run)` with no operand, no result and
+/// nothing to open -- a second reader of content blocks is a second place for them to go wrong.
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConversationEntry {
-    /// `user` or `assistant`.
-    pub role: String,
-    pub text: String,
-    pub at_ms: Option<i64>,
-    /// Tool names this message called, so a reply that only used tools is not blank.
-    pub tools: Vec<String>,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConversationRecord {
+    /// A `user` or `assistant` record, with the API message as written.
+    #[serde(rename_all = "camelCase")]
+    Message {
+        role: String,
+        message: serde_json::Value,
+        at_ms: Option<i64>,
+        /// Put in the conversation by the harness rather than typed: a hook's context, a
+        /// "continue" nudge, a background task's completion notice. A user record by type
+        /// only; Claude Code hides these in its own transcript too.
+        injected: bool,
+        /// The summary Claude Code wrote when it compacted. Also a user record by type only,
+        /// and the history it summarises is above it in the same file.
+        compaction: bool,
+    },
+    /// The end of a turn, from the SDK's `turn_duration` note. Live, a `result` message
+    /// carries this; the file does not keep those.
+    #[serde(rename_all = "camelCase")]
+    TurnEnd { at_ms: Option<i64>, duration_ms: Option<i64> },
+    /// The context was compacted here.
+    #[serde(rename_all = "camelCase")]
+    Compacted {
+        at_ms: Option<i64>,
+        trigger: Option<String>,
+        pre_tokens: Option<i64>,
+        post_tokens: Option<i64>,
+    },
 }
 
 // --- Locating the directory ------------------------------------------------------
@@ -236,31 +260,50 @@ impl<'a> Head<'a> {
 }
 
 /// The text of a `message.content`, which is either a string or a list of blocks.
-fn message_text(message: &serde_json::Value) -> (String, Vec<String>) {
+fn message_text(message: &serde_json::Value) -> String {
     let content = message.get("content");
     if let Some(text) = content.and_then(|value| value.as_str()) {
-        return (text.to_string(), Vec::new());
+        return text.to_string();
     }
     let mut parts = Vec::new();
-    let mut tools = Vec::new();
     if let Some(blocks) = content.and_then(|value| value.as_array()) {
         for block in blocks {
+            if block.get("type").and_then(|value| value.as_str()) == Some("text") {
+                if let Some(text) = block.get("text").and_then(|value| value.as_str()) {
+                    parts.push(text.to_string());
+                }
+            }
+        }
+    }
+    parts.join("\n\n")
+}
+
+/// Drop the bytes of every image in a message, in the prompt and inside tool results alike.
+/// Nothing draws them on a replay -- a prompt row keeps a label per image, never the data --
+/// and a conversation with fifty screenshots is tens of megabytes of base64 crossing IPC and
+/// being parsed by the webview for nothing.
+fn strip_images(message: &mut serde_json::Value) {
+    fn strip_blocks(blocks: &mut serde_json::Value) {
+        let Some(blocks) = blocks.as_array_mut() else { return };
+        for block in blocks {
             match block.get("type").and_then(|value| value.as_str()) {
-                Some("text") => {
-                    if let Some(text) = block.get("text").and_then(|value| value.as_str()) {
-                        parts.push(text.to_string());
+                Some("image") => {
+                    if let Some(object) = block.as_object_mut() {
+                        object.remove("source");
                     }
                 }
-                Some("tool_use") => {
-                    if let Some(name) = block.get("name").and_then(|value| value.as_str()) {
-                        tools.push(name.to_string());
+                Some("tool_result") => {
+                    if let Some(content) = block.get_mut("content") {
+                        strip_blocks(content);
                     }
                 }
                 _ => {}
             }
         }
     }
-    (parts.join("\n\n"), tools)
+    if let Some(content) = message.get_mut("content") {
+        strip_blocks(content);
+    }
 }
 
 fn summarise(file: &Path) -> Option<ConversationSummary> {
@@ -302,7 +345,7 @@ fn summarise(file: &Path) -> Option<ConversationSummary> {
                 if summary.opening.is_none() {
                     if let Ok(record) = serde_json::from_str::<serde_json::Value>(line) {
                         if let Some(message) = record.get("message") {
-                            let (body, _) = message_text(message);
+                            let body = message_text(message);
                             let trimmed = body.trim();
                             if !trimmed.is_empty() {
                                 summary.opening = Some(trimmed.chars().take(160).collect());
@@ -366,7 +409,7 @@ pub async fn conversation_read(
     workspace: State<'_, WorkspaceState>,
     id: String,
     from_dir: Option<String>,
-) -> Result<Vec<ConversationEntry>, IpcError> {
+) -> Result<Vec<ConversationRecord>, IpcError> {
     let dir = match from_dir {
         Some(name) => project_dir_named(&name)?,
         None => {
@@ -379,43 +422,80 @@ pub async fn conversation_read(
         }
     };
     let file = dir.join(transcript_name(&id)?);
+    read_records(&file)
+        .map_err(|err| IpcError::from_io(&err, format!("cannot read {}", file.display())))
+}
 
+/// Every record of one transcript that the replay draws, in file order.
+fn read_records(file: &Path) -> std::io::Result<Vec<ConversationRecord>> {
     let mut out = Vec::new();
-    each_line(&file, |line| {
-        // Most of a transcript by weight is records with no message -- system notes,
-        // environment attachments, file snapshots. Read the type first, parse only messages.
-        let says_something = Head::read(line)
-            .and_then(|head| head.kind.map(|kind| kind == "user" || kind == "assistant"))
+    each_line(file, |line| {
+        // Most of a transcript by weight is records with no message -- environment
+        // attachments, file snapshots, the per-turn bookkeeping. Read the type first, parse
+        // only what the replay draws.
+        let worth_parsing = Head::read(line)
+            .and_then(|head| {
+                head.kind
+                    .map(|kind| kind == "user" || kind == "assistant" || kind == "system")
+            })
             .unwrap_or(false);
-        if says_something {
+        if worth_parsing {
             if let Ok(record) = serde_json::from_str::<serde_json::Value>(line) {
-                if let Some(entry) = entry_of(&record) {
+                if let Some(entry) = record_of(record) {
                     out.push(entry);
                 }
             }
         }
         ControlFlow::Continue(())
-    })
-    .map_err(|err| IpcError::from_io(&err, format!("cannot read {}", file.display())))?;
+    })?;
     Ok(out)
 }
 
-/// One record as a displayable message, or nothing when it is not one.
-fn entry_of(record: &serde_json::Value) -> Option<ConversationEntry> {
-    let role = match record.get("type").and_then(|value| value.as_str()) {
-        Some(role @ ("user" | "assistant")) => role,
-        _ => return None,
-    };
-    let (body, tools) = message_text(record.get("message")?);
-    if body.trim().is_empty() && tools.is_empty() {
-        return None;
+/// A string field of a record, by JSON pointer.
+fn text_at<'a>(record: &'a serde_json::Value, path: &str) -> Option<&'a str> {
+    record.pointer(path).and_then(|value| value.as_str())
+}
+
+/// One record as the replay draws it, or nothing when it is not part of the conversation.
+fn record_of(mut record: serde_json::Value) -> Option<ConversationRecord> {
+    let at_ms = millis(text_at(&record, "/timestamp"));
+    let kind = text_at(&record, "/type")?.to_string();
+    match kind.as_str() {
+        "user" | "assistant" => {
+            let flag = |name: &str| record.get(name).and_then(|value| value.as_bool()) == Some(true);
+            // Three markers, not one, because the file has been written by several versions
+            // of the CLI: `isMeta` is the oldest, `promptSource` names who wrote the text, and
+            // a task notification carries an `origin` even when its source says `sdk`.
+            let injected = flag("isMeta")
+                || text_at(&record, "/promptSource") == Some("system")
+                || text_at(&record, "/origin/kind") == Some("task-notification");
+            let compaction = flag("isCompactSummary");
+            let mut message = record.get_mut("message")?.take();
+            strip_images(&mut message);
+            Some(ConversationRecord::Message { role: kind, message, at_ms, injected, compaction })
+        }
+        "system" => match text_at(&record, "/subtype") {
+            Some("turn_duration") => Some(ConversationRecord::TurnEnd {
+                at_ms,
+                duration_ms: record.get("durationMs").and_then(|value| value.as_i64()),
+            }),
+            Some("compact_boundary") => {
+                let count = |name: &str| {
+                    record.pointer(&format!("/compactMetadata/{name}")).and_then(|value| value.as_i64())
+                };
+                Some(ConversationRecord::Compacted {
+                    at_ms,
+                    trigger: text_at(&record, "/compactMetadata/trigger").map(String::from),
+                    pre_tokens: count("preTokens"),
+                    post_tokens: count("postTokens"),
+                })
+            }
+            // Local-command echoes, hook summaries, away summaries: about the session rather
+            // than part of the conversation.
+            _ => None,
+        },
+        _ => None,
     }
-    Some(ConversationEntry {
-        role: role.to_string(),
-        text: body,
-        at_ms: millis(record.get("timestamp").and_then(|value| value.as_str())),
-        tools,
-    })
 }
 
 // --- Browsing every project ------------------------------------------------------
@@ -666,7 +746,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_text_and_tool_calls_out_of_a_message() {
+    fn reads_the_text_out_of_a_message_and_skips_the_tool_calls() {
         let message = serde_json::json!({
             "content": [
                 { "type": "text", "text": "renaming it" },
@@ -674,15 +754,127 @@ mod tests {
                 { "type": "text", "text": "done" }
             ]
         });
-        let (text, tools) = message_text(&message);
-        assert_eq!(text, "renaming it\n\ndone");
-        assert_eq!(tools, vec!["ide_rename_symbol"]);
+        assert_eq!(message_text(&message), "renaming it\n\ndone");
     }
 
     #[test]
     fn a_plain_string_content_still_reads() {
         let message = serde_json::json!({ "content": "hello" });
-        assert_eq!(message_text(&message).0, "hello");
+        assert_eq!(message_text(&message), "hello");
+    }
+
+    // --- What a record becomes on replay ---------------------------------------------
+
+    fn message_of(record: ConversationRecord) -> (String, serde_json::Value, bool, bool) {
+        match record {
+            ConversationRecord::Message { role, message, injected, compaction, .. } => {
+                (role, message, injected, compaction)
+            }
+            other => panic!("expected a message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_message_is_handed_over_whole_rather_than_flattened() {
+        // The tool call and the thinking must survive: the replay draws them as rows, and a
+        // flattened `(used ide_run)` is the mess this exists to stop.
+        let content = serde_json::json!([
+            { "type": "thinking", "thinking": "which file", "signature": "x" },
+            { "type": "text", "text": "renaming it" },
+            { "type": "tool_use", "id": "toolu_1", "name": "ide_rename_symbol", "input": { "newName": "b" } }
+        ]);
+        let record = serde_json::json!({
+            "type": "assistant",
+            "timestamp": "2026-09-04T19:37:52.100Z",
+            "message": { "role": "assistant", "content": content.clone() }
+        });
+        let (role, message, injected, compaction) = message_of(record_of(record).expect("a message"));
+        assert_eq!(role, "assistant");
+        assert_eq!(message["content"], content);
+        assert!(!injected);
+        assert!(!compaction);
+    }
+
+    #[test]
+    fn what_the_harness_put_in_the_persons_mouth_is_marked_as_such() {
+        let user = |extra: serde_json::Value| {
+            let mut record = serde_json::json!({
+                "type": "user",
+                "message": { "role": "user", "content": "<task-notification>done</task-notification>" }
+            });
+            record.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            message_of(record_of(record).expect("a message")).2
+        };
+        assert!(user(serde_json::json!({ "isMeta": true })));
+        assert!(user(serde_json::json!({ "promptSource": "system" })));
+        // A task notification whose source says `sdk` still names its origin.
+        assert!(user(serde_json::json!({ "promptSource": "sdk", "origin": { "kind": "task-notification" } })));
+        assert!(!user(serde_json::json!({ "promptSource": "typed" })));
+        assert!(!user(serde_json::json!({ "isMeta": false })));
+    }
+
+    #[test]
+    fn the_compaction_summary_is_a_user_record_by_type_only() {
+        let record = serde_json::json!({
+            "type": "user",
+            "isCompactSummary": true,
+            "message": { "role": "user", "content": "This session is being continued..." }
+        });
+        assert!(message_of(record_of(record).expect("a message")).3);
+    }
+
+    #[test]
+    fn an_image_crosses_as_a_placeholder_wherever_it_sits() {
+        let record = serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": [
+                { "type": "tool_result", "tool_use_id": "toolu_1", "content": [
+                    { "type": "text", "text": "the page" },
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "AAAA" } }
+                ]},
+                { "type": "text", "text": "and this one" },
+                { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "BBBB" } }
+            ]}
+        });
+        let (_, message, _, _) = message_of(record_of(record).expect("a message"));
+        assert_eq!(
+            message["content"],
+            serde_json::json!([
+                { "type": "tool_result", "tool_use_id": "toolu_1", "content": [
+                    { "type": "text", "text": "the page" },
+                    { "type": "image" }
+                ]},
+                { "type": "text", "text": "and this one" },
+                { "type": "image" }
+            ])
+        );
+    }
+
+    #[test]
+    fn the_turn_boundary_and_the_compaction_are_the_only_system_notes_kept() {
+        let ended = record_of(serde_json::json!({
+            "type": "system", "subtype": "turn_duration", "durationMs": 4200,
+            "timestamp": "2026-09-04T19:37:52.100Z"
+        }));
+        assert!(matches!(ended, Some(ConversationRecord::TurnEnd { duration_ms: Some(4200), at_ms: Some(_) })));
+
+        let compacted = record_of(serde_json::json!({
+            "type": "system", "subtype": "compact_boundary",
+            "compactMetadata": { "trigger": "auto", "preTokens": 966212, "postTokens": 13534 }
+        }));
+        match compacted {
+            Some(ConversationRecord::Compacted { trigger, pre_tokens, post_tokens, .. }) => {
+                assert_eq!(trigger.as_deref(), Some("auto"));
+                assert_eq!((pre_tokens, post_tokens), (Some(966212), Some(13534)));
+            }
+            other => panic!("expected a compaction, got {other:?}"),
+        }
+
+        for subtype in ["local_command", "stop_hook_summary", "away_summary", "informational"] {
+            let note = record_of(serde_json::json!({ "type": "system", "subtype": subtype, "content": "x" }));
+            assert!(note.is_none(), "{subtype} became a record");
+        }
+        assert!(record_of(serde_json::json!({ "type": "attachment" })).is_none());
     }
 
     /// A scratch directory that removes itself when the test ends.
@@ -749,8 +941,9 @@ mod tests {
         let (_dir, records) = copied();
         let said: Vec<String> = records
             .iter()
-            .filter_map(entry_of)
-            .map(|entry| entry.text)
+            .cloned()
+            .filter_map(record_of)
+            .map(|record| message_text(&message_of(record).1))
             .collect();
         assert_eq!(said, ["what does a language server do", "it indexes your code"]);
     }

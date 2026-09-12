@@ -41,7 +41,7 @@ import type {
   GitFileDiff,
   GitStatus,
   ConversationSummary,
-  ConversationEntry,
+  ConversationRecord,
   ClaudeProject,
   MemoryStats,
   MemoryVault,
@@ -404,13 +404,13 @@ export async function conversationsList(): Promise<ConversationSummary[]> {
   return invoke<ConversationSummary[]>("conversations_list");
 }
 
-/** One conversation's messages, for reading. `fromDir` reads out of another project's directory,
- * which is how a conversation is previewed before importing it. */
+/** One conversation's records, for replaying. `fromDir` reads out of another project's
+ * directory, which is how a conversation is previewed before importing it. */
 export async function conversationRead(
   id: string,
   fromDir?: string,
-): Promise<ConversationEntry[]> {
-  return invoke<ConversationEntry[]>("conversation_read", { id, fromDir: fromDir ?? null });
+): Promise<ConversationRecord[]> {
+  return invoke<ConversationRecord[]>("conversation_read", { id, fromDir: fromDir ?? null });
 }
 
 /** Every project directory under `~/.claude/projects`, newest first. One head-of-file read per

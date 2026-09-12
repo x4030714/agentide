@@ -685,14 +685,30 @@ export interface ClaudeProject {
   bytes: number;
 }
 
-/** One message from a past conversation, flattened for display. */
-export interface ConversationEntry {
-  role: "user" | "assistant";
-  text: string;
-  atMs: number | null;
-  /** Tools this message called, so a reply that only used tools is not blank. */
-  tools: string[];
-}
+/** One record of a past conversation, as close to what the SDK streamed as the file keeps.
+ * Replayed through the same reducer as a live turn — `conversation_loaded` in `transcript.ts`
+ * — so a reopened conversation is drawn by the code that drew it the first time. */
+export type ConversationRecord =
+  | {
+      kind: "message";
+      role: "user" | "assistant";
+      /** The API message as written, images reduced to placeholders. */
+      message: JsonObject;
+      atMs: number | null;
+      /** Put there by the harness rather than typed: a hook's context, a "continue" nudge, a
+       * background task's notice. Drawn as nothing, which is how Claude Code draws them. */
+      injected: boolean;
+      /** The summary written at a compaction. The history it summarises is above it. */
+      compaction: boolean;
+    }
+  | { kind: "turn_end"; atMs: number | null; durationMs: number | null }
+  | {
+      kind: "compacted";
+      atMs: number | null;
+      trigger: string | null;
+      preTokens: number | null;
+      postTokens: number | null;
+    };
 
 // --- The memory vault -- mirrors `src-tauri/src/memory.rs` -------------------
 // The notes are the SDK's; nothing here reads one. `memory.rs` says why the path is resolved twice.

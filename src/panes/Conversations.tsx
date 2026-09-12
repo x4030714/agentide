@@ -4,7 +4,8 @@ import { conversationRead, conversationsList } from "../lib/bridge";
 import { ago } from "../lib/format";
 import { searchConversations } from "../lib/conversation-search";
 import { errorMessage } from "../lib/protocol";
-import type { ConversationEntry, ConversationSummary } from "../lib/protocol";
+import type { ConversationSummary } from "../lib/protocol";
+import { saidIn, type Said } from "../lib/transcript";
 
 interface ConversationsProps {
   root: string | null;
@@ -38,7 +39,7 @@ export function ConversationsPane({
 }: ConversationsProps) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [entries, setEntries] = useState<ConversationEntry[] | null>(null);
+  const [entries, setEntries] = useState<Said[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -71,7 +72,7 @@ export function ConversationsPane({
     }
     conversationRead(openId)
       .then((next) => {
-        if (!cancelled) setEntries(next);
+        if (!cancelled) setEntries(saidIn(next));
       })
       .catch((err) => {
         if (!cancelled) {

@@ -30,11 +30,11 @@ import type {
   Account,
   AccountInfo,
   ClaudeProject,
-  ConversationEntry,
   ConversationSummary,
   MemoryStats,
   MemoryVault,
 } from "../lib/protocol";
+import { saidIn, type Said } from "../lib/transcript";
 
 interface SettingsProps {
   /** The open workspace, for marking its own project and for what import copies into. */
@@ -602,7 +602,7 @@ function ImportSection({
   const [openDir, setOpenDir] = useState<string | null>(null);
   const [items, setItems] = useState<ConversationSummary[] | null>(null);
   const [readingId, setReadingId] = useState<string | null>(null);
-  const [entries, setEntries] = useState<ConversationEntry[] | null>(null);
+  const [entries, setEntries] = useState<Said[] | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -648,7 +648,7 @@ function ImportSection({
     setEntries(null);
     conversationRead(readingId, openDir)
       .then((next) => {
-        if (!cancelled) setEntries(next);
+        if (!cancelled) setEntries(saidIn(next));
       })
       .catch((err) => {
         if (!cancelled) setError(errorMessage(err));

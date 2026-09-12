@@ -9,12 +9,14 @@ import { editedChange, editedFile, sessionCost,
   MCP_CLOSED,
   operandOf,
   reduce,
+  saidIn,
   shortToolName,
   toolClass,
   type Row,
   type TranscriptAction,
   type TranscriptState,
 } from "./transcript";
+import type { ConversationRecord } from "./protocol";
 
 /** Fold a sequence, the way the pane does. */
 function run(...actions: TranscriptAction[]): TranscriptState {
@@ -570,44 +572,150 @@ describe("measure", () => {
 });
 
 describe("continuing a past conversation", () => {
+  /** A record the way `conversation_read` hands it over. */
+  function said(
+    role: "user" | "assistant",
+    content: unknown,
+    flags: Partial<{ injected: boolean; compaction: boolean }> = {},
+  ): ConversationRecord {
+    return {
+      kind: "message",
+      role,
+      message: { role, content },
+      atMs: 1,
+      injected: false,
+      compaction: false,
+      ...flags,
+    };
+  }
+
+  function load(...records: ConversationRecord[]): TranscriptState {
+    return reduce(initialState(), { t: "conversation_loaded", id: "abc-123", records });
+  }
+
   it("replays its messages as rows so the person can read what the model already knows", () => {
-    const state = reduce(initialState(), {
-      t: "conversation_loaded",
-      id: "abc-123",
-      entries: [
-        { role: "user", text: "the passphrase is TANGERINE", atMs: 1, tools: [] },
-        { role: "assistant", text: "Noted.", atMs: 2, tools: [] },
-      ],
-    });
+    const state = load(
+      said("user", "the passphrase is TANGERINE"),
+      said("assistant", [{ type: "text", text: "Noted." }]),
+    );
 
     expect(state.rows.map((row) => row.kind)).toEqual(["prompt", "text", "notice"]);
     expect(state.rows[0]).toMatchObject({ kind: "prompt", text: "the passphrase is TANGERINE" });
     expect(state.rows[1]).toMatchObject({ kind: "text", text: "Noted." });
   });
 
-  it("names the conversation and where its history ends", () => {
+  it("draws a tool call the way it was drawn live, with its result on the same row", () => {
+    // The replay used to flatten this to a text row saying "(used ide_definition)" -- no
+    // operand, no result, nothing to open -- which is what a reopened conversation looked
+    // like: a wall of those, one per call.
     const state = reduce(initialState(), {
       t: "conversation_loaded",
       id: "abc-123",
-      entries: [{ role: "user", text: "hello", atMs: 1, tools: [] }],
+      cwd: "C:/x",
+      records: [
+        said("user", "where is push defined"),
+        said("assistant", [
+          { type: "thinking", thinking: "the reducer", signature: "x" },
+          {
+            type: "tool_use",
+            id: "toolu_1",
+            name: "mcp__agentide__ide_definition",
+            input: { path: "C:\\x\\src\\transcript.ts", line: 12 },
+          },
+        ]),
+        said("user", [{ type: "tool_result", tool_use_id: "toolu_1", content: "transcript.ts:1117" }]),
+        said("assistant", [{ type: "text", text: "`transcript.ts:1117`." }]),
+      ],
     });
+
+    expect(state.rows.map((row) => row.kind)).toEqual([
+      "prompt",
+      "thinking",
+      "tool",
+      "text",
+      "notice",
+    ]);
+    // The path is relative to the workspace, as it would be live -- `init` sets `meta.cwd`
+    // on a live turn and has not arrived when the replay draws.
+    expect(state.rows[2]).toMatchObject({
+      kind: "tool",
+      name: "ide_definition",
+      cls: "semantic",
+      operand: "src/transcript.ts",
+      status: "ok",
+      detail: "transcript.ts:1117",
+    });
+    // One turn, not three: only the prompt starts one.
+    expect(state.rows.slice(0, 4).map((row) => row.turn)).toEqual([1, 1, 1, 1]);
+  });
+
+  it("draws what the harness injected as nothing, and the compaction as a boundary", () => {
+    // A task notification, a "continue" nudge and the compaction summary are all user
+    // records by type. Drawn as prompts they read as things the person said -- the
+    // 13,000-character summary was the worst of it.
+    const state = load(
+      said("user", "first"),
+      said("user", "<task-notification>done</task-notification>", { injected: true }),
+      said("user", "This session is being continued from a previous conversation...", {
+        compaction: true,
+      }),
+      { kind: "compacted", atMs: 2, trigger: "auto", preTokens: 966212, postTokens: 13534 },
+      said("user", "second"),
+    );
+
+    expect(state.rows.map((row) => row.kind)).toEqual(["prompt", "notice", "prompt", "notice"]);
+    expect(state.rows[1]).toMatchObject({ kind: "notice", text: "context compacted (auto) 966k → 14k" });
+    expect(state.rows[2]).toMatchObject({ kind: "prompt", text: "second", turn: 2 });
+  });
+
+  it("closes a turn where the file says it ended", () => {
+    const state = load(
+      said("user", "go"),
+      said("assistant", [{ type: "text", text: "gone" }]),
+      { kind: "turn_end", atMs: 3, durationMs: 4200 },
+    );
+
+    expect(state.rows[2]).toMatchObject({ kind: "turn", reason: "ended", durationMs: 4200 });
+    expect(state.turnClosed).toBe(true);
+  });
+
+  it("keeps a prompt typed while a tool ran, which shares a record with the tool's result", () => {
+    const state = load(
+      said("user", "go"),
+      said("assistant", [{ type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "a" } }]),
+      said("user", [
+        { type: "tool_result", tool_use_id: "toolu_1", content: "the file" },
+        { type: "text", text: "also check b" },
+      ]),
+    );
+
+    expect(state.rows.map((row) => row.kind)).toEqual(["prompt", "tool", "prompt", "notice"]);
+    expect(state.rows[1]).toMatchObject({ kind: "tool", status: "ok", detail: "the file" });
+    expect(state.rows[2]).toMatchObject({ kind: "prompt", text: "also check b", turn: 2 });
+  });
+
+  it("shows that an image went with a prompt, without the image", () => {
+    const state = load(
+      said("user", [
+        { type: "image" },
+        { type: "text", text: "what is this" },
+      ]),
+    );
+
+    expect(state.rows[0]).toMatchObject({
+      kind: "prompt",
+      text: "what is this",
+      sent: [{ kind: "image", label: "pasted image" }],
+    });
+  });
+
+  it("names the conversation and how much history is above the line", () => {
+    const state = load(said("user", "hello"), said("user", "again"));
 
     const last = state.rows[state.rows.length - 1];
     expect(last.kind).toBe("notice");
     expect(last.kind === "notice" && last.text).toContain("abc-123");
-    expect(last.kind === "notice" && last.text).toContain("1 message");
-  });
-
-  it("names the tools a reply used rather than drawing an empty row", () => {
-    // A turn that only called tools has no text of its own, and dropping it would make
-    // the replay claim the model said nothing when it did the work.
-    const state = reduce(initialState(), {
-      t: "conversation_loaded",
-      id: "x",
-      entries: [{ role: "assistant", text: "   ", atMs: 1, tools: ["ide_definition", "Read"] }],
-    });
-
-    expect(state.rows[0]).toMatchObject({ kind: "text", text: "(used ide_definition, Read)" });
+    expect(last.kind === "notice" && last.text).toContain("2 turns");
   });
 
   it("replaces whatever was on screen, so two histories never stack", () => {
@@ -615,12 +723,32 @@ describe("continuing a past conversation", () => {
     const state = reduce(started, {
       t: "conversation_loaded",
       id: "y",
-      entries: [{ role: "user", text: "the resumed one", atMs: 1, tools: [] }],
+      records: [said("user", "the resumed one")],
     });
 
     expect(state.rows.some((row) => row.kind === "prompt" && row.text === "an earlier thing")).toBe(
       false,
     );
+  });
+
+  it("flattens to one line per message for a preview, naming the tools a reply used", () => {
+    const lines = saidIn([
+      said("user", "rename it"),
+      said("assistant", [
+        { type: "tool_use", id: "t1", name: "mcp__agentide__ide_rename_symbol", input: {} },
+        { type: "tool_use", id: "t2", name: "Read", input: {} },
+      ]),
+      said("user", [{ type: "tool_result", tool_use_id: "t1", content: "ok" }]),
+      said("user", "<task-notification/>", { injected: true }),
+      { kind: "turn_end", atMs: 3, durationMs: 1 },
+      said("assistant", [{ type: "text", text: "done" }]),
+    ]);
+
+    expect(lines).toEqual([
+      { role: "user", text: "rename it", tools: [] },
+      { role: "assistant", text: "", tools: ["ide_rename_symbol", "Read"] },
+      { role: "assistant", text: "done", tools: [] },
+    ]);
   });
 });
 

@@ -5,7 +5,7 @@ import { toolDiff, type DiffHunk } from "./diff";
 import type {
   AgentEvent,
   Problem,
-  ConversationEntry,
+  ConversationRecord,
   JsonObject,
   ModelInfo,
   ProviderInfo,
@@ -345,7 +345,15 @@ export type TranscriptAction =
   | { t: "conversation_reset" }
   /** Replay a conversation this session will continue. Resuming used to be invisible — the
    * model knew the history and the person did not. A notice marks where the replay ends. */
-  | { t: "conversation_loaded"; id: string; entries: ConversationEntry[] }
+  | {
+      t: "conversation_loaded";
+      id: string;
+      records: ConversationRecord[];
+      /** The workspace, so a replayed path is relative the way a live one is. `init` has
+       * not arrived yet when the replay draws, and that is where `meta.cwd` normally comes
+       * from. */
+      cwd?: string | null;
+    }
   | AgentEvent;
 
 export function initialState(): TranscriptState {
@@ -650,32 +658,25 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
         status: state.status === "exited" ? "exited" : "ready",
         models: state.models,
         commands: state.commands,
-        meta: { ...fresh.meta, pid: state.meta.pid, sdkVersion: state.meta.sdkVersion },
+        meta: {
+          ...fresh.meta,
+          pid: state.meta.pid,
+          sdkVersion: state.meta.sdkVersion,
+          cwd: action.cwd ?? undefined,
+        },
       };
 
-      for (const entry of action.entries) {
-        const text = entry.text.trim();
-        // A reply that only called tools has no text of its own. Naming the tools is
-        // better than an empty row, and much better than dropping the turn entirely.
-        const body =
-          text || (entry.tools.length > 0 ? `(used ${entry.tools.join(", ")})` : "");
-        if (!body) continue;
-        next = push(next, (addr, turn) =>
-          entry.role === "user"
-            ? { addr, turn, kind: "prompt", text: body }
-            : { addr, turn, kind: "text", text: body },
-        );
-      }
+      for (const record of action.records) next = replay(next, record);
 
-      const count = next.rows.length;
+      const turns = next.turn;
       return push(next, (addr, turn) => ({
         addr,
         turn,
         kind: "notice",
         tone: "info",
         text:
-          count > 0
-            ? `continuing ${action.id} — ${count} message${count === 1 ? "" : "s"} above are its history`
+          next.rows.length > 0
+            ? `continuing ${action.id} — ${turns} turn${turns === 1 ? "" : "s"} above are its history`
             : `continuing ${action.id} — nothing was said in it yet`,
       }));
     }
@@ -844,6 +845,92 @@ function reduceSdk(state: TranscriptState, msg: JsonObject): TranscriptState {
   // The two dozen remaining variants carry nothing this surface draws. Dropping them is
   // deliberate: an unknown variant must never become a row.
   return state;
+}
+
+/**
+ * One stored record, drawn by the live reducer. Only what a live turn never streams is
+ * handled here: the prompt (a live one is drawn at submit time), the turn boundary (a
+ * `result` message live, a `turn_duration` note on disk) and the text the harness put in
+ * the conversation that the person did not type. Everything else -- tool calls, results,
+ * thinking, the reply -- goes through `reduceSdk`, so a reopened conversation looks the way
+ * it looked live. It used to have its own reducer, which flattened a tool call to
+ * `(used ide_run)` and drew the compaction summary as a prompt: the mess this replaces.
+ */
+function replay(state: TranscriptState, record: ConversationRecord): TranscriptState {
+  switch (record.kind) {
+    case "turn_end":
+      return push({ ...state, turnClosed: true }, (addr, turn) => ({
+        kind: "turn",
+        addr,
+        turn,
+        reason: "ended",
+        durationMs: record.durationMs ?? undefined,
+      }));
+    case "compacted":
+      return reduceSdk(state, {
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: {
+          trigger: record.trigger ?? undefined,
+          pre_tokens: record.preTokens ?? undefined,
+          post_tokens: record.postTokens ?? undefined,
+        },
+      });
+    case "message": {
+      const msg: JsonObject = { type: record.role, message: record.message };
+      if (record.role === "assistant") return reduceSdk(state, msg);
+      // The summary is what the model was given in place of the history, and the history
+      // itself is above it: drawing both says everything twice. Injected text is the
+      // harness talking to the model, and a prompt row would put it in the person's mouth.
+      if (record.compaction || record.injected) return state;
+      // Tool results first. Something typed while a tool ran is delivered in the same
+      // record as that tool's result, after it.
+      const next = reduceSdk(state, msg);
+      const blocks = blocksOf(msg);
+      const text = textOf(blocks);
+      const images = blocks.filter((block) => block.type === "image").length;
+      if (!text && images === 0) return next;
+      return push({ ...next, turn: next.turn + 1, turnClosed: false }, (addr, turn) => ({
+        kind: "prompt",
+        addr,
+        turn,
+        text,
+        ...(images > 0
+          ? { sent: Array.from({ length: images }, () => ({ kind: "image" as const, label: "pasted image" })) }
+          : {}),
+      }));
+    }
+  }
+}
+
+/** One line per message of a past conversation, for a preview that is read rather than
+ * replayed. A tool call is named, not drawn: the preview has no room for its result. */
+export interface Said {
+  role: "user" | "assistant";
+  text: string;
+  tools: string[];
+}
+
+export function saidIn(records: ConversationRecord[]): Said[] {
+  const said: Said[] = [];
+  for (const record of records) {
+    if (record.kind !== "message" || record.injected || record.compaction) continue;
+    const blocks = blocksOf({ message: record.message });
+    const text = textOf(blocks);
+    const tools = blocks.flatMap((block) =>
+      block.type === "tool_use" && block.name ? [shortToolName(block.name)] : [],
+    );
+    if (!text && tools.length === 0) continue;
+    said.push({ role: record.role, text, tools });
+  }
+  return said;
+}
+
+function textOf(blocks: Block[]): string {
+  return blocks
+    .flatMap((block) => (block.type === "text" && block.text ? [block.text] : []))
+    .join("\n\n")
+    .trim();
 }
 
 function reduceSystem(state: TranscriptState, msg: JsonObject): TranscriptState {

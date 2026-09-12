@@ -243,9 +243,14 @@ export function TranscriptPane({
     if (!resumeConversation) return;
     let cancelled = false;
     void conversationRead(resumeConversation)
-      .then((entries) => {
+      .then((records) => {
         if (!cancelled) {
-          dispatch({ t: "conversation_loaded", id: resumeConversation, entries });
+          dispatch({
+            t: "conversation_loaded",
+            id: resumeConversation,
+            records,
+            cwd: rootRef.current,
+          });
         }
       })
       .catch(() => {
