@@ -2,6 +2,7 @@
  * wrong side of the line costs ~2.5s a turn or runs with a stale option. */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import type { PromptOptions } from "./protocol.ts";
@@ -116,6 +117,19 @@ test("turning on partial messages rebuilds", () => {
     queryFingerprint(shape()),
     queryFingerprint(shape({}, { includePartialMessages: true })),
   );
+});
+
+test("every turn asks for a subagent's whole conversation", () => {
+  /**
+   * Read off the source, because `#options` is private and there is no seam to assert it
+   * through -- the same reason `ide-tool-names.test.ts` reads this directory.
+   *
+   * Without the option the SDK forwards a subagent's tool calls and nothing else, and the
+   * transcript's run view draws a list of file reads with no reasoning and no report. That
+   * failure is silent: the view still works, it is just empty of the half worth reading.
+   */
+  const source = readFileSync(new URL("./session.ts", import.meta.url), "utf8");
+  assert.match(source, /forwardSubagentText:\s*true/);
 });
 
 /** A configured backend, as `provider-config.ts` resolves one. */

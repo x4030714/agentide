@@ -547,6 +547,22 @@ export class Session {
       disallowedTools: [...(options?.disallowedTools ?? []), "Bash"],
       maxTurns: options?.maxTurns,
       includePartialMessages: options?.includePartialMessages,
+      /**
+       * The whole of a subagent's conversation, not just its calls.
+       *
+       * Off, the SDK forwards a subagent's `tool_use` and `tool_result` blocks and nothing
+       * else -- enough for a heartbeat, not enough to read. The transcript draws each
+       * delegated run as its own conversation, and without this that conversation is a list
+       * of file reads with no reasoning between them and no report at the end: you can see
+       * that an agent worked and not what it concluded.
+       *
+       * Here rather than in Advanced mode's bundle, though that is the mode with the roster.
+       * It spends no tokens and changes nothing the model does -- the text was generated
+       * either way, and this only decides whether the host is told. Gated on the mode, the
+       * run view would be empty of reasoning in the other three, which is a surface that
+       * cannot be relied on.
+       */
+      forwardSubagentText: true,
       canUseTool: createPermissionHandler(this.#link, this.#sessionId),
       // The IDE's key is written last so no config file can displace it. Not the only source:
       // with `strictMcpConfig` unset the SDK also loads `.mcp.json`, settings and plugins.

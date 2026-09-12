@@ -54,10 +54,12 @@ import type {
   WirePath,
 } from "../lib/protocol";
 import {
+  agentRuns,
   editedChange,
   formatTokens,
   initialState,
   liveActivity,
+  mainRows,
   sessionCost,
   reduce,
 } from "../lib/transcript";
@@ -66,7 +68,7 @@ import { decodeModel } from "../lib/model-menu";
 import { mergeProviders, settleProviders, usePendingProviders } from "../lib/pending-providers";
 import { ensureProvider } from "../lib/provider";
 import { RunControls } from "./RunControls";
-import type { Activity, AgentEdit, Row } from "../lib/transcript";
+import type { Activity, AgentEdit, AgentRun, Row } from "../lib/transcript";
 
 interface TranscriptProps {
   root: WirePath | null;
@@ -389,9 +391,21 @@ export function TranscriptPane({
     }
   }, []);
 
+  /**
+   * The delegated runs, and the rows the transcript itself draws.
+   *
+   * Memoised on `rows` because both walk the whole conversation, and the reducer hands back
+   * a fresh `rows` for every event -- including a progress tick, which arrives every second
+   * for every running tool.
+   */
+  const runs = useMemo(() => agentRuns(state), [state.rows]);
+  const flow = useMemo(() => mainRows(state), [state.rows]);
+  const runsById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
+  const active = runs.filter((run) => run.status === "running");
+
   /** The row count, for `onScroll` -- which is installed once and must not close over it. */
   const rowsRef = useRef(0);
-  rowsRef.current = state.rows.length;
+  rowsRef.current = flow.length;
 
   const running = state.status === "running";
   // Derived on every render rather than memoised: it reads two fields and returns a small
@@ -554,6 +568,36 @@ export function TranscriptPane({
   }, []);
 
   /**
+   * Open a run from the list of active agents: expand it and go to it.
+   *
+   * Opened rather than toggled. The list is how you get *into* a conversation, and a chip
+   * that closes the thing you are reading when you click it again to check the name is a
+   * control that punishes you for using it. The row's own header still closes it.
+   *
+   * Unpinning first, because the tail follows new rows and a subagent produces them the
+   * whole time you are reading -- scrolled to a run, the observer would drag you back down
+   * within the second.
+   */
+  const openRun = useCallback((addr: number) => {
+    setExpanded((current) => (current.has(addr) ? current : new Set(current).add(addr)));
+    pinned.current = false;
+    // After the expand has painted, or this measures the collapsed row's position.
+    requestAnimationFrame(() => {
+      const find = () => bodyRef.current?.querySelector(`[data-addr="${addr}"]`);
+      const at = find();
+      if (at) {
+        at.scrollIntoView({ block: "center" });
+        return;
+      }
+      // The row is older than the drawn window. Draw the whole conversation and try again:
+      // this is a deliberate jump, and a chip that does nothing when clicked is worse than
+      // a long render.
+      setShown(rowsRef.current);
+      requestAnimationFrame(() => find()?.scrollIntoView({ block: "center" }));
+    });
+  }, []);
+
+  /**
    * Run a problem's own fix in a terminal tab, and drop the problem once it worked.
    *
    * A tab rather than a hidden spawn: signing in is a device code to read and a browser to
@@ -582,7 +626,7 @@ export function TranscriptPane({
   }, [root]);
 
   const visibleProblems = state.problems.filter((problem) => !solved.includes(problem.title));
-  const drawn = chunk(state.rows.length, shown);
+  const drawn = chunk(flow.length, shown);
   const loadMore = useCallback(() => {
     const body = bodyRef.current;
     if (body) growingFrom.current = body.scrollHeight;
@@ -630,17 +674,23 @@ export function TranscriptPane({
             {drawn.hidden} earlier {drawn.hidden === 1 ? "row" : "rows"} — scroll up or click to load
           </button>
         )}
-        {state.rows.slice(drawn.start).map((row, offset) => {
+        {flow.slice(drawn.start).map((row, offset) => {
           // The absolute index, because `opensTurn` compares against the row before this
           // one in the *conversation*, which may not be drawn.
           const index = drawn.start + offset;
+          const run = row.kind === "tool" && row.cls === "agent" ? runsById.get(row.id) : undefined;
           return (
             <TranscriptRow
               key={row.addr}
               row={row}
               // A turn's first row opens a new block, the way a listing fences a function.
-              opensTurn={index > 0 && row.turn !== state.rows[index - 1].turn}
+              opensTurn={index > 0 && row.turn !== flow[index - 1].turn}
               expanded={expanded.has(row.addr)}
+              run={run}
+              /* Only the rows that nest a conversation get the whole set. `expanded` is a
+                 new Set on every toggle, so handing it to every row would re-render the
+                 conversation each time one opens -- which is the cost the boolean avoids. */
+              expandedRows={run ? expanded : undefined}
               onToggle={toggle}
               onAnswer={answer}
             />
@@ -666,6 +716,10 @@ export function TranscriptPane({
          *
          * Not a `Row`: it takes no address, and a transient state must never consume one.
          */}
+        {/* Who else is working, and a way into what they are doing. Above the activity line
+            and below the rows, because it is the same kind of thing the activity line is --
+            what is happening now -- and it must sit where you are already looking. */}
+        {active.length > 0 && <AgentList runs={active} onOpen={openRun} />}
         {live && <ActivityLine activity={live} startedAt={state.turnStartedAt} />}
       </div>
 
@@ -729,12 +783,21 @@ const TranscriptRow = memo(function TranscriptRow({
   row,
   opensTurn,
   expanded,
+  run,
+  expandedRows,
   onToggle,
   onAnswer,
 }: {
   row: Row;
   opensTurn: boolean;
   expanded: boolean;
+  /** The delegated run this row started, when it is a `Task` call. Its rows are drawn
+   * inside it, so a subagent's work reads as one conversation instead of as noise in this
+   * one. */
+  run?: AgentRun;
+  /** Which addresses are open, for the rows nested inside a run. Only passed to a row that
+   * has one; see the call site. */
+  expandedRows?: Set<number>;
   onToggle: (addr: number) => void;
   onAnswer: (id: string, decision: "allow" | "deny") => void;
 }) {
@@ -793,6 +856,8 @@ const TranscriptRow = memo(function TranscriptRow({
           row={row}
           className={cls}
           expanded={expanded}
+          run={run}
+          expandedRows={expandedRows}
           onToggle={onToggle}
           onAnswer={onAnswer}
         />
@@ -861,12 +926,16 @@ function ToolRow({
   row,
   className,
   expanded,
+  run,
+  expandedRows,
   onToggle,
   onAnswer,
 }: {
   row: Row & { kind: "tool" };
   className: string;
   expanded: boolean;
+  run?: AgentRun;
+  expandedRows?: Set<number>;
   onToggle: (addr: number) => void;
   onAnswer: (id: string, decision: "allow" | "deny") => void;
 }) {
@@ -896,12 +965,14 @@ function ToolRow({
   }, [expanded, diff, hunks, row.status]);
 
   // A diff is worth opening before the result arrives, and worth opening when the call was
-  // denied and there is no result at all.
-  const canExpand = row.detail !== undefined || diff !== null;
+  // denied and there is no result at all. A delegated run is worth opening from its first
+  // row, while it is still being written -- that is the whole point of the nesting.
+  const nested = run !== undefined && run.rows.length > 0;
+  const canExpand = row.detail !== undefined || diff !== null || nested;
 
   return (
     <>
-      <div className={className}>
+      <div className={className} data-addr={row.addr}>
         <span className="t-addr" />
         {/* A div, not a button: approval controls nest here and a button inside a button
             is invalid markup. Keyboard expansion is wired by hand instead. */}
@@ -928,8 +999,17 @@ function ToolRow({
             }
           }}
         >
+          {/* Three grid children exactly -- op, operand, measure. The agent's name and its
+              row count go *inside* the operand rather than beside it: a fourth child lands
+              in an implicit column and takes the measure with it. */}
           <span className="t-op">{row.name}</span>
-          <span className="t-operand">{row.operand}</span>
+          <span className="t-operand">
+            {/* Which agent, ahead of what it was asked: the name decides whether you want to
+                read the run, the description is only what it was given. */}
+            {row.agent && <span className="t-agent">{row.agent}</span>}
+            {row.operand}
+            {nested && <span className="t-nested">{run!.rows.length} rows</span>}
+          </span>
           {row.permission?.status === "pending" ? (
             <span className="t-actions">
               <button
@@ -975,6 +1055,22 @@ function ToolRow({
           <span className="t-diffstat">{summarize(diff)}</span>
         </div>
       )}
+      {/* The subagent's own conversation, indented under the call that started it. Above the
+          result, because the result is its last word and reads as the end of it. */}
+      {expanded && nested && (
+        <div className="t-run">
+          {run!.rows.map((child) => (
+            <TranscriptRow
+              key={child.addr}
+              row={child}
+              opensTurn={false}
+              expanded={expandedRows?.has(child.addr) ?? false}
+              onToggle={onToggle}
+              onAnswer={onAnswer}
+            />
+          ))}
+        </div>
+      )}
       {expanded &&
         (diff ? (
           <div className="t-row is-detail">
@@ -990,6 +1086,41 @@ function ToolRow({
           )
         ))}
     </>
+  );
+}
+
+/**
+ * Who else is working, while they are working.
+ *
+ * Only the running ones. A finished run is still in the transcript under the call that
+ * started it, and a list that accumulates every agent of the session stops being the
+ * answer to "what is happening now" by the third one.
+ *
+ * Each chip opens the run rather than toggling it -- see `openRun`.
+ */
+function AgentList({ runs, onOpen }: { runs: AgentRun[]; onOpen: (addr: number) => void }) {
+  return (
+    <div className="t-agents">
+      {runs.map((run) => (
+        <button
+          key={run.id}
+          type="button"
+          className="t-agent-chip"
+          title={`${run.task} — click to read what it is doing`}
+          onClick={() => onOpen(run.addr)}
+        >
+          <span className="t-agent-mark" aria-hidden="true" />
+          <span className="t-agent-name">{run.name}</span>
+          {run.activity && (
+            <span className="t-agent-doing">
+              {run.activity.verb}
+              {run.activity.detail ? ` ${run.activity.detail}` : ""}
+            </span>
+          )}
+          <span className="t-agent-rows">{run.rows.length}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 

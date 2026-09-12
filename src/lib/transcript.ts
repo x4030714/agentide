@@ -31,6 +31,16 @@ interface BaseRow {
   addr: number;
   /** Which turn this row belongs to, for drawing boundary rules. */
   turn: number;
+  /**
+   * The `Task` call that owns this row, when a subagent produced it. Undefined for the
+   * main agent's own work.
+   *
+   * The SDK tags a delegated message with `parent_tool_use_id` and every row used to be
+   * pushed at the top level regardless, so four agents' calls arrived interleaved and
+   * unlabelled -- the transcript said what was happening and not who was doing it. The id
+   * is the `Task` row's own, so `toolIndex` already resolves it.
+   */
+  parent?: string;
 }
 
 export type Row =
@@ -57,6 +67,10 @@ export type Row =
       /** The call's arguments, kept only for `mutate` — the one class whose input is drawn.
        * Every other tool's would sit unread all session, and a `Task` carries a whole prompt. */
       input?: JsonObject;
+      /** The roster name a `Task` delegated to — `ide-implementer`. The one field lifted out
+       * of a Task's input, because the list of running agents has to name them and the rest
+       * of that input is the prompt this row deliberately drops. */
+      agent?: string;
       /** Seconds elapsed, while still running. */
       elapsed?: number;
       /** The approval this call waits on. On the row, not beside it: the call and its
@@ -128,7 +142,14 @@ export function liveActivity(state: TranscriptState): Activity | null {
     return { verb: "waiting for you", detail: shortToolName(tool), blocked: true };
   }
 
-  const busy = findLastIndex(state.rows, (row) => row.kind === "tool" && row.status === "running");
+  // The main agent's own rows only. A delegated call is a deeper fact about a run the
+  // agent list already reports: taken as the turn's activity it reads as the main agent
+  // doing the work itself, and the delegation -- the reason the pane is otherwise quiet --
+  // disappears. The `Task` row is running too, so this still says `delegating`.
+  const busy = findLastIndex(
+    state.rows,
+    (row) => row.kind === "tool" && row.status === "running" && row.parent === undefined,
+  );
   if (busy !== -1) {
     const row = state.rows[busy];
     if (row.kind === "tool") {
@@ -138,6 +159,90 @@ export function liveActivity(state: TranscriptState): Activity | null {
 
   if (state.thinking !== null) return { verb: "thinking", tokens: state.thinking };
   return { verb: "working" };
+}
+
+/** One delegated run: the `Task` call that started it, and everything the subagent did. */
+export interface AgentRun {
+  /** The `Task` call's `tool_use` id, which is what its rows carry as `parent`. */
+  id: string;
+  /** The address of the row that started it, so a list can jump to it. */
+  addr: number;
+  /** The roster name — `ide-implementer` — or the shortest thing that identifies the run. */
+  name: string;
+  /** What it was asked to do, as the call described it. */
+  task: string;
+  status: RowStatus;
+  /** Its own rows, in arrival order. */
+  rows: Row[];
+  /** What it is doing right now, or null once it has stopped. */
+  activity: Activity | null;
+}
+
+/**
+ * Every delegated run in the conversation, in the order they were started.
+ *
+ * Derived rather than tracked, for the same reason `liveActivity` is: a second copy of this
+ * would go stale exactly when a turn ends unexpectedly, and a run left showing as running
+ * forever is worse than one that has to be recomputed.
+ */
+export function agentRuns(state: TranscriptState): AgentRun[] {
+  const runs: AgentRun[] = [];
+  const byId = new Map<string, AgentRun>();
+
+  for (const row of state.rows) {
+    if (row.kind === "tool" && row.cls === "agent" && row.parent === undefined) {
+      const run: AgentRun = {
+        id: row.id,
+        addr: row.addr,
+        name: row.agent || row.operand || shortToolName(row.name),
+        task: row.operand,
+        status: row.status,
+        rows: [],
+        activity: null,
+      };
+      runs.push(run);
+      byId.set(row.id, run);
+      continue;
+    }
+    if (row.parent === undefined) continue;
+    // A row whose parent is not a run we know about: a nested delegation, or a message that
+    // arrived before its `Task` call. Dropped from the runs rather than promoted to the top
+    // level, because promoting it is the interleaving this whole structure removes.
+    byId.get(row.parent)?.rows.push(row);
+  }
+
+  for (const run of runs) {
+    if (run.status !== "running") continue;
+    run.activity = runActivity(run.rows);
+  }
+  return runs;
+}
+
+/** What a run is doing, from its own rows. Same priority as the turn's: a running tool
+ * outranks the last thing it said. */
+function runActivity(rows: Row[]): Activity {
+  const busy = findLastIndex(rows, (row) => row.kind === "tool" && row.status === "running");
+  if (busy !== -1) {
+    const row = rows[busy];
+    if (row.kind === "tool") {
+      return { verb: VERBS[row.cls], detail: row.operand || shortToolName(row.name) };
+    }
+  }
+  return { verb: "working" };
+}
+
+/**
+ * The rows the transcript itself draws.
+ *
+ * A subagent's rows are drawn inside their run, not here. Left in the flow they arrive
+ * interleaved with the main agent's and with every other subagent's, in one unlabelled
+ * list -- which is what the transcript did before, and it reads as the main agent having
+ * done all of it.
+ */
+export function mainRows(state: TranscriptState): Row[] {
+  return state.rows.some((row) => row.parent !== undefined)
+    ? state.rows.filter((row) => row.parent === undefined)
+    : state.rows;
 }
 
 /** One MCP server the turn started with, as the init message described it. */
@@ -721,13 +826,21 @@ export function reduce(state: TranscriptState, action: TranscriptAction): Transc
 
 function reduceSdk(state: TranscriptState, msg: JsonObject): TranscriptState {
   const type = typeof msg.type === "string" ? msg.type : "";
+  // Set on everything a subagent produced, null on the main agent's own messages.
+  const parent =
+    typeof msg.parent_tool_use_id === "string" && msg.parent_tool_use_id !== ""
+      ? msg.parent_tool_use_id
+      : undefined;
 
   if (type === "system") return reduceSystem(state, msg);
-  if (type === "assistant") return reduceAssistant(state, msg);
+  if (type === "assistant") return reduceAssistant(state, msg, parent);
   if (type === "user") return reduceUser(state, msg);
   if (type === "result") return reduceResult(state, msg);
   if (type === "tool_progress") return reduceProgress(state, msg);
-  if (type === "stream_event") return reduceStream(state, msg);
+  // A subagent's deltas are dropped rather than previewed. `streaming` is the one answer
+  // being written at the foot of the transcript, and a delegated one is not it -- forwarded,
+  // it would overwrite the main agent's reply with text belonging inside a run.
+  if (type === "stream_event") return parent ? state : reduceStream(state, msg);
   // The two dozen remaining variants carry nothing this surface draws. Dropping them is
   // deliberate: an unknown variant must never become a row.
   return state;
@@ -881,43 +994,59 @@ function reduceStream(state: TranscriptState, msg: JsonObject): TranscriptState 
   return state;
 }
 
-function reduceAssistant(state: TranscriptState, msg: JsonObject): TranscriptState {
+function reduceAssistant(
+  state: TranscriptState,
+  msg: JsonObject,
+  parent?: string,
+): TranscriptState {
   // Content means the reasoning for this step produced something; stop counting.
   // The message that was being previewed has arrived; the preview is now the row.
-  let next: TranscriptState = { ...state, thinking: null, streaming: null };
+  // Only for the main agent: a subagent's message says nothing about whether the reply
+  // being written at the foot of the transcript is finished.
+  let next: TranscriptState = parent ? state : { ...state, thinking: null, streaming: null };
 
   if (typeof msg.error === "string") {
-    next = push(next, (addr, turn) => ({
-      kind: "notice",
-      addr,
-      turn,
-      tone: "error",
-      text: `assistant error: ${String(msg.error)}`,
-    }));
+    next = push(
+      next,
+      (addr, turn) => ({
+        kind: "notice",
+        addr,
+        turn,
+        tone: "error",
+        text: `assistant error: ${String(msg.error)}`,
+      }),
+      parent,
+    );
   }
 
   for (const block of blocksOf(msg)) {
     if (block.type === "text" && block.text?.trim()) {
       const text = block.text;
-      next = push(next, (addr, turn) => ({ kind: "text", addr, turn, text }));
+      next = push(next, (addr, turn) => ({ kind: "text", addr, turn, text }), parent);
     } else if (block.type === "thinking" && block.thinking?.trim()) {
       const text = block.thinking;
-      next = push(next, (addr, turn) => ({ kind: "thinking", addr, turn, text }));
+      next = push(next, (addr, turn) => ({ kind: "thinking", addr, turn, text }), parent);
     } else if (block.type === "tool_use" && block.id && block.name) {
       const { id, name, input } = block;
       const cls = toolClass(name);
-      next = push(next, (addr, turn) => ({
-        kind: "tool",
-        addr,
-        turn,
-        id,
-        name: shortToolName(name),
-        cls,
-        operand: operandOf(name, input, next.meta.cwd),
-        // Only the class whose diff gets drawn keeps its arguments; see `input` on Row.
-        input: cls === "mutate" ? input : undefined,
-        status: "running",
-      }));
+      const agent = input?.subagent_type;
+      next = push(
+        next,
+        (addr, turn) => ({
+          kind: "tool",
+          addr,
+          turn,
+          id,
+          name: shortToolName(name),
+          cls,
+          operand: operandOf(name, input, next.meta.cwd),
+          // Only the class whose diff gets drawn keeps its arguments; see `input` on Row.
+          input: cls === "mutate" ? input : undefined,
+          agent: cls === "agent" && typeof agent === "string" && agent !== "" ? agent : undefined,
+          status: "running",
+        }),
+        parent,
+      );
       next.toolIndex.set(id, next.rows.length - 1);
     }
   }
@@ -985,8 +1114,15 @@ function reduceProgress(state: TranscriptState, msg: JsonObject): TranscriptStat
 
 // --- Helpers -----------------------------------------------------------------
 
-function push(state: TranscriptState, make: (addr: number, turn: number) => Row): TranscriptState {
-  const row = make(state.nextAddr, state.turn);
+function push(
+  state: TranscriptState,
+  make: (addr: number, turn: number) => Row,
+  parent?: string,
+): TranscriptState {
+  const made = make(state.nextAddr, state.turn);
+  // Stamped here rather than in every `make`: which run a row belongs to is a fact about
+  // the message it came from, and there are a dozen places that build a row.
+  const row: Row = parent ? { ...made, parent } : made;
   const next: TranscriptState = {
     ...state,
     rows: [...state.rows, row],
@@ -1016,48 +1152,6 @@ function findLastIndex(rows: Row[], match: (row: Row) => boolean): number {
 
 function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-/** What the turn is doing right now, for the line above the composer. */
-export interface Activity {
-  /** One or two words. The thing that is happening. */
-  verb: string;
-  /** What it is happening to, when there is something worth naming. */
-  detail?: string;
-  /** A live reasoning estimate, while the model is thinking. */
-  tokens?: number;
-  /** The turn is waiting on the person, not the machine. Drawn differently: a spinner that
-   * means "answer me" reads as "still working", and both sides then wait. */
-  blocked?: boolean;
-}
-
-/** The current activity, or `null`. Derived rather than tracked, so there is no second copy
- * to get wrong. The order is a priority: an approval outranks a tool outranks thinking. */
-export function activity(state: TranscriptState): Activity | null {
-  if (state.status !== "running") return null;
-
-  const waiting = findLastIndex(
-    state.rows,
-    (row) =>
-      (row.kind === "permission" && row.status === "pending") ||
-      (row.kind === "tool" && row.permission?.status === "pending"),
-  );
-  if (waiting !== -1) {
-    const row = state.rows[waiting];
-    const tool = row.kind === "permission" ? row.tool : row.kind === "tool" ? row.name : "";
-    return { verb: "waiting for you", detail: shortToolName(tool), blocked: true };
-  }
-
-  const active = findLastIndex(state.rows, (row) => row.kind === "tool" && row.status === "running");
-  if (active !== -1) {
-    const row = state.rows[active];
-    if (row.kind === "tool") {
-      return { verb: shortToolName(row.name), detail: row.operand || undefined };
-    }
-  }
-
-  if (state.thinking !== null) return { verb: "thinking", tokens: state.thinking };
-  return { verb: "working" };
 }
 
 /** Token counts, in the compact shape the rest of the listing measures in. */

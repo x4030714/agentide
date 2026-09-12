@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { editedChange, editedFile, sessionCost,
+  agentRuns,
   formatMeasure,
   initialState,
+  liveActivity,
+  mainRows,
   MCP_CLOSED,
   operandOf,
   reduce,
@@ -882,6 +885,124 @@ describe("the answer as it arrives", () => {
 
   it("survives an event with nothing in it", () => {
     expect(reduce(initialState(), streamEvent(undefined)).streaming).toBeNull();
+  });
+});
+
+// --- delegation -----------------------------------------------------------------------
+
+/** A message the SDK tagged as a subagent's. */
+function fromAgent(parent: string, ...content: unknown[]) {
+  return {
+    t: "event" as const,
+    sessionId: "s1",
+    msg: {
+      type: "assistant",
+      parent_tool_use_id: parent,
+      message: { role: "assistant", content },
+    },
+  };
+}
+
+/** The `Task` call that starts a run. */
+const delegate = (id: string, agent: string, description: string) =>
+  assistant({
+    type: "tool_use",
+    id,
+    name: "Task",
+    input: { subagent_type: agent, description, prompt: "a long prompt nobody reads here" },
+  });
+
+const reading = (id: string, path: string) =>
+  ({ type: "tool_use", id, name: "Read", input: { file_path: path } }) as const;
+
+describe("a delegated run", () => {
+  it("attributes a subagent's rows to the run instead of to the conversation", () => {
+    // The bug this fixes: every row was pushed at the top level whatever produced it, so
+    // four agents' calls arrived interleaved and unlabelled and the transcript read as the
+    // main agent having done all of it.
+    const s = run(
+      { t: "prompt_submitted", text: "build it" },
+      INIT,
+      delegate("t1", "ide-implementer", "write the search"),
+      fromAgent("t1", { type: "text", text: "reading the walk first" }),
+      fromAgent("t1", reading("r1", "src-tauri/src/fs.rs")),
+    );
+
+    expect(kinds(s)).toEqual(["prompt", "tool", "text", "tool"]);
+    // Drawn, though: the rows still exist, they are just someone else's.
+    expect(mainRows(s).map((row) => row.kind)).toEqual(["prompt", "tool"]);
+
+    const runs = agentRuns(s);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: "t1", name: "ide-implementer", task: "write the search" });
+    expect(runs[0].rows.map((row) => row.kind)).toEqual(["text", "tool"]);
+  });
+
+  it("names the agent, not just what it was asked", () => {
+    // `ide-implementer` is what decides whether you want to read the run; the description
+    // is only what it was handed.
+    const s = run({ t: "prompt_submitted", text: "go" }, delegate("t1", "ide-reviewer", "review the diff"));
+    expect(tools(s)[0]).toMatchObject({ cls: "agent", agent: "ide-reviewer" });
+    // The prompt is still dropped: only `mutate` rows keep their input.
+    expect(tools(s)[0].input).toBeUndefined();
+  });
+
+  it("says what the run is doing now, and stops when it stops", () => {
+    const started = run(
+      { t: "prompt_submitted", text: "go" },
+      delegate("t1", "ide-validator", "run the tests"),
+      fromAgent("t1", { type: "tool_use", id: "c1", name: "Bash", input: { command: "cargo test" } }),
+    );
+    expect(agentRuns(started)[0].activity).toMatchObject({ verb: "running", detail: "cargo test" });
+
+    // The run ends when its `Task` call returns, not when its last tool does.
+    const finished = reduce(started, toolResult("t1", "130 passed"));
+    expect(agentRuns(finished)[0].status).toBe("ok");
+    expect(agentRuns(finished)[0].activity).toBeNull();
+  });
+
+  it("keeps the turn's own activity on the delegation rather than on the delegate", () => {
+    // Otherwise the line reads as the main agent reading files itself, and the delegation --
+    // the reason the pane is otherwise quiet for a minute -- is never said at all.
+    const s = run(
+      { t: "prompt_submitted", text: "go" },
+      delegate("t1", "ide-architect", "plan the change"),
+      fromAgent("t1", reading("r1", "src/App.tsx")),
+    );
+    expect(liveActivity(s)).toMatchObject({ verb: "delegating", detail: "plan the change" });
+  });
+
+  it("does not let a subagent's text overwrite the answer being written", () => {
+    // `streaming` is the one reply at the foot of the transcript. A forwarded delegate's
+    // preview would replace it with text that belongs inside a run.
+    let s = run({ t: "prompt_submitted", text: "go" }, delegate("t1", "ide-implementer", "edit"));
+    s = reduce(s, textStart());
+    s = reduce(s, textDelta("here is what I found"));
+    s = reduce(s, {
+      t: "event",
+      sessionId: "s1",
+      msg: {
+        type: "stream_event",
+        parent_tool_use_id: "t1",
+        event: { type: "content_block_delta", delta: { type: "text_delta", text: "subagent noise" } },
+      },
+    });
+    expect(s.streaming).toBe("here is what I found");
+  });
+
+  it("drops a row whose run it has never seen, rather than promoting it", () => {
+    // A nested delegation, or a message that overtook its `Task` call. Promoting it to the
+    // top level is exactly the interleaving this structure exists to remove.
+    const s = run({ t: "prompt_submitted", text: "go" }, fromAgent("unknown", reading("r1", "a.ts")));
+    expect(agentRuns(s)).toEqual([]);
+    expect(mainRows(s).map((row) => row.kind)).toEqual(["prompt"]);
+  });
+
+  it("leaves a conversation with no delegation exactly as it was", () => {
+    // `mainRows` is on the hot path of every render, and a conversation that never
+    // delegated -- which is most of them -- must not pay for a copy of its rows.
+    const s = run({ t: "prompt_submitted", text: "go" }, assistant({ type: "text", text: "done" }));
+    expect(mainRows(s)).toBe(s.rows);
   });
 });
 

@@ -1925,6 +1925,115 @@
   color: var(--warn);
 }
 
+/* --- Delegated runs --------------------------------------------------------- */
+
+/**
+ * Who else is working, at the foot of the transcript above the activity line.
+ *
+ * The problem this solves: with four agents running, the transcript filled with their calls
+ * interleaved and unlabelled, and the pane said what was happening without saying who was
+ * doing it. The rows now live inside their run; this is the way in.
+ *
+ * Only the running ones are listed, so this row is absent almost all of the time and takes
+ * no space when it is. Padded to a row's 12px so it sits in the conversation's column.
+ */
+.t-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 4px 12px 0;
+}
+
+.t-agent-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-chip);
+  background: var(--elevated);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: default;
+}
+
+.t-agent-chip:hover {
+  border-color: var(--sym);
+}
+
+.t-agent-chip:focus-visible {
+  outline: 2px solid var(--sym);
+  outline-offset: -2px;
+}
+
+/* The same pulse as the activity line's, because it means the same thing. */
+.t-agent-mark {
+  align-self: center;
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--sym);
+  animation: activity-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-agent-mark {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+.t-agent-chip .t-agent-name {
+  font-family: var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* What it is doing now. Truncated rather than wrapped: the chip is one line, and a wrapping
+   chip moves every other chip in the row every time a subagent opens a file. */
+.t-agent-doing {
+  min-width: 0;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.t-agent-rows {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  opacity: 0.75;
+}
+
+/**
+ * The subagent's conversation, nested under the call that started it.
+ *
+ * A rule down the left edge rather than an indent alone: the rows inside are the same shapes
+ * as the ones outside, and without a boundary a long run reads as the main conversation
+ * having continued. The rule is what says "this is someone else's".
+ */
+.t-run {
+  margin: 2px 0 4px 12px;
+  border-left: 1px solid var(--hairline);
+}
+
+/* The roster name on a `Task` row, inside the operand column. */
+.t-agent {
+  margin-right: 8px;
+  color: var(--ink);
+}
+
+/* How much there is to read in a run, on the row that opens it. */
+.t-nested {
+  margin-left: 8px;
+  color: var(--ink-dim);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
 /* What a prompt was sent with, under the prompt itself. */
 .t-sent {
   display: flex;
