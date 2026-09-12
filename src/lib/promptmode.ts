@@ -22,7 +22,8 @@ export const PROMPT_HELP: Record<PromptMode, string> = {
   autism: "Tuned, plus rules for short, literal, scannable answers.",
   // The cost is in the tooltip on purpose: four subagents are four contexts, and that
   // should be read before the mode is picked rather than noticed on a bill.
-  advanced: "Everything, plus subagents, deep thinking and guard hooks. Slow and expensive.",
+  advanced:
+    "Everything, plus subagents, deep thinking and guard hooks. Always short answers. Slow and expensive.",
 };
 
 export function isPromptMode(value: unknown): value is PromptMode {
@@ -149,6 +150,29 @@ know; give ide-reviewer the diff. Anything an agent has to rediscover is wasted 
   wrong and mentioning it afterwards costs more than the question did.
 - Report what you did not check as plainly as what you did.`;
 
+/**
+ * Advanced mode's answer length. Always short, whatever the shape rules above allow.
+ *
+ * Last in the append on purpose: the shape rules permit a long answer with a summary on
+ * top, and an allowance stated after a ban is the one the model follows. Length only --
+ * the work, the checks and the thinking budget are untouched, which is the same line the
+ * other two constants hold.
+ */
+export const ADVANCED_ANSWER_PROMPT = `## Answer length
+
+Always short. Straight to the point. This overrides the allowance for a long answer above.
+
+- The answer is the result, the evidence for it, and the next action. Nothing else.
+- Five lines is a normal answer. Ten is the ceiling, unless the answer is a list of
+  findings or a diff, and then each item is one line.
+- No background, no options not taken, no restating the request, no summary at the end.
+- Do not repeat in prose what a command already printed. Name the one line that matters;
+  the person can open the tool call for the rest.
+- A question gets an answer in the first line, then the evidence, then stop.
+
+Short is about the answer, never about the work. Read the same code, run the same checks,
+think exactly as hard.`;
+
 /** Where the tuned addition lives. A file, because it is content, not configuration. */
 export const SYSTEM_PROMPT_FILE = ".agentide/system.md";
 
@@ -161,10 +185,18 @@ export async function readPromptAppend(
   if (mode === "default") return null;
   const tuned = await readTunedPrompt(root);
   if (mode === "tuned") return tuned;
-  // Method first, then shape: the shape rules are about how to report, so they go last and
-  // are the most recent instruction about how to answer. Advanced takes both — it is the
-  // most capable mode, not an excuse to write at length.
-  const parts = [tuned, mode === "advanced" ? ADVANCED_PROMPT : null, AUTISM_PROMPT];
+  // Method first, then shape, then length: each later part is about how to report, so it
+  // goes after the work rules and is the most recent instruction about how to answer.
+  // Advanced takes all of them — it is the most capable mode, not an excuse to write at
+  // length, and the length rule is last so it beats the shape rules' allowance for a long
+  // answer with a summary on top.
+  const advanced = mode === "advanced";
+  const parts = [
+    tuned,
+    advanced ? ADVANCED_PROMPT : null,
+    AUTISM_PROMPT,
+    advanced ? ADVANCED_ANSWER_PROMPT : null,
+  ];
   return parts.filter((part): part is string => Boolean(part)).join("\n\n");
 }
 

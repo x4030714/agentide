@@ -18,8 +18,15 @@ vi.mock("./bridge", () => ({
   },
 }));
 
-const { readTunedPrompt, readPromptAppend, isPromptMode, AUTISM_PROMPT, ADVANCED_PROMPT, PROMPT_MODES } =
-  await import("./promptmode");
+const {
+  readTunedPrompt,
+  readPromptAppend,
+  isPromptMode,
+  AUTISM_PROMPT,
+  ADVANCED_PROMPT,
+  ADVANCED_ANSWER_PROMPT,
+  PROMPT_MODES,
+} = await import("./promptmode");
 
 const USER = "C:/Users/tung/.agentide/system.md";
 const PROJECT = "C:/work/thing/.agentide/system.md";
@@ -109,7 +116,7 @@ describe("autism mode", () => {
 });
 
 describe("advanced mode", () => {
-  it("stacks the machine facts, then method, then shape", async () => {
+  it("stacks the machine facts, then method, then shape, then length", async () => {
     files.set(USER, "no rust-src on this machine");
 
     const append = await readPromptAppend("advanced", "C:/work/thing" as never);
@@ -117,22 +124,52 @@ describe("advanced mode", () => {
     expect(append).toContain("no rust-src on this machine");
     expect(append).toContain("How to work");
     expect(append).toContain("How to write the answer");
-    // Shape last: it is the instruction about how to report, so it must be the most
-    // recent thing said about it.
+    expect(append).toContain("Answer length");
+    // Each later part is about how to report, so it must be the most recent thing said
+    // about it: shape after method, and length after shape, because the shape rules allow
+    // a long answer and the length rule is the one that takes that allowance away.
     expect(append!.indexOf("How to work")).toBeLessThan(append!.indexOf("How to write the answer"));
+    expect(append!.indexOf("How to write the answer")).toBeLessThan(append!.indexOf("Answer length"));
   });
 
   it("works on a machine with no system.md, like autism mode", async () => {
     // A mode whose meaning depends on a file that may not exist silently does nothing.
     const append = await readPromptAppend("advanced", null);
 
-    expect(append).toBe(`${ADVANCED_PROMPT}\n\n${AUTISM_PROMPT}`);
+    expect(append).toBe(`${ADVANCED_PROMPT}\n\n${AUTISM_PROMPT}\n\n${ADVANCED_ANSWER_PROMPT}`);
   });
 
   it("keeps the short-answer rules — capability is not licence to write at length", async () => {
     const append = await readPromptAppend("advanced", null);
 
     expect(append).toContain("Lead with the result");
+  });
+
+  it("answers are always short, and the rule is the last word on it", async () => {
+    // Stated after the shape rules on purpose: those allow a long answer with a summary on
+    // top, and an allowance that came later would be the one followed.
+    const append = await readPromptAppend("advanced", null);
+
+    expect(append!.trimEnd().endsWith(ADVANCED_ANSWER_PROMPT)).toBe(true);
+    expect(ADVANCED_ANSWER_PROMPT).toContain("Always short");
+    expect(ADVANCED_ANSWER_PROMPT).toContain("overrides the allowance for a long answer");
+  });
+
+  it("the length rule shortens the answer and nothing about the work", async () => {
+    // Same line as the other two constants: latency and tokens come out of the harness,
+    // never out of the model. A length rule that cut checking would be the wrong trade.
+    const text = ADVANCED_ANSWER_PROMPT.toLowerCase();
+    for (const forbidden of ["skip", "don't check", "do not verify", "fewer tool", "lower effort"]) {
+      expect(text).not.toContain(forbidden);
+    }
+    expect(text).toContain("never about the work");
+    expect(text).toContain("think exactly as hard");
+  });
+
+  it("autism mode does not pick up the length rule", async () => {
+    // Asked for on Advanced only. Autism keeps its own allowance for a long answer with a
+    // summary on top.
+    expect(await readPromptAppend("autism", null)).toBe(AUTISM_PROMPT);
   });
 
   it("spends freely on method and never on less checking", async () => {
